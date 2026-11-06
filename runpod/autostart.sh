@@ -11,7 +11,7 @@ Usage: bash runpod/autostart.sh [--check-only] [--help]
 Environment variables:
   RUNPOD_WORKSPACE            Mounted network volume (default: /workspace)
   RUNPOD_TTS_BRANCH           Git branch to deploy (default: feature/german-audiobook-release-hardening)
-  RUNPOD_TTS_MODELS           qwen | moss | both (default: both)
+  RUNPOD_TTS_MODELS           qwen | moss | both (default: qwen)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
 
 This script does NOT run the standard RunPod /start.sh service. In the Pod
