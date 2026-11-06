@@ -65,7 +65,7 @@ Die Prüfung verlangt eine neue, nur authentifiziert lesbare Server-Instanz-ID, 
 
 ## E. GPU-Benchmark
 
-Die neue Produktion hält pro Segment die wirkliche Inferenzdauer fest. Real-Time-Factor = **Summe Segment-Inferenzzeiten / Länge des fertigen Audios**. Werte kleiner 1 bedeuten schneller als Echtzeit. Separat erfasste Gesamtzeit enthält gegebenenfalls manuelle Unterbrechungen, Neustarts und Quality Checks und ist **kein** sauberer RTF. VRAM-Angaben aus Preflight/Abschluss sind Momentaufnahmen, keine gemessenen Spitzenwerte.
+Die neue Produktion hält pro Segment die wirkliche Inferenzdauer fest. Der aktuelle Segment-Zeitstempel umfasst auch eventuelle Modelllade- und Wiederholungszeiten und ist deshalb zunächst eine **Generierungs-/Segment-Walltime**, keine sauber isolierte reine GPU-Inferenzzeit. Für einen belastbaren Real-Time-Factor (RTF) müssen reine Inferenzzeit und Audiodauer getrennt erfasst werden. Werte kleiner 1 bedeuten schneller als Echtzeit. Separat erfasste Gesamtzeit enthält gegebenenfalls manuelle Unterbrechungen, Neustarts und Quality Checks und ist **kein** sauberer RTF. VRAM-Angaben aus Preflight/Abschluss sind Momentaufnahmen, keine gemessenen Spitzenwerte.
 
 Ohne echten GPU-Lauf dürfen weder Zeit-, Kosten-, Qualitäts- noch RTF-Werte als bestanden bezeichnet werden.
 
@@ -75,13 +75,13 @@ Nur mit rechtlich nutzbaren deutschen Sprecherprofilen und identischen selbst ve
 
 | Kriterium | Gewicht |
 | --- | ---: |
-| Deutsches Idiom und korrekte Fachbegriffe | 30 % |
-| Natürlicher Rhythmus, Betonung, Pausen | 25 % |
-| Stimmstabilität in längeren Passagen | 20 % |
-| Auslassungen, Wiederholungen, Artefakte | 15 % |
-| RTF und nötige Korrekturarbeit | 10 % |
+| Natürlichkeit und Prosodie | 30 % |
+| Deutsche Aussprache | 25 % |
+| Fachbegriffe und englische Begriffe | 20 % |
+| Stimmkonsistenz | 15 % |
+| Audioartefakte und Segmentübergänge | 10 % |
 
-Bei gravierenden Qualitätsproblemen oder ungeklärten Stimmenrechten ist die Abnahme unabhängig von der Gesamtnote gesperrt.
+Der vollständige reproduzierbare Testtextkatalog und das Blindhörprotokoll stehen in [VOICE_EVALUATION.md](VOICE_EVALUATION.md) und [voice_testset.json](voice_testset.json). Bei gravierenden Qualitätsproblemen oder ungeklärten Stimmenrechten ist die Abnahme unabhängig von der Gesamtnote gesperrt.
 
 ## G. Release-Gates
 
