@@ -1,6 +1,6 @@
 # Abnahmeprotokoll: German Audiobook Studio auf RunPod
 
-**Entwicklungsstand, keine behauptete GPU-Freigabe.** Diese Prüfung ist verbindlich vor einem Merge nach master. Bücher, WAVs, M4Bs und Tokens bleiben auf dem privaten RunPod-Volume. CI erzeugt und speichert keine Screenshot- oder Hörbucharchive.
+**Entwicklungsstand, keine behauptete GPU-Freigabe.** Diese Prüfung ist verbindlich **vor einer produktiven Freigabe**, auch wenn der Entwicklungsstand zuvor mit ausdrücklicher Eigentümerfreigabe nach `master` integriert wurde. Bücher, WAVs, M4Bs und Tokens bleiben auf dem privaten RunPod-Volume. CI erzeugt und speichert keine Screenshot- oder Hörbucharchive.
 
 ## A. Mindestkonfiguration
 
