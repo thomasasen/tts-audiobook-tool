@@ -27,7 +27,7 @@ class TestGermanStudioRunPod(unittest.TestCase):
         self.assertIn("spk2info.pt", source)
         self.assertIn("3.11", source)
         self.assertIn('sha256sum --check --status "$CHECKSUMS"', source)
-        self.assertIn('rm -f "$MODEL_ROOT/.studio-ready"', source)
+        self.assertIn("Refusing to trust or silently rebaseline weights", source)
 
     def test_readme_command_points_to_exact_integrated_autostart(self):
         root = (ROOT / "README.md").read_text(encoding="utf-8")
