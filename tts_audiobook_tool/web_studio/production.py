@@ -147,15 +147,44 @@ def _voice_proof() -> Path:
     return _studio().data_dir() / "voice-samples" / "thorsten-approved.json"
 
 
+def _model_identity() -> str | None:
+    """Bind audible approval to the installed model, version and inference code.
+
+    The installer verifies actual weight bytes with sha256sum before starting
+    the web server. This lightweight identity subsequently compares the
+    version marker, checksum manifest and installed inference script.
+    """
+    config = _config()
+    if config is None:
+        return None
+    root = _studio().data_dir() / "models"
+    marker = root / "CosyVoice" / ".studio-ready"
+    manifest = root / "thorsten-model-sha256.txt"
+    script = Path(config[1])
+    try:
+        version = marker.read_bytes()
+        checksums = manifest.read_bytes()
+        inference = script.read_bytes()
+        if not version or not checksums or not inference:
+            return None
+        if len(version) > 256 or len(checksums) > 8192 or len(inference) > 100_000:
+            return None
+        return hashlib.sha256(version + b"\\0" + checksums + b"\\0" + inference).hexdigest()
+    except OSError:
+        return None
+
+
 def voice_ready() -> bool:
     """An explicit post-listening approval is required, not only a model install."""
-    if not _config():
+    model_identity = _model_identity()
+    if not model_identity:
         return False
     try:
         proof = json.loads(_voice_proof().read_text(encoding="utf-8"))
         sample = _voice_proof().parent / "thorsten.wav"
         return (
             proof.get("voice") == VOICE_ID
+            and proof.get("model_identity") == model_identity
             and proof.get("sha256") == hashlib.sha256(sample.read_bytes()).hexdigest()
             and _valid_audio(sample) > 0
         )
@@ -294,8 +323,8 @@ def _synthesize(text: str, path: Path) -> float:
 
 
 def make_sample() -> Path:
-    if _config() is None:
-        raise ValueError("Thorsten-CosyVoice3 muss zuerst nach Herstelleranleitung installiert werden.")
+    if _model_identity() is None:
+        raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig und geprüft installiert werden.")
     if not _GPU.acquire(blocking=False):
         raise ValueError("Die GPU ist durch einen anderen Auftrag belegt.")
     try:
@@ -313,10 +342,14 @@ def make_sample() -> Path:
 
 
 def approve_sample() -> None:
+    model_identity = _model_identity()
+    if model_identity is None:
+        raise ValueError("Das installierte Modell hat keinen gültigen Prüfstatus.")
     sample = _voice_proof().parent / "thorsten.wav"
     _valid_audio(sample)
     _atomic_json(_voice_proof(), {
         "voice": VOICE_ID,
+        "model_identity": model_identity,
         "sha256": hashlib.sha256(sample.read_bytes()).hexdigest(),
         "approved_at": _now(),
         "model": "Thorsten-Voice/CosyVoice3",
@@ -498,7 +531,8 @@ def create_job(project_id: str) -> dict:
     glossary = project_glossary(project_id)
     job_id = uuid.uuid4().hex
     plan = {
-        "version": 1, "project_id": project_id, "voice": VOICE_ID,
+        "version": 2, "project_id": project_id, "voice": VOICE_ID,
+        "model_identity": _model_identity() or "",
         "segments": segments, "glossary": glossary, "created_at": _now(),
     }
     # Serialize the active-job check with job creation across API requests.
@@ -590,6 +624,8 @@ def _run(job_id: str):
         job = _job(job_id)
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
         segments = plan["segments"]
+        if plan.get("model_identity") and plan["model_identity"] != _model_identity():
+            raise ValueError("Die Modellgewichte oder der Inferenzcode haben sich seit Auftragsbeginn geändert.")
         chapter = ""
         duration = 0.0
         done = 0
@@ -598,7 +634,8 @@ def _run(job_id: str):
                 return
             path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
             fingerprint = hashlib.sha256(
-                (segment["text"] + "\0" + json.dumps(plan["glossary"], sort_keys=True) + "\0" + VOICE_ID).encode()
+                (segment["text"] + "\0" + json.dumps(plan["glossary"], sort_keys=True)
+                 + "\0" + VOICE_ID + "\0" + plan.get("model_identity", "")).encode()
             ).hexdigest()
             meta = path.with_suffix(".json")
             seconds = 0.0
