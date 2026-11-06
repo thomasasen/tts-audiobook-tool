@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import subprocess
 import threading
 import time
@@ -27,6 +28,81 @@ _STOP = threading.Event()
 _GPU = threading.Lock()
 _THREAD: threading.Thread | None = None
 _LOCK_FILE = None
+_MODEL_PROC = None
+
+
+def _close_model() -> None:
+    global _MODEL_PROC
+    proc = _MODEL_PROC
+    _MODEL_PROC = None
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        if proc.stdout:
+            proc.stdout.close()
+
+
+def _model_message(proc, timeout: int) -> dict:
+    if proc.stdout is None:
+        raise RuntimeError("Thorsten-Protokoll nicht verfügbar.")
+    with selectors.DefaultSelector() as selector:
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        if not selector.select(timeout):
+            raise TimeoutError("Thorsten-Modell antwortet nicht rechtzeitig.")
+    line = proc.stdout.readline()
+    if not line or len(line) > 20_000:
+        raise RuntimeError("Thorsten-Protokoll unterbrochen.")
+    data = json.loads(line)
+    if not isinstance(data, dict):
+        raise RuntimeError("Ungültige Thorsten-Antwort.")
+    return data
+
+
+def _generate_with_worker(text: str, output: Path, config: tuple[str, str]) -> None:
+    """The only active worker lives inside the exclusive GPU critical section."""
+    global _MODEL_PROC
+    try:
+        if _MODEL_PROC is None or _MODEL_PROC.poll() is not None:
+            script = Path(__file__).with_name("thorsten_worker.py")
+            if not script.is_file():
+                raise RuntimeError("Der Thorsten-Langzeitworker ist nicht installiert.")
+            log_dir = _studio().data_dir() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "thorsten-worker.log"
+            with log_path.open("ab") as log:
+                os.chmod(log_path, 0o600)
+                _MODEL_PROC = subprocess.Popen(
+                    [config[0], "-u", str(script)],
+                    cwd=str(Path(config[1]).parent),
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=log, text=True, bufsize=1,
+                )
+            response = _model_message(_MODEL_PROC, 300)
+            if response.get("ready") is not True:
+                raise RuntimeError("Thorsten-Modell konnte nicht geladen werden.")
+        if _MODEL_PROC.stdin is None:
+            raise RuntimeError("Thorsten-Worker ist nicht schreibbar.")
+        request_id = uuid.uuid4().hex
+        _MODEL_PROC.stdin.write(json.dumps({
+            "id": request_id, "text": text, "output": str(output)
+        }, ensure_ascii=False) + "\n")
+        _MODEL_PROC.stdin.flush()
+        response = _model_message(_MODEL_PROC, 600)
+        if response.get("id") != request_id or response.get("ok") is not True:
+            raise RuntimeError("Thorsten-Worker konnte das Segment nicht erzeugen.")
+    except (OSError, ValueError, TimeoutError, RuntimeError, json.JSONDecodeError):
+        _close_model()
+        raise
 
 
 def _studio():
@@ -120,13 +196,18 @@ def _synthesize(text: str, path: Path) -> float:
     try:
         # Official model's infer_thorsten.py CLI; avoid a shell and never
         # download or inject a user-provided voice reference.
-        run = subprocess.run(
-            [*config, "--text", text, "--output", str(temp)],
-            stdin=subprocess.DEVNULL, capture_output=True, timeout=600, check=False,
-            cwd=str(Path(config[1]).parent),
-        )
-        if run.returncode != 0:
-            raise RuntimeError("TTS-Inferenz fehlgeschlagen (Details im privaten Modellprotokoll).")
+        if os.environ.get("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "1") == "1":
+            _generate_with_worker(text, temp, config)
+        else:
+            # Explicit fallback for debugging only; reloads the full model for
+            # every segment and is unsuitable for long production jobs.
+            run = subprocess.run(
+                [*config, "--text", text, "--output", str(temp)],
+                stdin=subprocess.DEVNULL, capture_output=True,
+                timeout=600, check=False, cwd=str(Path(config[1]).parent),
+            )
+            if run.returncode != 0:
+                raise RuntimeError("TTS-Inferenz fehlgeschlagen.")
         duration = _valid_audio(temp)
         os.chmod(temp, 0o600)
         os.replace(temp, path)
@@ -289,6 +370,11 @@ def stop():
     global _THREAD, _LOCK_FILE
     _STOP.set()
     _WAKE.set()
+    # A SIGTERM while torch is running must not mark resumable segments as
+    # permanently failed. They will be checked and retried after restart.
+    with _studio()._db() as db:
+        db.execute("UPDATE studio_jobs SET status='queued', updated_at=? WHERE status='running'", (_now(),))
+    _close_model()
     if _THREAD:
         _THREAD.join(timeout=2)
     if _THREAD and _THREAD.is_alive():
