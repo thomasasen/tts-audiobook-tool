@@ -161,15 +161,20 @@ def _model_identity() -> str | None:
     marker = root / "CosyVoice" / ".studio-ready"
     manifest = root / "thorsten-model-sha256.txt"
     script = Path(config[1])
+    persistent_worker = Path(__file__).with_name("thorsten_worker.py")
     try:
         version = marker.read_bytes()
         checksums = manifest.read_bytes()
         inference = script.read_bytes()
-        if not version or not checksums or not inference:
+        worker = persistent_worker.read_bytes()
+        if not version or not checksums or not inference or not worker:
             return None
-        if len(version) > 256 or len(checksums) > 8192 or len(inference) > 100_000:
+        if (len(version) > 256 or len(checksums) > 8192
+                or len(inference) > 100_000 or len(worker) > 100_000):
             return None
-        return hashlib.sha256(version + b"\0" + checksums + b"\0" + inference).hexdigest()
+        return hashlib.sha256(
+            version + b"\0" + checksums + b"\0" + inference + b"\0" + worker
+        ).hexdigest()
     except OSError:
         return None
 
