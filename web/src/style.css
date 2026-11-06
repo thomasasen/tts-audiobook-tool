@@ -167,3 +167,20 @@ h1, h2, h3, p { margin-top: 0; }
 @media (prefers-reduced-motion: no-preference) {
   .primary-btn, .outline-btn, .book-card, .nav-item { transition: background .17s ease, border-color .17s ease, transform .17s ease; }
 }
+
+/* Production surfaces extend the existing studio design system. */
+.book-open {flex:1;min-width:0;display:flex;align-items:center;gap:18px;min-height:120px;padding:0;border:0;color:var(--text);text-align:left;background:transparent}
+.book-open:focus-visible {outline-offset:5px}
+.delete-project {flex:none;align-self:flex-start}
+.glossary-panel,.production-panel,.audio-preview {padding:26px;max-width:900px}
+.glossary-panel label,.segment-preview label {display:block;font-size:12px;font-weight:700;margin-bottom:10px}
+.glossary-panel textarea {resize:vertical;display:block;width:100%;background:var(--input);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:15px;line-height:1.65;font:inherit;margin-bottom:14px}
+.glossary-panel .primary-btn {margin-top:6px}
+.voice-actions,.job-actions {display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.production-panel progress {width:100%;height:13px;accent-color:var(--accent)}
+.production-panel > p {color:var(--muted);font-size:13px;line-height:1.65}
+.segment-preview {border-top:1px solid var(--line);padding-top:24px;margin-top:26px;display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.segment-preview label {margin:0}
+.segment-preview input {background:var(--input);border:1px solid var(--line);border-radius:9px;padding:10px;width:90px;color:var(--text)}
+.audio-preview audio,.chapter-player {width:100%;margin-top:14px}
+@media(max-width:560px){.book-card {gap:8px;padding:12px}.book-open {gap:10px}.book-cover{min-width:54px;height:90px}.glossary-panel,.production-panel,.audio-preview{padding:17px}}
