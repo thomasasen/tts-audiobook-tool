@@ -41,13 +41,16 @@ def inspect_model(model: str, root: Path) -> dict[str, Any]:
     if not result["installed"]:
         return result
     # Find specs without importing heavyweight TTS models or fetching model files.
+    package_probe = (
+        "importlib.util.find_spec('qwen_tts') is not None"
+        if model == "qwen"
+        else "bool(importlib.metadata.distribution('moss-tts'))"
+    )
     code = (
-        "import importlib.util, json, torch; "
+        "import importlib.util, importlib.metadata, json, torch; "
         "print(json.dumps({'torch': torch.__version__, "
         "'cuda': torch.cuda.is_available(), "
-        "'module': importlib.util.find_spec("
-        + repr(MODEL_IMPORTS[model])
-        + ") is not None}))"
+        "'module': " + package_probe + "}))"
     )
     probe = run_command([str(exe), "-c", code], timeout=60)
     result["probe_ok"] = probe["ok"]
