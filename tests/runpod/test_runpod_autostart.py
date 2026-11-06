@@ -48,7 +48,7 @@ class TestRunPodAutostart(unittest.TestCase):
             result = self.call("--check-only", extra_env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(workspace, result.stdout)
-            self.assertIn("feature/runpod-p0", result.stdout)
+            self.assertIn("feature/german-audiobook-studio-runpod", result.stdout)
             self.assertIn("Autostart: qwen", result.stdout)
             self.assertFalse((Path(workspace) / "tts-audiobook-tool").exists())
 
