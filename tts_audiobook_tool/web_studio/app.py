@@ -34,8 +34,8 @@ MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
 MAX_ZIP_ENTRIES = 5000
 MAX_CHAPTERS = 5000
 FIRST_TEXT_CHARS = 1500
-TOC = re.compile(r"^\s*(?:inhaltsverzeichnis|table\s+of\s+contents|contents|toc)\s*$", re.I)
-PREFACE = re.compile(r"^\s*(?:vorwort|foreword|preface)(?:\b|\s|:)", re.I)
+TOC = re.compile(r"^\s*(?:inhalts(?:verzeichnis|übersicht|uebersicht)|table\s+of\s+contents|contents|toc)\s*$", re.I)
+PREFACE = re.compile(r"^\s*(?:vorwort|geleitwort|foreword|preface)(?:\b|\s|:)", re.I)
 UUID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
