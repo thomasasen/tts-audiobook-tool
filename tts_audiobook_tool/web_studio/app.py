@@ -28,6 +28,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+from . import production
 
 MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
@@ -213,6 +214,12 @@ async def secure_headers(request, call_next):
 def on_startup():
     _require_token()
     _init_storage()
+    production.init()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    production.stop()
 
 
 @app.get("/api/health")
@@ -368,30 +375,140 @@ def select_chapters(project_id: str, selection: ChapterSelection):
 
 @app.get("/api/voices", dependencies=[Depends(require_auth)])
 def voices():
-    # Only verified AND privately installed voices can become available.
-    # This is a source candidate, not a synthetic profile ready to use.
-    return {
-        "ready": [],
-        "candidates": [{
-            "id": "thorsten-neutral-review",
-            "name": "Thorsten Müller · Neutral",
-            "description": "Deutsche Männerstimme. Referenzauswahl, rechtliche Einzelprüfung und Hörabnahme stehen aus.",
-            "status": "under_review",
-            "license": "CC0-1.0 (Dataset)",
-            "source": "https://huggingface.co/datasets/Thorsten-Voice/TV-44kHz-Full",
-        }],
-    }
+    return production.voice_catalogue()
+
+
+@app.post("/api/voices/preview", dependencies=[Depends(require_auth)])
+def preview_voice():
+    try:
+        path = production.make_sample()
+        return FileResponse(path, media_type="audio/wav", filename="thorsten-probe.wav")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/voices/approve", dependencies=[Depends(require_auth)])
+def approve_voice():
+    # Called only after the operator has auditioned the generated sample.
+    try:
+        production.approve_sample()
+        return {"approved": production.voice_ready()}
+    except (OSError, ValueError) as exc:
+        raise HTTPException(409, "Zuerst eine gültige Hörprobe erzeugen und anhören.") from exc
 
 
 @app.get("/api/capabilities", dependencies=[Depends(require_auth)])
 def capabilities():
+    from .production import _config
     return {
         "epub_import": True,
         "chapter_selection": True,
-        "tts_generation": False,
-        "audio_export": False,
-        "reason": "GPU-Worker, rechtlich geprüfte Referenz und Hörabnahme noch nicht integriert.",
+        "tts_generation": production.voice_ready(),
+        "audio_export": True,
+        "voice_preview_available": _config() is not None,
+        "reason": ("Produktion freigegeben." if production.voice_ready()
+                   else "Thorsten-CosyVoice3 muss installiert, probeweise erzeugt und angehört werden."),
     }
+
+
+class GlossaryPayload(BaseModel):
+    entries: dict[str, str] = Field(default_factory=dict)
+
+
+@app.get("/api/projects/{project_id}/glossary", dependencies=[Depends(require_auth)])
+def get_glossary(project_id: str):
+    return {"entries": production.project_glossary(project_id)}
+
+
+@app.put("/api/projects/{project_id}/glossary", dependencies=[Depends(require_auth)])
+def put_glossary(project_id: str, payload: GlossaryPayload):
+    try:
+        production.save_glossary(project_id, payload.entries)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return get_glossary(project_id)
+
+
+@app.get("/api/projects/{project_id}/jobs", dependencies=[Depends(require_auth)])
+def list_project_jobs(project_id: str):
+    return {"jobs": production.list_jobs(project_id)}
+
+
+@app.post("/api/projects/{project_id}/jobs", dependencies=[Depends(require_auth)], status_code=201)
+def start_job(project_id: str):
+    try:
+        return production.create_job(project_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/projects/{project_id}/jobs/{job_id}", dependencies=[Depends(require_auth)])
+def get_job(project_id: str, job_id: str):
+    try:
+        return production.public_job(project_id, job_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+class JobAction(BaseModel):
+    action: str
+
+
+@app.post("/api/projects/{project_id}/jobs/{job_id}/control", dependencies=[Depends(require_auth)])
+def control_job(project_id: str, job_id: str, payload: JobAction):
+    try:
+        return production.change_job(project_id, job_id, payload.action)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/projects/{project_id}/jobs/{job_id}/segments/{index}", dependencies=[Depends(require_auth)])
+def download_segment(project_id: str, job_id: str, index: int):
+    try:
+        path = production.audio_path(project_id, job_id, index)
+        return FileResponse(path, media_type="audio/wav", filename=f"segment-{index}.wav")
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/projects/{project_id}/jobs/{job_id}/export", dependencies=[Depends(require_auth)])
+def create_export(project_id: str, job_id: str):
+    try:
+        path = production.export_job(project_id, job_id)
+        return {"ready": path.is_file(), "filename": "audiobook.m4b"}
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/projects/{project_id}/jobs/{job_id}/download", dependencies=[Depends(require_auth)])
+def download_export(project_id: str, job_id: str):
+    try:
+        job = production.public_job(project_id, job_id)
+        path = production._jobs_dir(job_id) / "audiobook.m4b"
+        if job["status"] != "completed" or not path.is_file():
+            raise ValueError("Noch kein fertiges Hörbuch vorhanden.")
+        return FileResponse(path, media_type="audio/mp4", filename="audiobook.m4b")
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.delete("/api/projects/{project_id}", dependencies=[Depends(require_auth)])
+def delete_project(project_id: str):
+    _project(project_id)
+    with _db() as db:
+        busy = db.execute(
+            "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('running','exporting','queued')",
+            (project_id,),
+        ).fetchone()
+        if busy:
+            raise HTTPException(409, "Bitte laufende Aufträge zuerst abbrechen.")
+        jobs = db.execute("SELECT id FROM studio_jobs WHERE project_id=?", (project_id,)).fetchall()
+        db.execute("DELETE FROM studio_jobs WHERE project_id=?", (project_id,))
+        db.execute("DELETE FROM studio_projects WHERE id=?", (project_id,))
+    shutil.rmtree(_project_dir(project_id))
+    for job in jobs:
+        shutil.rmtree(production._jobs_dir(job["id"]), ignore_errors=True)
+    return {"deleted": True}
 
 
 @app.get("/")
