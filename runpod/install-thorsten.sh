@@ -53,6 +53,25 @@ cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
 for artifact in llm.pt flow.pt spk2info.pt hift.pt; do
   test -s "$MODEL_DIR/$artifact" || { echo "Required model file missing: $artifact" >&2; exit 1; }
 done
+# Fail before declaring ready if the native runtime cannot even import.
+# Actual GPU model loading remains a separate mandatory live acceptance step.
+(
+  cd "$MODEL_ROOT"
+  PYTHONPATH="$MODEL_ROOT:$MODEL_ROOT/third_party/Matcha-TTS:\${PYTHONPATH:-}" \
+    "$VENV/bin/python" - <<'PY'
+import torch
+import torchaudio
+from cosyvoice.cli.cosyvoice import CosyVoice3
+print("Thorsten native runtime import OK", torch.__version__)
+PY
+)
+# A private weight checksum audit record, never committed to Git.
+(
+  cd "$MODEL_DIR"
+  sha256sum llm.pt flow.pt spk2info.pt hift.pt \
+    > "$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
+)
+chmod 600 "$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
 # The marker is written only after every installation stage has passed.
 printf '%s\n' "$VERSION" > "$MODEL_ROOT/.studio-ready"
 echo "Thorsten engine installed in $MODEL_ROOT."
