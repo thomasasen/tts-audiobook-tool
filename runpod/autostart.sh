@@ -10,7 +10,7 @@ Usage: bash runpod/autostart.sh [--check-only] [--help]
 
 Environment variables:
   RUNPOD_WORKSPACE            Mounted network volume (default: /workspace)
-  RUNPOD_TTS_BRANCH           Git branch to deploy (default: feature/runpod-p0)
+  RUNPOD_TTS_BRANCH           Git branch to deploy (default: feature/german-audiobook-studio-runpod)
   RUNPOD_TTS_MODELS           qwen | moss | both (default: both)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
 
@@ -30,8 +30,8 @@ while (( $# > 0 )); do
 done
 
 : "${RUNPOD_WORKSPACE:=/workspace}"
-: "${RUNPOD_TTS_BRANCH:=feature/runpod-p0}"
-: "${RUNPOD_TTS_MODELS:=both}"
+: "${RUNPOD_TTS_BRANCH:=feature/german-audiobook-studio-runpod}"
+: "${RUNPOD_TTS_MODELS:=qwen}"
 : "${RUNPOD_TTS_AUTOSTART_MODEL:=qwen}"
 case "$RUNPOD_WORKSPACE" in
   /*) ;;
@@ -46,7 +46,7 @@ case "$RUNPOD_TTS_AUTOSTART_MODEL" in
   *) printf 'Invalid RUNPOD_TTS_AUTOSTART_MODEL: %s\n' "$RUNPOD_TTS_AUTOSTART_MODEL" >&2; exit 2 ;;
 esac
 case "$RUNPOD_TTS_BRANCH" in
-  feature/runpod-p0) ;; # Use the audited deployment branch during P0.
+  feature/german-audiobook-studio-runpod) ;; # Explicit reviewed deployment branch.
   *) printf 'Unsupported deployment branch: %s\n' "$RUNPOD_TTS_BRANCH" >&2; exit 2 ;;
 esac
 if [[ "$RUNPOD_TTS_MODELS" != "both" && "$RUNPOD_TTS_AUTOSTART_MODEL" != "menu"
@@ -136,7 +136,17 @@ else
   echo "Created tmux session 'audiobook'."
 fi
 
+echo "Installing German voice (optional until GPU acceptance)."
+if ! bash "$REPO_DIR/runpod/install-thorsten.sh"; then
+  echo "WARNING: Thorsten installation failed. Web voice generation remains disabled."
+fi
+if tmux has-session -t audiobook-web 2>/dev/null; then
+  echo "Existing web studio session left running."
+else
+  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\$?; echo Web server stopped: \$rc; exec bash"
+  echo "Started the web studio in tmux session audiobook-web (port 7860)."
+fi
 echo "=== Ready ==="
-echo "Open a RunPod SSH/Web Terminal, then: tmux attach -t audiobook"
+echo "TUI: tmux attach -t audiobook | Web log: tmux attach -t audiobook-web"
 echo "Optional: bash $REPO_DIR/runpod/start.sh --doctor"
 echo "Models, settings, reference voices and projects remain under $DATA_ROOT"
