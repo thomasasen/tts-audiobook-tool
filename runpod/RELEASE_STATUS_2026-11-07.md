@@ -1,7 +1,7 @@
 # German Audiobook Studio — Release-Status und Red-Team-Protokoll
 
 **Stand: 07.11.2026 (Europe/Berlin), Entwicklungsbranch `feature/german-audiobook-release-hardening`, Draft-PR #14.**
-**Release-Entscheidung: NICHT FREIGABEFÄHIG.** Keine Produktion mit echter RunPod-GPU, kein deutscher Hördurchgang und kein tatsächlicher Pod-Neustart wurden in diesem Auftrag durchgeführt. Kein Merge nach `master`.
+**Release-Entscheidung: KEINE PRODUKTIVFREIGABE.** Keine Produktion mit echter RunPod-GPU, kein deutscher Hördurchgang und kein tatsächlicher Pod-Neustart wurden in diesem Auftrag durchgeführt. Die Eigentümerfreigabe zur Code-Integration nach `master` ersetzt keine reale GPU-Abnahme.
 
 ## Gegenstand
 
@@ -17,7 +17,7 @@ Untersucht: PR-Kette #8 → #9 → #10 → #11 → #12 → #13, Runtime-API, SQL
 - Recovery-CLI verlangt echten Fortschritt nach dem Neustart; keine bestandene Abnahme allein wegen neuer Backend-Instanz-ID. Fehlermeldungen der privaten API werden nicht mehr ins Abnahme-Terminal gespiegelt.
 - Eindeutigerer Leistungsbegriff: derzeitige Segment-`inference_seconds`-Werte können Modellladen/Retry enthalten. Quotient in der Abnahme als `rtf_generation_wall` statt als isolierter reiner GPU-Inferenz-RTF ausgewiesen.
 - Deutsches Original-Test-EPUB um Unterüberschriften, Listen, Zahlen, Fachbegriffe, direkte Rede ergänzt; 12 separate deutsche Fachbuch-Hörtexte und reproduzierbares, blindes Bewertungsschema bereitgestellt.
-- README-/RunPod-Startbranch und Tests auf den PR-#14-Entwicklungszweig ausgerichtet. **Vor einem finalen Release auf gepinnte Commit-/Modellrevisionen umstellen.**
+- README-/RunPod-Standardstart und Tests auf `master` als Integrationsbranch ausgerichtet. **Vor einem finalen Release auf gepinnte Commit-/Modellrevisionen umstellen.**
 
 ## Tatsächlich geprüfte Bereiche
 
@@ -51,7 +51,7 @@ Untersucht: PR-Kette #8 → #9 → #10 → #11 → #12 → #13, Runtime-API, SQL
 | P1 | QA & Security | Keine umfangreiche Live-Lastprobe mit vollgelaufenem Volume/OOM, Auth-Abwehr oder mehrfachen Neustarts | Kontrollierte Fehlersimulation am privaten Pod vor Release |
 | P2 | UX/Frontend | Kein manueller Desktop-/Mobile-/Kontrast-/Dark-Mode-Red-Team-Review auf produktivem Pod | Browser-E2E ergänzen, manuelles visuelles Review |
 | P2 | Audioexport | Cover-/Author-Metadaten und breite Player-Kompatibilität nicht vollständig abgenommen | Separates Kompatibilitätsreview |
-| P2 | Dokumentation | Startkommando derzeit bewusst PR-#14-Branch statt immutable Commit; Dokumentation enthält teils alte TUI-Abschnitte | Vor Stable-Release pinnen und Dopplungen reduzieren |
+| P2 | Dokumentation | Startkommando lädt `master` statt eines unveränderlichen Commits; die historische TUI-Dokumentation ist abgegrenzt | Vor Stable-Release auf einen getesteten Commit pinnen |
 
 **Red-Team-Einschränkung:** Der Code-Review ist statisch. Ohne echte GPU, belastbaren Lautheits-/Sprachdatensatz und Live-Pod kann weder die Abwesenheit aller P0/P1-Probleme noch die Produktionsreife bescheinigt werden.
 
@@ -91,4 +91,4 @@ Der erneute Review nach PR #14 identifizierte weitere konkrete Anwendungsfehler,
 - Der echte Abbruch während einer laufenden GPU-Inferenz, der Neustart eines Pods und ein langer EPUB→M4B-Durchlauf sind als echte RunPod-Tests weiter offen.
 - Nach Änderungen an den Produktionsdateien gelten nur erfolgreiche CI-Läufe des jeweiligen Head-Commits; alte grüne Läufe sind keine Freigabe.
 
-**Freigabe: weiterhin gesperrt, PR #14 bleibt Draft, kein Merge nach master.**
+**Produktive Freigabe bleibt gesperrt.** Eigentümerfreigabe für die Integration des Codes nach `master` ist erteilt; echte GPU-Hörabnahme, EPUB→M4B-End-to-End und Recovery bleiben vor dem produktiven Einsatz verpflichtend.
