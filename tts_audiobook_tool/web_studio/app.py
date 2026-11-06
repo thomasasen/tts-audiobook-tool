@@ -471,6 +471,22 @@ def download_segment(project_id: str, job_id: str, index: int):
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.get("/api/projects/{project_id}/jobs/{job_id}/quality", dependencies=[Depends(require_auth)])
+def get_quality(project_id: str, job_id: str):
+    try:
+        return production.quality_report(project_id, job_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/projects/{project_id}/jobs/{job_id}/segments/{index}/retry", dependencies=[Depends(require_auth)])
+def retry_segment(project_id: str, job_id: str, index: int):
+    try:
+        return production.retry_segment(project_id, job_id, index)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.post("/api/projects/{project_id}/jobs/{job_id}/export", dependencies=[Depends(require_auth)])
 def create_export(project_id: str, job_id: str):
     try:
