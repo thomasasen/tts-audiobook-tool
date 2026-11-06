@@ -24,8 +24,12 @@ if [[ -f "$MODEL_ROOT/.studio-ready" && "$(cat "$MODEL_ROOT/.studio-ready")" == 
   exit 0
 fi
 if [[ -f "$MODEL_ROOT/.studio-ready" ]]; then
-  echo "Thorsten cached model is incomplete or its SHA-256 manifest differs; reinstalling." >&2
-  rm -f "$MODEL_ROOT/.studio-ready"
+  # A previously trusted cached model was modified, is incomplete, or has
+  # a stale version. Do NOT silently rebaseline corrupted weights: model
+  # downloads can reuse files that already exist in the Hugging Face cache.
+  echo "Thorsten cache integrity/version failed. Refusing to trust or silently rebaseline weights." >&2
+  echo "Inspect and quarantine the cached model and checksum manifest before a clean reinstall." >&2
+  exit 1
 fi
 
 # The upstream Thorsten model card recommends Python 3.10/3.11 and pins the
