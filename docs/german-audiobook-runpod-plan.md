@@ -66,6 +66,13 @@ Start from `tests/text/test_epub_extractor.py`, `tests/text/test_epub_section_sk
 
 No new web UI, no book-specific production content in source control, no training a new foundation TTS model, no modifications to `master` before review, and no claims that model choice or pricing are settled before benchmarking.
 
+## Tracking issues
+
+- [#2 — P0 RunPod baseline and reproducible model setup](https://github.com/thomasasen/tts-audiobook-tool/issues/2)
+- [#3 — P1 EPUB foreword selection and German text cleanup](https://github.com/thomasasen/tts-audiobook-tool/issues/3)
+- [#4 — P2 Native-German male narrator, pronunciation and voice A/B test](https://github.com/thomasasen/tts-audiobook-tool/issues/4)
+- [#5 — P3 German STT validation and M4B export](https://github.com/thomasasen/tts-audiobook-tool/issues/5)
+
 ## Immediate next step
 
 Create focused implementation issues for P0–P3. Begin with **P0** reproducible RunPod baseline; preserve this plan as the current architecture decision record, then only change scope when new benchmark or EPUB findings justify it.
