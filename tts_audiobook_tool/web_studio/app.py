@@ -38,6 +38,8 @@ FIRST_TEXT_CHARS = 1500
 TOC = re.compile(r"^\s*(?:inhalts(?:verzeichnis|übersicht|uebersicht)|table\s+of\s+contents|contents|toc)\s*$", re.I)
 PREFACE = re.compile(r"^\s*(?:vorwort|geleitwort|foreword|preface)(?:\b|\s|:)", re.I)
 UUID_RE = re.compile(r"^[0-9a-f]{32}$")
+# Changes on every web process restart, exposed only to authenticated users.
+INSTANCE_ID = uuid.uuid4().hex
 
 
 def data_dir() -> Path:
@@ -230,7 +232,7 @@ def health():
 
 @app.get("/api/session", dependencies=[Depends(require_auth)])
 def session():
-    return {"authenticated": True, "language": "de"}
+    return {"authenticated": True, "language": "de", "instance_id": INSTANCE_ID}
 
 
 @app.get("/api/projects", dependencies=[Depends(require_auth)])
