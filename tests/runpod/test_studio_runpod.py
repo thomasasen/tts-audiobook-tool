@@ -26,6 +26,8 @@ class TestGermanStudioRunPod(unittest.TestCase):
         self.assertIn('"$AUDIOBOOK_DATA_ROOT/models', source)
         self.assertIn("spk2info.pt", source)
         self.assertIn("3.11", source)
+        self.assertIn('sha256sum --check --status "$CHECKSUMS"', source)
+        self.assertIn('rm -f "$MODEL_ROOT/.studio-ready"', source)
 
     def test_readme_command_points_to_exact_integrated_autostart(self):
         root = (ROOT / "README.md").read_text(encoding="utf-8")
