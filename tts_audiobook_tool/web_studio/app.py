@@ -68,6 +68,7 @@ def _init_storage() -> None:
             selected_start INTEGER NOT NULL, excluded_json TEXT NOT NULL,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )""")
+    os.chmod(root / "studio.sqlite3", 0o600)
 
 
 @contextmanager
@@ -248,6 +249,7 @@ async def create_project(file: UploadFile = File(...)):
                 if total > MAX_UPLOAD_BYTES:
                     raise ValueError("Die EPUB-Datei ist größer als 60 MB.")
                 target.write(chunk)
+        os.chmod(path, 0o600)
         _validate_epub(path)
         result = _extract(path)
         catalogue = _catalogue(result)
