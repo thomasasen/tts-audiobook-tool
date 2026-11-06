@@ -1,3 +1,67 @@
+# Deutsches KI-Hörbuch auf RunPod – Schnellstart
+
+Dieser Fork erweitert [tts-audiobook-tool](https://github.com/zeropointnine/tts-audiobook-tool) für hochwertige deutsche Hörbücher. Geplant sind eine natürliche deutsche Männerstimme, die korrekte Aussprache englischer Fachbegriffe sowie die Auswahl des **Vorworts als Startpunkt** statt des Inhaltsverzeichnisses.
+
+> **Entwicklungsstand:** Die automatische RunPod-Einrichtung ist im Branch [`feature/runpod-p0`](https://github.com/thomasasen/tts-audiobook-tool/tree/feature/runpod-p0) vorhanden und hat die statischen GitHub-Tests bestanden. **Die Installation und Spracherzeugung auf einer echten RunPod-GPU sind noch nicht abgenommen.** Die Optimierungen für deutsche EPUBs und Stimmen folgen in [Issue #3](https://github.com/thomasasen/tts-audiobook-tool/issues/3) und [Issue #4](https://github.com/thomasasen/tts-audiobook-tool/issues/4).
+
+## 1. Empfohlene RunPod-Einstellungen
+
+| Einstellung | Empfehlung |
+| --- | --- |
+| **GPU** | **1 × NVIDIA RTX A6000 (48 GB VRAM)**; alternativ A40 (48 GB) |
+| **GPU-Kosten** | Richtwert **ab ca. 0,59 USD/Stunde** für RTX A6000; aktuellen Pod-Preis prüfen |
+| **Template** | Offizielles **RunPod PyTorch 2.8 / CUDA 12.8** mit SSH/Web-Terminal |
+| **Container Disk** | **50 GB** für das Container-System und temporäre Dateien |
+| **Network Volume** | **150 GB, Standard**, vor Pod-Erstellung anlegen |
+| **Mount Path** | **`/workspace`** (Network Volume und GPU im selben Rechenzentrum) |
+| **Speicherkosten** | Bei 0,07 USD/GB/Monat ca. **10,50 USD/Monat** für 150 GB; aktuellen Tarif prüfen |
+| **Ports** | Standard-SSH bzw. RunPod-Web-Terminal; kein öffentlicher Webport nötig |
+
+**Wichtig:** Ein **Network Volume** verwenden, nicht nur die normale *Volume Disk*. Dort liegen die heruntergeladenen Modelle, Python-Umgebungen, Projekte, Stimmreferenzen und Einstellungen, damit sie nach einem Pod-Neustart beziehungsweise Pod-Wechsel erhalten bleiben. Die Speicherkosten laufen unabhängig von der GPU-Nutzung weiter.
+
+## 2. Start Command – komplett kopieren
+
+Den folgenden **einzeiligen Befehl** in RunPod unter **Docker Command** (erweiterte Pod-/Template-Einstellungen) eintragen. Über das Kopiersymbol rechts oben am GitHub-Codeblock lässt sich der komplette Befehl übernehmen.
+
+```bash
+bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/runpod-p0/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
+```
+
+**Was beim Pod-Start passiert:**
+
+1. RunPods ursprünglicher Dienststart (`/start.sh`) hält SSH/Jupyter erreichbar.
+2. Der Fork wird unter `/workspace/tts-audiobook-tool` geklont bzw. bei unverändertem Checkout aktualisiert.
+3. Python 3.12 sowie getrennte Umgebungen für **Qwen3-TTS** und **MOSS-TTS** werden installiert; vorhandene Installationen werden wiederverwendet.
+4. Modelle, Caches, private Hörbuchdateien und Anwendungseinstellungen bleiben auf dem Network Volume.
+5. Die ursprüngliche Konsolenoberfläche startet mit Qwen3-TTS in einer wiederverbindbaren `tmux`-Sitzung namens `audiobook`. MOSS kann anschließend ausgewählt werden.
+
+Beim **ersten** Start können Abhängigkeiten und Modellgewichte umfangreiche Downloads erfordern. Die eigentlichen Modellgewichte werden gegebenenfalls erst beim erstmaligen Laden des Modells heruntergeladen. Der Startbefehl installiert keine EPUB-Datei und keine Sprecherreferenz.
+
+## 3. Hörbuch-Anwendung öffnen
+
+Nach Abschluss der Einrichtung im **RunPod-Web-Terminal oder per SSH** ausführen:
+
+```bash
+tmux attach -t audiobook
+```
+
+Mit **Strg+B**, danach **D** lässt sich die Sitzung verlassen, ohne die laufende Anwendung zu stoppen. Um die Originaloberfläche mit MOSS statt Qwen zu starten:
+
+```bash
+cd /workspace/tts-audiobook-tool
+bash runpod/start.sh --model moss
+```
+
+Pro Terminal nur eine aktive Eingabesitzung verwenden. Projekte und lizenzierte Stimmreferenzen gehören nach `/workspace/audiobook-data/projects` beziehungsweise `/workspace/audiobook-data/references`, **nicht** ins öffentliche Git-Repository.
+
+## 4. Weitere Informationen und Status
+
+- [Detaillierte Installationsanleitung und GPU-Abnahmecheckliste](https://github.com/thomasasen/tts-audiobook-tool/blob/feature/runpod-p0/runpod/README.md)
+- [RunPod-Implementierung: Pull Request #6](https://github.com/thomasasen/tts-audiobook-tool/pull/6)
+- [Offene GPU-End-to-End-Tests: Issue #2](https://github.com/thomasasen/tts-audiobook-tool/issues/2)
+
+---
+
 # Table of contents
 
 - [Description](#description)
