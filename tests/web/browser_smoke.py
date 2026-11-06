@@ -84,6 +84,33 @@ def main() -> None:
                     page.get_by_role("heading", name="Vertonung vorbereiten").wait_for()
                     assert page.get_by_role("button", name="Vertonung starten").is_disabled()
 
+                    # Simulate only the finished cancellation response here.
+                    # The backend's persisted cancellation/retry path is covered
+                    # separately by real SQLite/API unit tests. This verifies
+                    # the actual production UI exposes the recovery action.
+                    page.route(
+                        "**/api/projects/*/jobs",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body='{"jobs":[{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+                                 '"project_id":"synthetic","status":"cancelled",'
+                                 '"done":0,"total":3,"chapter":"","duration":0,"error":""}]}',
+                        ),
+                    )
+                    page.route(
+                        "**/api/capabilities",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body='{"epub_import":true,"chapter_selection":true,'
+                                 '"tts_generation":true,"audio_export":true,'
+                                 '"voice_preview_available":true,"reason":"Synthetischer UI-Test"}',
+                        ),
+                    )
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    restart = page.get_by_role("button", name="Neuen Versuch starten")
+                    restart.wait_for()
+                    assert restart.is_enabled(), "Cancelled jobs must offer a new attempt"
+
                     page.get_by_role("button", name="Dunkles Design").click()
                     assert "dark" in page.locator(".shell").get_attribute("class")
                     page.set_viewport_size({"width": 390, "height": 844})
