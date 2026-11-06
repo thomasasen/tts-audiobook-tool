@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install minimal web dependencies
-        run: python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy EbookLib==0.18 beautifulsoup4==4.12.3 pysbd==0.3.4 num2words==0.5.14 natsort==8.4.0 librosa==0.11.0 sounddevice==0.5.2 mutagen==1.48.1 textual==8.2.8 pyloudnorm==0.1.1 audiotsm==0.1.2 xxhash==3.5.0 watchdog==6.0.0 wakepy text2num==3.0.1 whisper_normalizer==0.1.12 requests psutil loguru==0.7.3 nvidia-ml-py chardet==5.2.0 metaphone==0.6 prompt-toolkit==3.0.52 huggingface_hub>=0.25,<2
+        run: python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy EbookLib==0.18 beautifulsoup4==4.12.3 pysbd==0.3.4 num2words==0.5.14 natsort==8.4.0 librosa==0.11.0 sounddevice==0.5.2 mutagen==1.48.1 textual==8.2.8 pyloudnorm==0.1.1 audiotsm==0.1.2 xxhash==3.5.0 watchdog==6.0.0 wakepy text2num==3.0.1 whisper_normalizer==0.1.12 requests psutil loguru==0.7.3 nvidia-ml-py chardet==5.2.0 metaphone==0.6 prompt-toolkit==3.0.52 "huggingface_hub>=0.25,<2"
       - name: CPU-only Torch for upstream Project-V5 imports
         run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
       - name: Compile Python adapter
@@ -61,7 +61,7 @@ jobs:
           node-version: "22"
       - name: Install Python, EPUB and headless browser dependencies
         run: |
-          python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy EbookLib==0.18 beautifulsoup4==4.12.3 pysbd==0.3.4 num2words==0.5.14 natsort==8.4.0 librosa==0.11.0 sounddevice==0.5.2 mutagen==1.48.1 textual==8.2.8 pyloudnorm==0.1.1 audiotsm==0.1.2 xxhash==3.5.0 watchdog==6.0.0 wakepy text2num==3.0.1 whisper_normalizer==0.1.12 requests psutil loguru==0.7.3 nvidia-ml-py chardet==5.2.0 metaphone==0.6 prompt-toolkit==3.0.52 huggingface_hub>=0.25,<2 playwright
+          python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy EbookLib==0.18 beautifulsoup4==4.12.3 pysbd==0.3.4 num2words==0.5.14 natsort==8.4.0 librosa==0.11.0 sounddevice==0.5.2 mutagen==1.48.1 textual==8.2.8 pyloudnorm==0.1.1 audiotsm==0.1.2 xxhash==3.5.0 watchdog==6.0.0 wakepy text2num==3.0.1 whisper_normalizer==0.1.12 requests psutil loguru==0.7.3 nvidia-ml-py chardet==5.2.0 metaphone==0.6 prompt-toolkit==3.0.52 "huggingface_hub>=0.25,<2" playwright
           python -m playwright install --with-deps chromium
       - name: CPU-only Torch for upstream Project-V5 imports
         run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
