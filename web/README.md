@@ -1,51 +1,81 @@
-# German Audiobook Studio – Web Phase 1
+# German Audiobook Studio: Web-Frontend und Produktions-API
 
-Die **erste Implementierungsstufe** bietet eine authentifizierte Bibliothek mit EPUB-Import, Kapitelanalyse und expliziter Startauswahl. **Keine TTS-Generierung, keine Hörprobe und kein M4B-Export sind in diesem Stand freigegeben.** Die vorhandene TUI und RunPod-Startbefehle bleiben unverändert.
+**Stand:** Die deutschsprachige React/FastAPI-Anwendung ist implementiert und über
+die bestehenden Pull Requests #8–#13 in Entwicklung. Die technische
+Browser-/EPUB- und M4B-Abnahme läuft in GitHub Actions. **Reale GPU-Inferenz,
+deutsche Hörabnahme und Pod-Neustart sind noch nicht freigegeben.**
+
+## Architektur und Funktionen
+
+- Geschützte Einzelbenutzer-Bibliothek mit privatem SQLite-Speicher
+- EPUB-Import über den bestehenden EbookLib-/Projektparser, kein Parallelparser
+- Vorwortauswahl, Ausschluss des Inhaltsverzeichnisses, Textvorschau
+- Originales Project-V5-Buchformat und Ausspracheglossar
+- Thorsten-CosyVoice3 als einzige kuratierte deutsche Männerstimme
+- Echte Hörprobe mit expliziter manueller Freigabe, ohne Stimmstudio oder Upload
+- Persistenter serieller GPU-Worker, Pause/Resume/Abbruch und Segmentwiederholung
+- Optionale deutsche Whisper-ASR-Hinweise, WAV-Vorschau und M4B-AAC-Export
+- Alte Terminaloberfläche bleibt weiterhin unabhängig nutzbar
+
+Die Web-API ist **kein separater TTS-Modellklon** und darf die Projektdateien
+nicht direkt aus einem anderen Benutzerprozess verändern. Modellgewichte,
+Stimmen, Dateien und Zugangsschlüssel gehören auf ein persistentes privates
+Volume außerhalb von Git.
 
 ## Lokal starten
 
-Die vorhandene Python-Umgebung muss die Basisabhängigkeiten des Originalprojekts inklusive `ebooklib`, `beautifulsoup4`, `pysbd` und deren weiterführende Abhängigkeiten enthalten. Zusätzliche Web-Abhängigkeiten:
+Verwende eine bereits installierte vollständige Python-Projektumgebung (z. B.
+Qwen). Alle Abhängigkeiten aus dem Originalprojekt müssen vorhanden sein;
+nur web/requirements.txt reicht für EPUB-Projektpersistenz **nicht** aus.
 
-```bash
+~~~bash
 python -m pip install -r web/requirements.txt
 cd web && npm install && npm run build && cd ..
 export AUDIOBOOK_STUDIO_DATA_DIR="$PWD/.studio-private"
 export AUDIOBOOK_STUDIO_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(36))')"
-uvicorn tts_audiobook_tool.web_studio.app:app --host 127.0.0.1 --port 7860
-```
+python -m uvicorn tts_audiobook_tool.web_studio.app:app --host 127.0.0.1 --port 7860 --workers 1
+~~~
 
-Die Adresse ist lokal **http://127.0.0.1:7860**. Den Wert aus `AUDIOBOOK_STUDIO_TOKEN` beim Anmelden eingeben. Der Token darf nicht in URL, Git-Repository oder öffentliche Logs gelangen.
+Lokale Adresse: http://127.0.0.1:7860
 
-Für Frontend-Entwicklung kann `cd web && npm run dev` verwendet werden; Vite leitet `/api` auf den lokalen Backend-Port 7860 weiter. **Den Entwicklungsserver nicht über das öffentliche Netzwerk freigeben.**
+Das Zugangstoken gehört weder in URLs noch in öffentliche Logs. Private
+Dateien nicht im Git-Checkout ablegen; das Beispiel-Datenverzeichnis ist
+nur für lokale Entwicklung gedacht. Vite-Entwicklung erfolgt über
+den lokalen Dev-Server, niemals ungeschützt im Internet.
 
-## RunPod (noch nicht produktiv freigegeben)
+## RunPod-Schnellstart
 
-Nach Prüfung von PR #6 kann der Backend-Port 7860 geschützt über den RunPod-HTTPS-Proxy bereitgestellt werden. **Vorher** ein starkes `AUDIOBOOK_STUDIO_TOKEN` als Pod-Secret/Umgebungsvariable und ein persistentes `AUDIOBOOK_STUDIO_DATA_DIR=/workspace/audiobook-data` konfigurieren. Die Web-App erzwingt einen Bearer-Token für private API-Routen, aber sie ist **kein Ersatz für eine vorgeschaltete Zugriffsbeschränkung**. Proxy-Zugriff, TLS, Isolation und Neustart sind auf einem echten Pod zu prüfen.
+Der [RunPod-Startbefehl](../README.md) konfiguriert den Webserver zusätzlich
+zur ursprünglichen TUI, bindet Port 7860 an den RunPod-HTTPS-Proxy und
+installiert Thorsten in einer getrennten Python-3.11-Umgebung. Ein starker
+Bearer-Token bleibt verpflichtend; der Proxy ersetzt keine zusätzliche
+Netzwerkbeschränkung.
 
-Die reguläre TUI bleibt der Standard; es erfolgt noch **keine** Umstellung des RunPod-Startbefehls. Externe öffentliche GitHub-Links verweisen auf Code, nicht auf eine live laufende Webinstanz.
+Die komplette, auf echten Hardware-Einsatz ausgerichtete
+[Abnahmecheckliste](../runpod/ACCEPTANCE.md) enthält Kopierbefehle,
+GPU-Preflight, originales Test-EPUB, M4B-Kapitelprüfung,
+Wiederanlaufprüfung und Hörkriterien.
 
-## API-Grundlage
+## Geschützte Endpunkte
 
-- `GET /api/health`: öffentliche Betriebsprüfung ohne private Daten.
-- `GET /api/session`: Token-Validierung.
-- `GET /api/projects`, `POST /api/projects`: geschützte Bibliothek und EPUB-Upload.
-- `GET /api/projects/{id}`: Kapitel und Textvorschau.
-- `PUT /api/projects/{id}/chapters`: Auswahl speichern, vorhandenes Project-V5-Format benutzen.
-- `GET /api/voices`: nur geprüfte Profile wären verfügbar; Thorsten ist derzeit Kandidat.
-- `GET /api/capabilities`: überprüfbarer Implementierungsstatus.
+- GET /api/session: Token, Sprachausgabe- und Instanzkennzeichen
+- GET/POST /api/projects: Projekte und EPUB-Import
+- GET/PUT /api/projects/{id}/chapters: Start- und Kapitelwahl
+- GET/PUT /api/projects/{id}/glossary: bestehende Word Substitutions
+- GET /api/voices, POST /api/voices/preview und /approve: geprüfte Stimme
+- GET/POST /api/projects/{id}/jobs: persistente Produktionsaufträge
+- POST /jobs/{id}/control: Pause, Resume und Abbruch
+- GET /jobs/{id}/quality, POST /segments/{index}/retry: ASR-QA und Korrektur
+- POST /jobs/{id}/export, GET /jobs/{id}/download: M4B
+- DELETE /api/projects/{id}: sichere Löschung nach Jobstopp
 
-Upload-Prüfungen: 60 MB komprimierte Dateigröße, 300 MB unkomprimiert, 5000 Archiveinträge, kein Traversal, keine Symlinks, keine Verschlüsselung, EPUB-MIME im Archiv. Aufbewahrung: `studio-projects/{uuid}/source.epub`, private Kapitelvorschau und `engine/` mit den Originalformaten. Es werden keine Buchdateien im öffentlichen Git abgelegt.
+Sämtliche personenbezogenen bzw. dateibezogenen Endpunkte prüfen Bearer-Auth.
+Die öffentliche Health-Route enthält keine privaten Daten.
 
-## Grenzen und QA
+## Sicherheit und Grenzen
 
-Die Web-Tests prüfen Authentifizierung, Archivabwehr, Kapitelvorschau, deutsche Standardauswahl und das Fail-Closed-Verhalten ohne Sprecher. Sie verwenden für die Import-API eine kontrollierte **Extractor-Test-Double**: das beweist nicht, dass der gesamte Original-Importer mit einem echten Fachbuch funktioniert. Echtes EPUB-E2E, Vorwort-Abgleich, Qwen/MOSS-Inferenz, stimmrechtliche Prüfung, Audioqualitätsvergleich, Weiterlaufen nach Pod-Neustart und M4B-Kapitelmarken stehen aus.
-
-Prüfe:
-```bash
-python -m pytest tests/web/test_studio_api.py -q --confcutdir=tests/web
-cd web && npm run build
-```
-
-**Sicherheits- und Betriebsgrenzen:** Einzelbenutzer-Modus, ein Webserver-Prozess, nur ein vertrauenswürdiger Administrator. Keine freigegebene Mehrnutzer-/Multiworker-Jobverwaltung; keine parallele GPU-Job-Ausführung. Auch nach bestandenem Frontend-Build ist eine Browser-Abnahme nötig.
-
-Die verbindliche Gesamtanforderung steht in [docs/web-ui-german-spec.md](../docs/web-ui-german-spec.md) (PR #8).
+Ein vertrauenswürdiger Administrator, **ein** Webserverprozess, **ein**
+GPU-Worker. Kein echter Multiuser-/Clusterbetrieb, keine allgemein
+zugängliche Bibliothek und keine automatische Freigabe ungeprüfter Stimmen.
+Ein erfolgreiches CI-Ergebnis ist weder eine reale RunPod-GPU-Prüfung
+noch ein Nachweis der natürlichen deutschen Hörbuchqualität.
