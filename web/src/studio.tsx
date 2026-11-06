@@ -1,8 +1,8 @@
-import { useRef, useState, type FormEvent, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from 'react'
 import {
   ArrowLeft, BookOpen, Check, ChevronRight, CloudUpload, FileAudio,
   FolderOpen, Headphones, LockKeyhole, Moon, ShieldCheck, Sun,
-  Volume2, AlertCircle, RotateCcw
+  Volume2, AlertCircle, RotateCcw, Trash2, PlayCircle, PauseCircle, StopCircle
 } from 'lucide-react'
 
 type Chapter = {
@@ -34,7 +34,25 @@ type VoiceCandidate = {
   source: string
 }
 type ApiError = { detail?: string }
-type View = 'library' | 'chapters' | 'voices' | 'export'
+type View = 'library' | 'chapters' | 'voices' | 'export' | 'glossary'
+type Job = {
+  id: string
+  project_id: string
+  status: string
+  done: number
+  total: number
+  chapter: string
+  duration: number
+  error: string
+}
+type Capabilities = {
+  epub_import: boolean
+  chapter_selection: boolean
+  tts_generation: boolean
+  audio_export: boolean
+  voice_preview_available: boolean
+  reason: string
+}
 
 async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -76,6 +94,121 @@ export default function Studio() {
   const [start, setStart] = useState(0)
   const [excluded, setExcluded] = useState<number[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
+  const [job, setJob] = useState<Job | null>(null)
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
+  const [glossary, setGlossary] = useState('')
+  const [audioUrl, setAudioUrl] = useState('')
+  const [previewPlayed, setPreviewPlayed] = useState(false)
+  const [sampleIndex, setSampleIndex] = useState(0)
+
+  async function refreshJob(id: string, projectId: string) {
+    const latest = await api<Job>(`/api/projects/${projectId}/jobs/${id}`, token)
+    setJob(latest)
+    if (['generated', 'completed', 'failed', 'cancelled'].includes(latest.status)) {
+      await refreshProjects()
+    }
+  }
+
+  useEffect(() => {
+    if (!token || !active || !job || !['queued', 'running', 'exporting'].includes(job.status)) return
+    const interval = window.setInterval(() => {
+      void refreshJob(job.id, active.id).catch(err => setError((err as Error).message))
+    }, 3000)
+    return () => window.clearInterval(interval)
+  }, [token, active?.id, job?.id, job?.status])
+
+  async function loadAudio(path: string, method = 'GET') {
+    setBusy(true); setError('')
+    try {
+      const response = await fetch(path, {method, headers: {Authorization: `Bearer ${token}`}, cache: 'no-store'})
+      if (!response.ok) {
+        const payload = await response.json() as ApiError
+        throw new Error(payload.detail ?? 'Die Audiodatei ist nicht verfügbar.')
+      }
+      const url = URL.createObjectURL(await response.blob())
+      setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return url })
+      setPreviewPlayed(true)
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function loadGlossary() {
+    if (!active) return
+    setBusy(true); setError('')
+    try {
+      const response = await api<{entries: Record<string, string>}>(`/api/projects/${active.id}/glossary`, token)
+      setGlossary(Object.entries(response.entries).map(([key, value]) => `${key} = ${value}`).join('\n'))
+      setView('glossary')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function saveGlossary() {
+    if (!active) return
+    const entries: Record<string, string> = {}
+    for (const line of glossary.split('\n').map(s => s.trim()).filter(Boolean)) {
+      const separator = line.indexOf('=')
+      if (separator < 1 || separator === line.length - 1) {
+        setError('Bitte das Format Begriff = Sprechweise verwenden.')
+        return
+      }
+      entries[line.slice(0, separator).trim()] = line.slice(separator + 1).trim()
+    }
+    setSaving(true); setError('')
+    try {
+      await api(`/api/projects/${active.id}/glossary`, token, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries})})
+      setNotice('Das bestehende Projekt-Ausspracheglossar wurde aktualisiert.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setSaving(false) }
+  }
+
+  async function refreshProduction(projectId: string) {
+    const [list, caps] = await Promise.all([
+      api<{jobs: Job[]}>(`/api/projects/${projectId}/jobs`, token),
+      api<Capabilities>('/api/capabilities', token),
+    ])
+    setJob(list.jobs[0] ?? null); setCapabilities(caps)
+  }
+
+  async function productionAction(action: 'start'|'pause'|'resume'|'cancel'|'export') {
+    if (!active) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      if (action === 'start') {
+        const next = await api<Job>(`/api/projects/${active.id}/jobs`, token, {method: 'POST'})
+        setJob(next)
+      } else if (action === 'export' && job) {
+        await api(`/api/projects/${active.id}/jobs/${job.id}/export`, token, {method: 'POST'})
+        await refreshJob(job.id, active.id)
+      } else if (job) {
+        const updated = await api<Job>(`/api/projects/${active.id}/jobs/${job.id}/control`, token, {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action}),
+        })
+        setJob(updated)
+      }
+      await refreshProjects()
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function deleteProject(id: string) {
+    if (!window.confirm('Dieses Buch und alle erzeugten Dateien endgültig löschen?')) return
+    setBusy(true); setError('')
+    try {
+      await api(`/api/projects/${id}`, token, {method: 'DELETE'})
+      if (active?.id === id) {setActive(null); setJob(null);setView('library')}
+      await refreshProjects()
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function openProduction() {
+    if (!active) return
+    setBusy(true); setError('')
+    try { await refreshProduction(active.id); setView('export') }
+    catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
 
   async function signIn(event: FormEvent) {
     event.preventDefault()
@@ -91,7 +224,8 @@ export default function Studio() {
 
   function signOut() {
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
-    setNotice(''); setError(''); setView('library')
+    if (audioUrl) URL.revokeObjectURL(audioUrl)
+    setAudioUrl(''); setJob(null); setNotice(''); setError(''); setView('library')
   }
 
   async function refreshProjects() {
@@ -106,6 +240,8 @@ export default function Studio() {
       setActive(project)
       setStart(project.selected_start)
       setExcluded(project.excluded_indices)
+      if (next === 'export') await refreshProduction(id)
+      setJob(null)
       setView(next)
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -153,6 +289,8 @@ export default function Studio() {
     try {
       const catalog = await api<{ready: VoiceCandidate[], candidates: VoiceCandidate[]}>('/api/voices', token)
       setVoices([...catalog.ready, ...catalog.candidates])
+      setPreviewPlayed(false)
+      setCapabilities(await api<Capabilities>('/api/capabilities', token))
       setView('voices')
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -203,7 +341,8 @@ export default function Studio() {
             <div className="sidebar-heading second-heading">AKTUELLES BUCH</div>
             <button disabled={!active} className={`nav-item ${view === 'chapters' ? 'selected' : ''}`} onClick={() => setView('chapters')}><BookOpen size={19}/> Text und Kapitel</button>
             <button disabled={!active} className={`nav-item ${view === 'voices' ? 'selected' : ''}`} onClick={showVoices}><Volume2 size={19}/> Sprecher</button>
-            <button disabled={!active} className={`nav-item ${view === 'export' ? 'selected' : ''}`} onClick={() => setView('export')}><FileAudio size={19}/> Hörbuch und Export</button>
+            <button disabled={!active} className={`nav-item ${view === 'glossary' ? 'selected' : ''}`} onClick={loadGlossary}><BookOpen size={19}/> Ausspracheglossar</button>
+            <button disabled={!active} className={`nav-item ${view === 'export' ? 'selected' : ''}`} onClick={openProduction}><FileAudio size={19}/> Hörbuch und Export</button>
             <div className="sidebar-bottom"><ShieldCheck size={16}/> Privat auf deinem Server</div>
           </aside>
           <main id="content" className="content">
@@ -216,10 +355,10 @@ export default function Studio() {
               <h2 className="section-heading">Projekte</h2>
               {projects.length === 0 ? (
                 <div className="panel empty-state"><div className="circle-icon"><BookOpen size={25}/></div><h3>Deine Bibliothek ist noch leer</h3><p>Importiere eine EPUB-Datei. Das Studio erkennt die Kapitel und schlägt dir den passenden Einstieg vor.</p><button className="outline-btn" onClick={() => fileRef.current?.click()} disabled={busy}><CloudUpload size={17}/> Erste EPUB auswählen</button></div>
-              ) : <div className="book-grid">{projects.map(p => <button key={p.id} className="book-card" onClick={() => openProject(p.id)} disabled={busy}>
+              ) : <div className="book-grid">{projects.map(p => <div key={p.id} className="book-card"><button className="book-open" onClick={() => openProject(p.id)} disabled={busy}>
                 <div className="book-cover"><BookOpen size={32}/><span>EPUB</span></div>
                 <span className="book-info"><strong>{p.title}</strong><small>{p.chapter_count} Abschnitte · {formatDate(p.updated_at)}</small><em className="status-chip">{p.status}</em></span><ChevronRight size={19}/>
-              </button>)}</div>}
+              </button><button className="icon-btn delete-project" title="Projekt löschen" aria-label={`Projekt ${p.title} löschen`} onClick={() => deleteProject(p.id)} disabled={busy}><Trash2 size={18}/></button></div>)}</div>}
             </>}
             {view === 'chapters' && active && <>
               <div className="page-heading"><div><button className="back-link" onClick={() => setView('library')}><ArrowLeft size={16}/> Bibliothek</button><p className="eyebrow">KAPITEL VORBEREITEN</p><h1>{active.title}</h1><p>Lege fest, welcher Abschnitt als Erstes vorgelesen werden soll.</p></div></div>
@@ -248,15 +387,62 @@ export default function Studio() {
               </div>
               <div className="action-bar"><span><ShieldCheck size={16}/> Originaldatei bleibt privat auf dem Server.</span><div><button className="outline-btn" disabled={saving || busy} onClick={() => openProject(active.id)}><RotateCcw size={16}/> Zurücksetzen</button><button className="primary-btn" disabled={saving || readChapters.length === 0} onClick={saveChapters}>{saving ? 'Speichere …' : 'Auswahl speichern'}<Check size={18}/></button></div></div>
             </>}
+            {view === 'glossary' && active && <>
+              <div className="page-heading"><div><p className="eyebrow">SPRACHEINSTELLUNGEN</p><h1>Ausspracheglossar</h1><p>Pro Begriff eine Zeile. Gesprochene Form definieren, ohne den Originaltext zu verändern.</p></div></div>
+              <div className="panel glossary-panel">
+                <label htmlFor="glossary">Begriff = gesprochene Form</label>
+                <textarea id="glossary" rows={12} value={glossary} onChange={e => setGlossary(e.target.value)} placeholder={'MEDDPICC = M E D D P I C C\nSaaS = Säss'} spellCheck={false}/>
+                <p className="helper">Nur gezielt geprüfte Fachbegriffe eintragen. Die Originalfassung des Buchs bleibt unverändert. Dieses Glossar nutzt die vorhandenen Wortersetzungen des Projektmodells.</p>
+                <button className="primary-btn" disabled={saving || !['Vorbereitet','Fertig','Audio bereit','Entwurf'].includes(active.status)} onClick={saveGlossary}>{saving ? 'Speichere …' : 'Glossar speichern'}<Check size={18}/></button>
+              </div>
+            </>}
             {view === 'voices' && active && <>
-              <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Die passende deutsche Stimme</h1><p>Nur rechtlich geprüfte, fertig konfigurierte Stimmen werden zur Auswahl freigeschaltet.</p></div></div>
-              <div className="panel voice-notice"><LockKeyhole size={21}/><div><strong>Sprecher noch nicht freigegeben</strong><p>Der erste deutsche Referenzsprecher wird technisch und rechtlich geprüft. Ohne verifizierte Aufnahme, passendes Transkript und tatsächliche deutsche Hörprobe wird keine künstliche Ersatzstimme angeboten.</p></div></div>
-              <h2 className="section-heading">Kandidaten in Prüfung</h2>
-              <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">Prüfung offen</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small></div></div>)}</div>
+              <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Deutsche Erzählerstimme</h1><p>Ausschließlich fertig trainierte Stimmen, keine hochgeladenen Referenzen oder Stimmklone.</p></div></div>
+              {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice"><LockKeyhole size={21}/><div><strong>Sprecherfreigabe erforderlich</strong><p>Thorsten-CosyVoice3 muss lokal installiert werden. Erzeuge die echte Hörprobe, höre sie vollständig an und bestätige erst danach die Freigabe. Ohne installierte Engine ist die Produktion gesperrt.</p></div></div>}
+              <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : 'Freigabe offen'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
+                <div className="voice-actions"><button className="outline-btn" disabled={busy || !capabilities?.voice_preview_available} onClick={() => {setPreviewPlayed(false);void loadAudio('/api/voices/preview','POST')}}><PlayCircle size={17}/> Echte Hörprobe erzeugen</button>
+                <button className="primary-btn" disabled={busy || !previewPlayed} onClick={async () => {
+                  try { await api('/api/voices/approve', token, {method:'POST'}); await showVoices(); setNotice('Stimme nach manueller Hörabnahme freigegeben.') }
+                  catch (err) { setError((err as Error).message) }
+                }}><Check size={17}/> Nach Anhören freigeben</button></div>
+              </div></div>)}</div>
+              {audioUrl && <div className="panel audio-preview"><h3>Hörprobe</h3><audio src={audioUrl} controls onPlay={() => setPreviewPlayed(true)}/><p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p></div>}
             </>}
             {view === 'export' && active && <>
-              <div className="page-heading"><div><p className="eyebrow">HÖRBUCH ERSTELLEN</p><h1>Generieren und exportieren</h1><p>Projekt: {active.title}</p></div></div>
-              <div className="panel empty-state"><div className="circle-icon"><FileAudio size={26}/></div><h2>Generierung noch nicht freigeschaltet</h2><p>Eine reale GPU-Worker-Integration und eine freigegebene deutsche Sprecherreferenz fehlen noch. Die Buchvorbereitung funktioniert bereits. Es wird keine Schein-Generierung gestartet.</p><button className="outline-btn" onClick={() => setView('chapters')}><BookOpen size={17}/> Kapitelauswahl bearbeiten</button></div>
+              <div className="page-heading"><div><p className="eyebrow">PRODUKTION UND EXPORT</p><h1>Hörbuch erstellen</h1><p>{active.title}</p></div></div>
+              <div className="panel production-panel">
+                {!job ? <>
+                  <h2>Vertonung vorbereiten</h2>
+                  <p>{capabilities?.reason ?? 'Prüfe die installierten Stimmen.'}</p>
+                  <button className="primary-btn" disabled={busy || !capabilities?.tts_generation || active.status !== 'Vorbereitet'} onClick={() => productionAction('start')}><PlayCircle size={18}/> Vertonung starten</button>
+                  {!capabilities?.tts_generation && <button className="outline-btn" onClick={showVoices}><Volume2 size={17}/> Sprecher prüfen</button>}
+                </> : <>
+                  <div className="panel-head"><h2>Auftrag</h2><span className="status-chip">{job.status}</span></div>
+                  <p>Aktuelles Kapitel: {job.chapter || 'Noch kein Kapitel begonnen'}</p>
+                  <progress max={Math.max(1,job.total)} value={job.done} aria-label="Fortschritt"/><p>{job.done} von {job.total} Segmenten · {Math.round(job.duration)} Sekunden Audio</p>
+                  {job.error && <p className="error" role="alert">{job.error}</p>}
+                  <div className="job-actions">
+                    {['queued','running'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('pause')}><PauseCircle size={17}/> Pausieren</button>}
+                    {['paused','failed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('resume')}><PlayCircle size={17}/> Fortsetzen</button>}
+                    {['queued','running','paused','failed'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('cancel')}><StopCircle size={17}/> Abbrechen</button>}
+                    {['generated','completed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('export')}><FileAudio size={17}/> M4B erstellen</button>}
+                    {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(\`/api/projects/\${active.id}/jobs/\${job.id}/download\`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
+                    {job.status === 'completed' && <button className="primary-btn" disabled={busy} onClick={async () => {
+                      const response = await fetch(\`/api/projects/\${active.id}/jobs/\${job.id}/download\`, {headers:{Authorization:\`Bearer \${token}\`}})
+                      if(!response.ok) {setError('Download nicht verfügbar.');return}
+                      const url=URL.createObjectURL(await response.blob())
+                      const link=document.createElement('a');link.href=url;link.download='audiobook.m4b';link.click()
+                      window.setTimeout(()=>URL.revokeObjectURL(url),5000)
+                    }}>M4B herunterladen</button>}
+                  </div>
+                  {job.done > 0 && <div className="segment-preview">
+                    <label htmlFor="segment-index">Segment zum Anhören (0–{job.done-1})</label>
+                    <input id="segment-index" type="number" min={0} max={job.done-1} value={Math.min(sampleIndex,job.done-1)} onChange={e => setSampleIndex(Number(e.target.value))}/>
+                    <button className="outline-btn" disabled={busy} onClick={() => loadAudio(\`/api/projects/\${active.id}/jobs/\${job.id}/segments/\${Math.min(sampleIndex,job.done-1)}\`)}><PlayCircle size={17}/> Segment anhören</button>
+                  </div>}
+                  {audioUrl && <audio src={audioUrl} controls className="chapter-player"/>}
+                </>}
+              </div>
             </>}
             <footer className="footer">German Audiobook Studio <span>·</span> Fachbücher. Deutsche Sprachausgabe. Geschützte Verarbeitung.</footer>
           </main>
