@@ -20,16 +20,24 @@ Stand: 06.11.2026. **Kein Produktions- oder GPU-Test wurde behauptet.**
 6. Stimme: Thorsten-Voice/CosyVoice3 ist ein fertig trainiertes deutsches Modell (Apache-2.0, CC0-Daten). Keine nutzerseitigen Referenzen und kein Stimmkloning. Ohne lokale Engine und echte angehörte Hörprobe bleibt die Produktion gesperrt.
 7. TUI und bestehende Engine bleiben unberührt.
 
+## Zwischenzeitlich implementiert im Integrations-PR #12
+
+- Curated Thorsten-CosyVoice3-Python-3.11-Installation auf persistentem Volume, deutscher Webstart, ursprüngliche TUI erhalten
+- Dauerhaft geladener CosyVoice3-Modellprozess, ohne erneutes Laden bei jedem Segment
+- Optionaler Whisper-basierter deutscher ASR-Abgleich und konservative Hinweise zu Stille/Clipping; konkrete Funde können abgehört und einzelne Segmente wiederholt werden
+- Echtes M4B-/AAC-Containerformat samt Kapitelmarken mit synthetischen WAV-Testdaten automatisiert geprüft (kein TTS-Hörtest)
+- Sicherer Web-Token, segmentweise persistente Verarbeitung, Wiederaufnahme auf Neustart
+
 ## Offene Release-Gates
 
 - [ ] Thorsten CosyVoice3 auf RunPod installieren, CLI verifizieren, deutsche Hörprobe und Freigabe
 - [ ] Blindhörvergleich CosyVoice3 / Qwen3-TTS 1.7B / MOSS v1.5 bei gleichem deutschen Fachtext
 - [ ] Mehrere reale EPUBs mit deutschen Inhaltsverzeichnissen und Vorwort testen
 - [ ] Tatsächlichen Neustart, Resume und Abbruch im Langzeittest verifizieren
-- [ ] M4B-Kapitel mit ffprobe und mehreren Playern prüfen
-- [ ] Whisper-ASR, Qualitätsflagging und Segmentneugenerierung integrieren
+- [ ] M4B-Kapitel mit ffprobe und mehreren Playern auf **RunPod-generierten** Audiodateien prüfen; PyAV-Container-/Decode-Test mit synthetischer Spracheingabe vorhanden
+- [ ] Whisper-ASR und Qualitätsflagging mit **echten generierten deutschen Audiosegmenten** validieren (Code integriert, keine GPU-Hörabnahme)
 - [ ] Cover, Autorenmetadaten und gegebenenfalls MP3 ergänzen
-- [ ] Browser-E2E und visuelles Review samt A11y
+- [ ] Browser-End-to-End-Tests und visuelles Review samt Barrierefreiheit und Fehlerzuständen
 - [ ] Last-/Security-Test mit vollem Datenträger und problematischen EPUB-Dateien
 
 Automatisierte Tests belegen Funktionalität, keine Sprachqualität. Keine ungeprüften Merges in master. Große Debug- und Testarchive nicht in Git speichern.
