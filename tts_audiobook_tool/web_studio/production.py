@@ -7,6 +7,9 @@ disabled unless an operator has installed and auditioned a curated voice.
 from __future__ import annotations
 
 import hashlib
+import difflib
+import sys
+from array import array
 import json
 import os
 import re
@@ -29,6 +32,7 @@ _GPU = threading.Lock()
 _THREAD: threading.Thread | None = None
 _LOCK_FILE = None
 _MODEL_PROC = None
+_ASR_MODEL = None
 
 
 def _close_model() -> None:
@@ -185,6 +189,66 @@ def _valid_audio(path: Path) -> float:
         if not payload or all(byte == 0 for byte in payload):
             raise ValueError("Audiosegment enthält keine Sprache.")
         return frames / audio.getframerate()
+
+
+def _audio_quality(path: Path, expected: str) -> dict:
+    """Conservative QC flags. ASR discrepancies require human review.
+
+    Uses the same private WAV and original intended spoken prompt; it never
+    rewrites the book, changes voice settings or deletes a valid segment.
+    """
+    warnings = []
+    with wave.open(str(path), "rb") as wav:
+        if wav.getsampwidth() == 2:
+            zero_windows = 0
+            max_silence = 0
+            clipped = 0
+            seen = 0
+            while chunk := wav.readframes(wav.getframerate()):
+                samples = array("h")
+                samples.frombytes(chunk)
+                if sys.byteorder != "little":
+                    samples.byteswap()
+                if not samples:
+                    break
+                avg = sum(abs(n) for n in samples) / len(samples)
+                zero_windows = zero_windows + 1 if avg < 150 else 0
+                max_silence = max(max_silence, zero_windows)
+                clipped += sum(1 for n in samples if abs(n) >= 32500)
+                seen += len(samples)
+            if max_silence >= 3:
+                warnings.append("Mindestens drei Sekunden fast vollständige Stille.")
+            if seen and clipped / seen >= 0.01:
+                warnings.append("Mögliche Übersteuerung / Clipping.")
+    result = {"status": "not_checked", "warnings": warnings, "asr_similarity": None}
+    name = os.environ.get("AUDIOBOOK_STUDIO_ASR_MODEL", "")
+    if not name:
+        result["reason"] = "ASR nicht aktiviert."
+        return result
+    if name not in ("tiny", "base", "small", "medium"):
+        result["reason"] = "Ungültige Whisper-Modellkonfiguration."
+        return result
+    global _ASR_MODEL
+    try:
+        if _ASR_MODEL is None:
+            from faster_whisper import WhisperModel
+            _ASR_MODEL = WhisperModel(name, device="cpu", compute_type="int8")
+        transcript_segments, _ = _ASR_MODEL.transcribe(str(path), language="de", beam_size=3)
+        transcript = " ".join(s.text.strip() for s in transcript_segments).strip()
+        expected_words = re.findall(r"\w+", expected.casefold(), flags=re.UNICODE)
+        actual_words = re.findall(r"\w+", transcript.casefold(), flags=re.UNICODE)
+        similarity = difflib.SequenceMatcher(a=expected_words, b=actual_words, autojunk=False).ratio()
+        result["status"] = "review" if similarity < 0.75 else "passed"
+        result["asr_similarity"] = round(similarity, 3)
+        result["transcript"] = transcript[:12000]
+        if similarity < 0.75:
+            warnings.append("ASR und erwarteter Text weichen deutlich voneinander ab.")
+        # This is a heuristic token similarity, not an accuracy/word-error-rate claim.
+        return result
+    except Exception:
+        result["status"] = "unavailable"
+        result["reason"] = "Whisper-Prüfung nicht verfügbar. Manuelle Hörkontrolle nötig."
+        return result
 
 
 def _synthesize(text: str, path: Path) -> float:
@@ -516,7 +580,9 @@ def _run(job_id: str):
                         if attempt == 2:
                             raise
                         time.sleep(1)
-                _atomic_json(meta, {"fingerprint": fingerprint, "text": segment["text"], "prompt": prompt, "duration": seconds})
+                _atomic_json(meta, {"fingerprint": fingerprint, "text": segment["text"],
+                                    "prompt": prompt, "duration": seconds,
+                                    "quality": _audio_quality(path, prompt)})
             duration += seconds
             done += 1
             if segment["title"] != chapter or done % 5 == 0 or done == len(segments):
@@ -540,6 +606,54 @@ def audio_path(project_id: str, job_id: str, index: int) -> Path:
     if not path.is_file():
         raise ValueError("Das Segment wurde noch nicht erzeugt.")
     return path
+
+
+def quality_report(project_id: str, job_id: str) -> dict:
+    job = public_job(project_id, job_id)
+    issues = []
+    checked = 0
+    for index in range(job["total"]):
+        meta = _jobs_dir(job_id) / "audio" / f"{index:07d}.json"
+        if not meta.is_file():
+            continue
+        try:
+            info = json.loads(meta.read_text(encoding="utf-8"))
+            quality = info.get("quality", {})
+            if quality.get("status") in ("passed", "review"):
+                checked += 1
+            if quality.get("status") in ("review", "unavailable") or quality.get("warnings"):
+                issues.append({
+                    "index": index,
+                    "status": quality.get("status", "not_checked"),
+                    "warnings": quality.get("warnings", []),
+                    "asr_similarity": quality.get("asr_similarity"),
+                })
+        except (OSError, ValueError, TypeError):
+            issues.append({"index": index, "status": "unavailable",
+                           "warnings": ["Segmentprüfbericht beschädigt."]})
+    return {"checked": checked, "total": job["total"], "issues": issues}
+
+
+def retry_segment(project_id: str, job_id: str, index: int) -> dict:
+    job = public_job(project_id, job_id)
+    if job["status"] not in ("generated", "completed"):
+        raise ValueError("Einzelne Segmente können erst nach der Generierung erneut erzeugt werden.")
+    if not 0 <= index < job["total"]:
+        raise ValueError("Ungültiger Segmentindex.")
+    if not voice_ready():
+        raise ValueError("Die freigegebene deutsche Stimme ist nicht verfügbar.")
+    path = _jobs_dir(job_id) / "audio" / f"{index:07d}.wav"
+    path.unlink(missing_ok=True)
+    path.with_suffix(".json").unlink(missing_ok=True)
+    (_jobs_dir(job_id) / "audiobook.m4b").unlink(missing_ok=True)
+    with _studio()._db() as db:
+        db.execute("UPDATE studio_jobs SET status='queued',done=0,duration=0,chapter='',error='',updated_at=? WHERE id=?",
+                   (_now(), job_id))
+        db.execute("UPDATE studio_projects SET status='Warteschlange',updated_at=? WHERE id=?",
+                   (_now(),project_id))
+    _WAKE.set()
+    return public_job(project_id, job_id)
+
 
 
 def export_job(project_id: str, job_id: str) -> Path:
