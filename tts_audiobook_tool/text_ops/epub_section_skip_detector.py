@@ -28,9 +28,10 @@ class EpubSectionSkipDetector:
     publication metadata section is skipped anywhere in the spine when its content independently
     corroborates the label, since a fixed window cannot anticipate unusually long front matter.
 
-    These heuristics currently make English-language assumptions. In particular, the publication metadata,
-    front/back matter, and table-of-contents keyword lists are English-oriented and should be expanded
-    or made language-aware if EPUB import needs robust support for other languages.
+    German and English publication metadata and table-of-contents labels are recognized
+    conservatively. A matching TOC label alone is not enough to skip a reading
+    section: structural evidence and the existing front/back scan limits remain
+    mandatory. Do not treat prefaces or forewords as non-reading content.
     """
 
     FRONT_MATTER_SKIP_SCAN_LIMIT = 6
@@ -60,6 +61,9 @@ class EpubSectionSkipDetector:
         "license",
         "otherbooks",
         "publisher",
+        "impressum",
+        "urheberrecht",
+        "verlagsangaben",
         "publishinghistory",
         "rights",
     }
@@ -68,6 +72,8 @@ class EpubSectionSkipDetector:
         "contents",
         "tableofcontents",
         "toc",
+        "inhaltsverzeichnis",
+        "inhaltsuebersicht",
     }
 
     NON_READING_HREF_TITLE_TERMS = {
@@ -78,6 +84,9 @@ class EpubSectionSkipDetector:
         "imprint",
         "landmark",
         "license",
+        "impressum",
+        "inhaltsverzeichnis",
+        "inhaltsuebersicht",
         "nav",
         "title",
         "titlepage",
@@ -111,6 +120,10 @@ class EpubSectionSkipDetector:
         "this edition",
         "translation copyright",
         "without permission of the publisher",
+        "alle rechte vorbehalten",
+        "bibliografische information der deutschen nationalbibliothek",
+        "umschlaggestaltung",
+        "ohne schriftliche genehmigung",
     }
 
     @staticmethod
@@ -293,6 +306,9 @@ class EpubSectionSkipDetector:
     @staticmethod
     def normalize_key_text(text: str) -> str:
         text = unescape(text).lower()
+        # Preserve German keyword semantics even when headings/hrefs contain
+        # umlauts or ß; the old normalization silently deleted those letters.
+        text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
         return re.sub(r"[^a-z0-9]+", "", text)
 
     @staticmethod
