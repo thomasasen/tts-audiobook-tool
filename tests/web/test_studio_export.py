@@ -73,7 +73,7 @@ def test_production_exports_playable_m4b_with_two_chapter_titles(env):
         assert container.metadata.get("title") == "Management-Handbuch"
         chapters = list(container.chapters())
         assert len(chapters) == 2
-        assert [ch.metadata["title"] for ch in chapters] == ["Vorwort", "Kapitel 1"]
+        assert [ch["metadata"]["title"] for ch in chapters] == ["Vorwort", "Kapitel 1"]
         duration = sum(frame.samples for packet in container.demux(audio=0)
                        for frame in packet.decode()) / container.streams.audio[0].rate
         assert duration >= 1.9
