@@ -4,7 +4,7 @@
 
 ## Architektur
 
-- `/workspace/tts-audiobook-tool`: der geprüfte Branch `feature/german-audiobook-release-validation`.
+- `/workspace/tts-audiobook-tool`: der geprüfte Branch `feature/german-audiobook-release-hardening`.
 - `/workspace/audiobook-data`: ausschließlich persistente Daten und Modelle, niemals Git-Artefakte.
 - `/workspace/audiobook-data/venvs/qwen`: Python 3.12, bestehende Projektlaufzeit und TUI.
 - `/workspace/audiobook-data/venvs/thorsten`: isolierte Python-3.11-CosyVoice3-Umgebung.
