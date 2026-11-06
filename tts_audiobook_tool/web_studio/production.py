@@ -6,7 +6,6 @@ disabled unless an operator has installed and auditioned a curated voice.
 """
 from __future__ import annotations
 
-import difflib
 import hashlib
 import json
 import os
@@ -106,7 +105,7 @@ def _valid_audio(path: Path) -> float:
         frames = audio.getnframes()
         if frames < audio.getframerate() // 4:
             raise ValueError("Audiosegment ist ungewöhnlich kurz.")
-        payload = audio.readframes(frames)
+        payload = audio.readframes(min(frames, 16000))
         if not payload or all(byte == 0 for byte in payload):
             raise ValueError("Audiosegment enthält keine Sprache.")
         return frames / audio.getframerate()
@@ -124,6 +123,7 @@ def _synthesize(text: str, path: Path) -> float:
         run = subprocess.run(
             [*config, "--text", text, "--output", str(temp)],
             stdin=subprocess.DEVNULL, capture_output=True, timeout=600, check=False,
+            cwd=str(Path(config[1]).parent),
         )
         if run.returncode != 0:
             raise RuntimeError("TTS-Inferenz fehlgeschlagen (Details im privaten Modellprotokoll).")
@@ -250,17 +250,10 @@ def _jobs_dir(job_id: str) -> Path:
 def init():
     """Recover interrupted jobs on restart; one worker per persistent data root."""
     global _THREAD, _LOCK_FILE
-    with _studio()._db() as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS studio_jobs (
-          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, voice_id TEXT NOT NULL,
-          status TEXT NOT NULL, done INTEGER NOT NULL, total INTEGER NOT NULL,
-          chapter TEXT NOT NULL, duration REAL NOT NULL, error TEXT NOT NULL,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-        )""")
-        db.execute("UPDATE studio_jobs SET status='queued', updated_at=? WHERE status IN ('running','exporting')", (_now(),))
     if _THREAD and _THREAD.is_alive():
         return
-    # POSIX lock prevents a second uvicorn worker from stealing interrupted jobs.
+    # Acquire the process lock *before* touching running job statuses: an
+    # accidental second web process must not reset work owned by the first.
     import fcntl
     lockfile = _studio().data_dir() / ".gpu-worker.lock"
     lockfile.touch(mode=0o600, exist_ok=True)
@@ -271,6 +264,21 @@ def init():
         handle.close()
         raise RuntimeError("Studio unterstützt nur einen Webserver-Prozess je Datenverzeichnis.")
     _LOCK_FILE = handle
+    with _studio()._db() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS studio_jobs (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, voice_id TEXT NOT NULL,
+          status TEXT NOT NULL, done INTEGER NOT NULL, total INTEGER NOT NULL,
+          chapter TEXT NOT NULL, duration REAL NOT NULL, error TEXT NOT NULL,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+        db.execute("UPDATE studio_jobs SET status='queued', updated_at=? WHERE status='running'", (_now(),))
+        db.execute("UPDATE studio_jobs SET status='generated', updated_at=? WHERE status='exporting'", (_now(),))
+    # Ignore interrupted atomically staged audio and export files; they will
+    # be regenerated instead of being considered successful outputs.
+    for staged in (_studio().data_dir() / "studio-jobs").glob("*/audio/*.partial.wav"):
+        staged.unlink(missing_ok=True)
+    for staged in (_studio().data_dir() / "studio-jobs").glob("*/audiobook.m4b.partial"):
+        staged.unlink(missing_ok=True)
     _STOP.clear()
     _WAKE.set()
     _THREAD = threading.Thread(target=_loop, name="studio-gpu-worker", daemon=True)
@@ -283,6 +291,10 @@ def stop():
     _WAKE.set()
     if _THREAD:
         _THREAD.join(timeout=2)
+    if _THREAD and _THREAD.is_alive():
+        # A running model call may still be waiting for its timeout. Retain
+        # the process lock until process exit; never allow a second worker.
+        return
     _THREAD = None
     if _LOCK_FILE:
         _LOCK_FILE.close()
