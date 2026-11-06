@@ -19,3 +19,9 @@ tts_audiobook_tool/dev_hooks.py
 
 # Disposable diagnostic scripts
 *_probe.py
+
+# Private German Audiobook Studio projects and generated frontend assets
+.studio-private/
+.studio-data/
+web/dist/
+web/.vite/
