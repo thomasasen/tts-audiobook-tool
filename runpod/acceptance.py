@@ -213,7 +213,7 @@ def status(*, checkpoint: bool = False, verify_restart: bool = False) -> dict:
             raise RuntimeError("Auftrag konnte nach Neustart nicht fortgesetzt werden.")
         # A new server ID with an unchanged queued job does not prove resume.
         # Require fresh progress or a genuinely finished production after restart.
-        if job["done"] == previous["done"] and job["status"] not in ("generated", "completed"):
+        if job["done"] == previous["done"]:
             raise RuntimeError(
                 "Server wurde neu gestartet, aber kein neuer Generierungsfortschritt nachgewiesen. "
                 "Status später erneut prüfen, während der Auftrag weiterläuft."
