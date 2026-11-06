@@ -57,7 +57,7 @@ done
 # Actual GPU model loading remains a separate mandatory live acceptance step.
 (
   cd "$MODEL_ROOT"
-  PYTHONPATH="$MODEL_ROOT:$MODEL_ROOT/third_party/Matcha-TTS:\${PYTHONPATH:-}" \
+  PYTHONPATH="$MODEL_ROOT:$MODEL_ROOT/third_party/Matcha-TTS:${PYTHONPATH:-}" \
     "$VENV/bin/python" - <<'PY'
 import torch
 import torchaudio
