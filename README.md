@@ -1,3 +1,67 @@
+# German Audiobook Studio: RunPod-Schnellstart (Entwicklungsstand)
+
+> **Noch keine Produktionsfreigabe:** Der Startmechanismus und die UI sind implementiert, reale CUDA-Generierung, Hörvergleich, GPU-Langzeittest und M4B-End-to-End-Abnahme fehlen. Der folgende Befehl ist für einen selbst betriebenen GPU-Pod gedacht.
+
+## 1. Pod wählen
+
+| Einstellung | Empfehlung |
+| --- | --- |
+| Template | RunPod PyTorch, Linux mit NVIDIA/CUDA, Git und /start.sh |
+| GPU | **RTX 4090 (24 GB VRAM)** als sinnvoller Ausgangspunkt; 24 GB geben Spielraum für Qwen und Thorsten. Für MOSS können höhere Anforderungen gelten. |
+| CPU / RAM | Mindestens 8 vCPU / 32 GB RAM empfohlen |
+| Persistentes Volume | **Mindestens 100 GB** an /workspace; für viele Buchprojekte und parallele Modellcaches 150–200 GB |
+| Exponierter HTTP-Port | 7860 (RunPod HTTPS-Proxy) |
+| Umgebungsvariablen | Optional: RUNPOD_TTS_MODELS=qwen (Vorgabe), RUNPOD_TTS_AUTOSTART_MODEL=qwen, AUDIOBOOK_STUDIO_PORT=7860, AUDIOBOOK_STUDIO_TOKEN (min. 32 Zeichen) |
+
+**RunPod Docker Start Command (vollständig kopieren):**
+
+```bash
+bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/german-audiobook-studio-runpod/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
+```
+
+Der Start lädt den ausgewählten Git-Branch konservativ in `/workspace/tts-audiobook-tool`, richtet die Qwen-/Grundumgebung und die **fest vorgegebene deutsche Thorsten-CosyVoice3-Stimme** in separaten Python-Umgebungen ein, erstellt die React-Oberfläche und startet **beide** Arbeitswege: die bisherige TUI im tmux-Fenster `audiobook`, das Web-Studio im tmux-Fenster `audiobook-web`.
+
+## 2. Weboberfläche öffnen
+
+RunPod → **Connect** → HTTP-Port **7860** → HTTPS-Adresse öffnen. Der Browser zeigt die Studio-Anmeldung. Der Token bleibt auf dem persistenten Volume und wird beim ersten Start zufällig generiert, sofern du ihn nicht als RunPod-Secret `AUDIOBOOK_STUDIO_TOKEN` gesetzt hast.
+
+Den automatisch erstellten Schlüssel **nur in der privaten Pod-Konsole** auslesen:
+
+```bash
+cat /workspace/audiobook-data/studio-access-token
+```
+
+**Sicherheit:** Der RunPod-HTTPS-Proxy stellt eine Transportverschlüsselung bereit, aber nicht automatisch eine private Zugriffsbeschränkung. Der API-Bearer-Token bleibt verpflichtend. Keine Token in Logs, Git, Screenshots oder freigegebenen Chatnachrichten. Verwende den Pod möglichst ausschließlich für dich und schütze den Zugang zusätzlich über RunPod-/Netzwerkeinstellungen.
+
+## 3. Sprecher, Vertonung und TUI
+
+Unter **Sprecher** zunächst eine echte Thorsten-Hörprobe auf dem Pod erstellen und vollständig abhören. Erst danach freigeben. Ohne erfolgreiche Modellinstallation bleibt diese Funktion sichtbar gesperrt. **Keine** Referenzstimmen-Uploads, kein Stimmstudio, kein User-Voice-Cloning. Quelle: [Thorsten-Voice/CosyVoice3](https://huggingface.co/Thorsten-Voice/CosyVoice3), Modell Apache-2.0, Datensatz CC0-1.0.
+
+Die vorhandene Konsolenanwendung bleibt unabhängig nutzbar:
+
+```bash
+tmux attach -t audiobook
+```
+
+Webserver-Ausgaben einsehen:
+
+```bash
+tmux attach -t audiobook-web
+```
+
+Aus beiden tmux-Sitzungen mit **Strg+B, danach D** lösen; die Dienste laufen weiter. Eine Stimme ohne Hörabnahme wird absichtlich nicht als bereit angezeigt.
+
+## 4. Neustart, Diagnose und Grenzen
+
+- Modelle und EPUB-/Projekt-/Hörbuchdaten verbleiben unter `/workspace/audiobook-data`, nicht im Git-Checkout; der wiederholte Start verwendet einen bereits vollständig eingerichteten Modellcache.
+- Bei Startproblemen `ls -lt /workspace/audiobook-data/logs`, `tmux attach -t audiobook-web`, `bash /workspace/tts-audiobook-tool/runpod/setup.sh --check-only` und `nvidia-smi` prüfen.
+- Ohne funktionierendes Python-/CUDA-/Thorsten-Setup sind Hörprobe und Produktion gesperrt; EPUB-Import und Kapitelauswahl bleiben nutzbar.
+- **Offen:** Reale GPU-Audiotests, Whisper-ASR-QA, Browser-E2E, belastbare ETA, Produktions-Langzeittest und technisch verifizierte M4B-Kapitel. Siehe `docs/studio-production-progress.md`.
+
+**Pull Requests:** [#6 (ursprüngliche TUI-RunPod-Basis)](https://github.com/thomasasen/tts-audiobook-tool/pull/6), [#11 (Produktion)](https://github.com/thomasasen/tts-audiobook-tool/pull/11). Dieser integrierte Entwicklungsbranch folgt auf #11 und führt die relevanten RunPod-Dateien kontrolliert zusammen.
+
+---
+
 # Deutsches KI-Hörbuch auf RunPod – Schnellstart
 
 Dieser Fork erweitert [tts-audiobook-tool](https://github.com/zeropointnine/tts-audiobook-tool) für hochwertige deutsche Hörbücher. Geplant sind eine natürliche deutsche Männerstimme, die korrekte Aussprache englischer Fachbegriffe sowie die Auswahl des **Vorworts als Startpunkt** statt des Inhaltsverzeichnisses.
