@@ -72,3 +72,23 @@ PY=/workspace/audiobook-data/venvs/qwen/bin/python
 ```
 
 Für echten Neustart mit neuem längeren Auftrag wie in [ACCEPTANCE.md](ACCEPTANCE.md) dokumentiert verfahren. `finish` allein bestätigt technische M4B-Merkmale und ersetzt nicht die Hörabnahme. **Master-Merge weiterhin gesperrt bis zur expliziten Freigabe und erfolgreichen echten Abnahme.**
+
+
+## Zweite Red-Team-Runde: Betriebs- und Datenkonsistenz (07.11.2026)
+
+Der erneute Review nach PR #14 identifizierte weitere konkrete Anwendungsfehler, die im gleichen Draft-Branch korrigiert und mit Regressionstests versehen wurden:
+
+1. **Abbruch sperrte einen erneuten Auftrag:** Nach `cancel` blieb das Projekt in `Warteschlange`, obwohl kein aktiver Auftrag mehr vorhanden war. Die API stellt nun atomar `Vorbereitet` wieder her und die Web-UI bietet **Neuen Versuch starten** für den abgebrochenen Auftrag.
+2. **Job-Erstellung gegen gleichzeitige Löschung:** Beim Erstellen wird der Projektstatus jetzt zusätzlich unter dem vorhandenen SQLite-`BEGIN IMMEDIATE` validiert. Eine zwischenzeitliche Löschung kann keinen verwaisten Job mehr erzeugen.
+3. **Sprecherfreigabe über Modellwechsel hinweg:** Frühere Hörfreigaben wurden nur an die WAV-Prüfsumme gebunden. Die Freigabe hängt jetzt zusätzlich von der Modellversionsmarke, der privaten Gewicht-Prüfsummenliste, der installierten Inferenzdatei und dem langlebigen Thorsten-Worker-Code ab. Eine Änderung setzt die Freigabe zurück, statt sie stillschweigend weiter gelten zu lassen.
+4. **Gemischte Stimmen in einem Buch:** Neue Produktionspläne speichern die Modellidentität; die Wiederaufnahme verweigert Modellwechsel und die WAV-Cache-Fingerprints schließen die Modellidentität ein. Für ältere Pläne ohne diese Kennung werden die Segment-Fingerprints durch die neue Formel ungültig. Die Wiederaufnahme bisheriger Beta-Aufträge muss gesondert überprüft werden.
+5. **Browser-Wiederanlauf:** Zusätzlich zu den SQLite/API-Tests prüft der Headless-Browser mit simuliertem abgebrochenem Job, dass die Aktion für einen neuen Vertonungsversuch sichtbar und bedienbar ist. Dies ist **kein** Test einer echten GPU-Erzeugung.
+
+### Grenzen dieser zusätzlichen Prüfung
+
+- Nur Offline-/CPU- und Headless-Browser-Tests stehen in GitHub Actions zur Verfügung; selbst ein grüner Lauf beweist weder eine echte Thorsten-GPU-Ladung noch realistische Audioqualität.
+- Die private Modell-Prüfsummenliste ist ein **lokaler Konsistenznachweis**, kein extern signierter Vertrauensanker. Pinning und unabhängige Prüfung der konkreten Hugging-Face-Revisionen bleiben P1.
+- Der echte Abbruch während einer laufenden GPU-Inferenz, der Neustart eines Pods und ein langer EPUB→M4B-Durchlauf sind als echte RunPod-Tests weiter offen.
+- Nach Änderungen an den Produktionsdateien gelten nur erfolgreiche CI-Läufe des jeweiligen Head-Commits; alte grüne Läufe sind keine Freigabe.
+
+**Freigabe: weiterhin gesperrt, PR #14 bleibt Draft, kein Merge nach master.**
