@@ -394,8 +394,10 @@ def test_voice_approval_is_invalidated_after_model_or_code_change(env, monkeypat
 
     manifest.write_text("altered-weight-checksums", encoding="utf-8")
     assert production.voice_ready() is False
-    with pytest.raises(ValueError, match="zuerst"):
-        production.create_job(uuid.uuid4().hex)
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    with pytest.raises(ValueError, match="freigegebene deutsche Stimme"):
+        production.create_job(project_id)
 
     manifest.write_text("synthetic-private-checksum-manifest", encoding="utf-8")
     assert production.voice_ready() is True
