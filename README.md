@@ -1,66 +1,111 @@
-# Deutsches KI-Hörbuch auf RunPod – Schnellstart
+# German Audiobook Studio: RunPod-Schnellstart (Entwicklungsstand)
 
-Dieser Fork erweitert [tts-audiobook-tool](https://github.com/zeropointnine/tts-audiobook-tool) für hochwertige deutsche Hörbücher. Geplant sind eine natürliche deutsche Männerstimme, die korrekte Aussprache englischer Fachbegriffe sowie die Auswahl des **Vorworts als Startpunkt** statt des Inhaltsverzeichnisses.
+> **Für den ersten echten GPU-Test, noch kein Produktionsrelease.** RunPod-Start und Weboberfläche sind automatisiert geprüft; echte CUDA-Vertonung, deutsche Hörabnahme, Pod-Wiederaufnahme und EPUB→M4B-Abnahme auf einer GPU stehen aus. Die geprüfte Studio-Implementierung wird nach der Integrationsfreigabe aus **`master`** geladen; ein Merge ist keine Produktionsfreigabe.
 
-> **Entwicklungsstand:** Die automatische RunPod-Einrichtung ist im Branch [`feature/runpod-p0`](https://github.com/thomasasen/tts-audiobook-tool/tree/feature/runpod-p0) vorhanden und hat die statischen GitHub-Tests bestanden. **Die Installation und Spracherzeugung auf einer echten RunPod-GPU sind noch nicht abgenommen.** Die Optimierungen für deutsche EPUBs und Stimmen folgen in [Issue #3](https://github.com/thomasasen/tts-audiobook-tool/issues/3) und [Issue #4](https://github.com/thomasasen/tts-audiobook-tool/issues/4).
+## 1. RunPod-Template vollständig einrichten
 
-## 1. Empfohlene RunPod-Einstellungen
+Diese Werte kannst du beim Erstellen eines **privaten Pod-Templates** direkt übernehmen. Sie sind auf den unveränderten Autostart unseres Projekts abgestimmt.
 
-| Einstellung | Empfehlung |
+| Feld im RunPod-Template / bei der Pod-Erstellung | Wert |
 | --- | --- |
-| **GPU** | **1 × NVIDIA RTX A6000 (48 GB VRAM)**; alternativ A40 (48 GB) |
-| **GPU-Kosten** | Richtwert **ab ca. 0,59 USD/Stunde** für RTX A6000; aktuellen Pod-Preis prüfen |
-| **Template** | Offizielles **RunPod PyTorch 2.8 / CUDA 12.8** mit SSH/Web-Terminal |
-| **Container Disk** | **50 GB** für das Container-System und temporäre Dateien |
-| **Network Volume** | **150 GB, Standard**, vor Pod-Erstellung anlegen |
-| **Mount Path** | **`/workspace`** (Network Volume und GPU im selben Rechenzentrum) |
-| **Speicherkosten** | Bei 0,07 USD/GB/Monat ca. **10,50 USD/Monat** für 150 GB; aktuellen Tarif prüfen |
-| **Ports** | Standard-SSH bzw. RunPod-Web-Terminal; kein öffentlicher Webport nötig |
+| **Template Name** | `German Audiobook Studio – GPU-Test` (frei wählbar) |
+| **Template Type / Compute Type** | **Pod / NVIDIA GPU**, kein Serverless-Endpoint |
+| **Visibility** | **Private** |
+| **Container Image** | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` |
+| **Container Disk** | **15 GB** für den ersten Test; falls das Image oder temporäre Systeminstallationen nicht passen, auf **20 GB** erhöhen |
+| **GPU beim Deploy** | **1 × NVIDIA RTX 3090 (24 GB VRAM)**; alternativ eine vergleichbare CUDA-GPU mit ≥24 GB VRAM |
+| **CPU / RAM beim Deploy** | Möglichst **≥8 vCPU und ≥32 GB System-RAM**; die tatsächlich angebotene Ausstattung vor dem Kauf prüfen |
+| **Persistent Storage** | **60 GB Network Volume** für den ersten Test (nicht als garantiertes Minimum gemessen) |
+| **Volume Mount Path** | **`/workspace`** (exakt, nicht `/workspace/data`) |
+| **Volume Disk** | **Nicht zusätzlich auswählen**: Das Network Volume **ersetzt** das reguläre Volume Disk auf `/workspace` |
+| **Expose HTTP Ports** | **`7860`** (bei protokollbasierter Eingabe: `7860/http`) |
+| **Expose TCP Ports** | Für die Weboberfläche **keine**; `22/tcp` nur optional für direkten SSH-Zugang über TCP |
+| **Docker Start Command / Container Start Command** | Den vollständigen Befehl direkt unter dieser Tabelle einsetzen |
+| **Environment Variables** | Keine Pflichtvariablen. Empfohlene optionale Werte stehen unten |
 
-**Wichtig:** Ein **Network Volume** verwenden, nicht nur die normale *Volume Disk*. Dort liegen die heruntergeladenen Modelle, Python-Umgebungen, Projekte, Stimmreferenzen und Einstellungen, damit sie nach einem Pod-Neustart beziehungsweise Pod-Wechsel erhalten bleiben. Die Speicherkosten laufen unabhängig von der GPU-Nutzung weiter.
+**Wichtig zum Storage:** Das **Network Volume muss vor dem Deploy angelegt** und beim Erstellen des Pods in derselben RunPod-Datacenter-Region zugeordnet werden. Es bleibt bei Pod-Terminierung bestehen. Ein gewöhnliches `Volume Disk` auf `/workspace` ist nicht gleichwertig: Es geht bei der Terminierung des Pods verloren. Das Autostart-Skript prüft, dass `/workspace` tatsächlich ein Mount ist, und verweigert andernfalls die Installation. [RunPod: Storage und Network Volumes](https://www.runpod.io/blog/where-did-my-files-go-a-straight-guide-to-runpod-storage).
 
-## 2. Start Command – komplett kopieren
+**Speichergrößen sind Planungswerte, keine auf RunPod gemessenen Mindestanforderungen.** Die zwei isolierten Python-Umgebungen (Qwen als Web-/TUI-Basis und Thorsten für deutsche TTS), CUDA-Pakete, CosyVoice-Modellgewichte, temporäre Downloads, Hugging-Face-/Pip-Caches und erzeugte WAV-Dateien liegen vor allem auf dem Network Volume. Ein erster Installationslauf kann höhere Peaks verursachen. Für längere Bücher, weitere TTS-Modelle oder mehrere Projekte gegebenenfalls **80 GB oder mehr** einplanen. Das Container-Image basiert auf Ubuntu 24.04, CUDA 12.8.1 und PyTorch 2.8.0; [offizielles RunPod-Beispiel mit exakt diesem Image](https://github.com/runpod-workers/pod-template/blob/main/Dockerfile).
 
-Den folgenden **einzeiligen Befehl** in RunPod unter **Docker Command** (erweiterte Pod-/Template-Einstellungen) eintragen. Über das Kopiersymbol rechts oben am GitHub-Codeblock lässt sich der komplette Befehl übernehmen.
+### Docker Start Command – vollständig kopieren
 
-```bash
-bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/runpod-p0/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
-```
-
-**Was beim Pod-Start passiert:**
-
-1. RunPods ursprünglicher Dienststart (`/start.sh`) hält SSH/Jupyter erreichbar.
-2. Der Fork wird unter `/workspace/tts-audiobook-tool` geklont bzw. bei unverändertem Checkout aktualisiert.
-3. Python 3.12 sowie getrennte Umgebungen für **Qwen3-TTS** und **MOSS-TTS** werden installiert; vorhandene Installationen werden wiederverwendet.
-4. Modelle, Caches, private Hörbuchdateien und Anwendungseinstellungen bleiben auf dem Network Volume.
-5. Die ursprüngliche Konsolenoberfläche startet mit Qwen3-TTS in einer wiederverbindbaren `tmux`-Sitzung namens `audiobook`. MOSS kann anschließend ausgewählt werden.
-
-Beim **ersten** Start können Abhängigkeiten und Modellgewichte umfangreiche Downloads erfordern. Die eigentlichen Modellgewichte werden gegebenenfalls erst beim erstmaligen Laden des Modells heruntergeladen. Der Startbefehl installiert keine EPUB-Datei und keine Sprecherreferenz.
-
-## 3. Hörbuch-Anwendung öffnen
-
-Nach Abschluss der Einrichtung im **RunPod-Web-Terminal oder per SSH** ausführen:
+**Wichtig:** In das Feld **Docker Start Command** kommt der gesamte folgende Befehl, **nicht** nur `/start.sh` und **nicht** die Container-Image-Bezeichnung. Das Skript lädt den Repository-Standardbranch `master`, installiert die benötigten Umgebungen im Network Volume und startet Web-Studio sowie TUI. Der erstmalige Einsatz ist weiterhin ein GPU-Test, kein produktiver Betrieb.
 
 ```bash
-tmux attach -t audiobook
+bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/master/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
 ```
 
-Mit **Strg+B**, danach **D** lässt sich die Sitzung verlassen, ohne die laufende Anwendung zu stoppen. Um die Originaloberfläche mit MOSS statt Qwen zu starten:
+> Der Befehl hält `/start.sh` für die RunPod-Basisdienste aktiv. **Achtung:** Bei einem Fehler des Autostarts kann der Pod trotzdem weiterlaufen und GPU-Kosten verursachen; der Text `Audiobook setup failed` ist kein Erfolgsstatus. Bei Problemen zunächst die Logs prüfen oder den Pod stoppen.
+
+### Environment Variables (optional)
+
+Für den ersten Test kannst du die Standardwerte vollständig verwenden. Wenn du die Variablen explizit eintragen möchtest:
+
+| Name | Wert | Bedeutung |
+| --- | --- | --- |
+| `RUNPOD_TTS_MODELS` | `qwen` | Installiert die Qwen-Basisumgebung; **`both` installiert zusätzlich MOSS** und benötigt erheblich mehr Speicher |
+| `RUNPOD_TTS_AUTOSTART_MODEL` | `qwen` | TUI-Standardmodell; die **Web-Stimme bleibt separat Thorsten-CosyVoice3** |
+| `AUDIOBOOK_STUDIO_PORT` | `7860` | Muss zum exponierten HTTP-Port passen |
+| `AUDIOBOOK_STUDIO_TOKEN` | optional: privates Secret mit ≥32 Zeichen | Ohne Vorgabe wird ein zufälliger Zugangsschlüssel auf dem Network Volume erstellt |
+| `RUNPOD_WORKSPACE` | `/workspace` | Nur ändern, wenn gleichzeitig das Volume konsistent anders gemountet und das Setup angepasst wird; **hier nicht ändern** |
+
+**Keine zusätzlichen Modelle für den ersten Test aktivieren.** Das Skript installiert auch Thorsten-CosyVoice3, unabhängig davon, dass `RUNPOD_TTS_MODELS=qwen` gesetzt ist. Qwen-Gewichte werden nicht allein durch die Installation der Qwen-Umgebung heruntergeladen; ein späteres Starten der Qwen-TTS kann weitere Modell-Downloads auslösen.
+
+**Jupyter/SSH:** Für das eigentliche Studio genügt `7860/http`. Das Basis-Image kann zusätzlich Jupyter/SSH starten; diese Dienste sind für die TTS-Oberfläche nicht erforderlich. Optional freigegebene Notebook-/SSH-Ports nur mit angemessener Authentifizierung betreiben. Der Studio-Port ist über den RunPod-HTTPS-Proxy grundsätzlich erreichbar und durch einen Bearer-Token geschützt.
+
+### Nach dem Deploy prüfen
+
+1. RunPod → **Connect** → HTTP-Port **7860** öffnen. Die Anmeldung erscheint, wenn der Webserver erfolgreich gestartet ist.
+2. Den Zugangsschlüssel **nur in der privaten Pod-Konsole** auslesen: `cat /workspace/audiobook-data/studio-access-token`. Wenn ein eigener `AUDIOBOOK_STUDIO_TOKEN` gesetzt wurde, diesen verwenden.
+3. Unter **Sprecher** die Thorsten-Hörprobe erzeugen, vollständig anhören und erst dann freigeben.
+4. Zunächst ein kurzes EPUB bzw. wenige Kapitel vertonen und den M4B-Export prüfen.
+5. Bei einem Fehler die GPU nicht unbemerkt weiterbezahlen: Logs kontrollieren und bei Bedarf stoppen.
+
+**Prüfung der tatsächlichen Speicherbelegung nach der Installation:**
 
 ```bash
-cd /workspace/tts-audiobook-tool
-bash runpod/start.sh --model moss
+df -h / /tmp /workspace
+du -sh /workspace/audiobook-data/{venvs,models,cache,python,studio-jobs,studio-projects} /workspace/tts-audiobook-tool 2>/dev/null
+nvidia-smi
+ls -lt /workspace/audiobook-data/logs | head
 ```
 
-Pro Terminal nur eine aktive Eingabesitzung verwenden. Projekte und lizenzierte Stimmreferenzen gehören nach `/workspace/audiobook-data/projects` beziehungsweise `/workspace/audiobook-data/references`, **nicht** ins öffentliche Git-Repository.
+Die Installationen, Quellen, EPUBs, Audioprojekte, fertigen Hörbücher und Caches befinden sich unter `/workspace`, insbesondere in `/workspace/audiobook-data`. Eine bestehende Installation wird bei erneutem Pod-Start nach Möglichkeit wiederverwendet; der Git-Branch kann dabei neue Commits erhalten. Für reproduzierbare Produktionsdeployments muss später auf einen geprüften Commit bzw. ein geprüftes Image gepinnt werden.
 
-## 4. Weitere Informationen und Status
-
-- [Detaillierte Installationsanleitung und GPU-Abnahmecheckliste](https://github.com/thomasasen/tts-audiobook-tool/blob/feature/runpod-p0/runpod/README.md)
-- [RunPod-Implementierung: Pull Request #6](https://github.com/thomasasen/tts-audiobook-tool/pull/6)
-- [Offene GPU-End-to-End-Tests: Issue #2](https://github.com/thomasasen/tts-audiobook-tool/issues/2)
 
 ---
+
+## 2. Betrieb und Fehlerbehebung
+
+Der vollständige Ablauf für den ersten Start steht bereits unter **Nach dem Deploy prüfen**. Für den späteren Betrieb sind zusätzlich diese Befehle relevant:
+
+```bash
+# Laufende Hintergrunddienste anzeigen
+tmux ls
+# Protokoll des Web-Studios öffnen (zum Lösen: Strg+B, danach D)
+tmux attach -t audiobook-web
+# Ursprüngliche Konsolenanwendung öffnen (zum Lösen: Strg+B, danach D)
+tmux attach -t audiobook
+# Hardware- und Installationsdiagnose ohne Modell-Download
+bash /workspace/tts-audiobook-tool/runpod/setup.sh --check-only
+```
+
+Die Thorsten-Hörprobe ist erst nach erfolgreicher Modellinstallation verfügbar. Eine echte deutsche Hörabnahme, vollständige CUDA-Generierung, GPU-EPUB→M4B-Abnahme und Wiederaufnahme nach einem Pod-Neustart stehen weiterhin aus. Siehe [Abnahmeprotokoll](runpod/ACCEPTANCE.md) und [QA-/Release-Status](runpod/RELEASE_STATUS_2026-11-07.md).
+
+**Integration:** [PR #14](https://github.com/thomasasen/tts-audiobook-tool/pull/14) enthält die Änderungen aus der abhängigen PR-Kette #8 bis #13. Der Repository-Standardbranch heißt **`master`**. Die Integration der Studioversion in `master` bedeutet ausdrücklich **keine produktive GPU-/Stimmfreigabe**. PR #6 ist ein separater älterer RunPod-Arbeitszweig und wird nicht zusätzlich unbesehen gemergt.
+
+## 3. Abgrenzung: deutsches Web-Studio und ursprüngliche Konsolenanwendung
+
+| | **German Audiobook Studio (Web, Port 7860)** | **Ursprüngliche TUI (Konsole)** |
+| --- | --- | --- |
+| Ziel | Deutsche Fachbücher mit fest vorgegebener, geprüfter Thorsten-Stimme vertonen | Allgemeiner Audiobook-Workflow mit verschiedenen TTS-Modellen |
+| Stimmen | Thorsten-CosyVoice3, **keine Benutzer-Stimmklone oder Referenzaufnahme** | Kann je nach Modell Referenzaudio und Voice Cloning einsetzen |
+| Bedienung | Browser unter RunPod → Connect → Port 7860 | `tmux attach -t audiobook` |
+| Installation im hier beschriebenen Pod | Thorsten-Umgebung plus Qwen-Umgebung als technische Basis | Qwen-TUI ist optional nutzbar; MOSS nur bei `RUNPOD_TTS_MODELS=both` |
+| Audioausgabe | M4B mit Kapiteln; echte GPU-Abnahme offen | Ausgabe je nach ursprünglichem TUI-Workflow |
+
+**Hinweis zur folgenden Originaldokumentation:** Ab `Table of contents` folgen die englischsprachigen Anleitungen des Upstream-Projekts für die **ursprüngliche TUI**. Aussagen über **Voice Cloning, Referenzaufnahmen, Modellauswahl und manuelle Installation** beziehen sich darauf, **nicht** auf das neue deutsche Web-Studio. Für das aktuelle RunPod-Template gilt ausschließlich die obige Schnellstartanleitung. Die folgenden historischen Versionshinweise beschreiben nicht den Freigabestatus unserer Web-Erweiterungen.
+
 
 # Table of contents
 

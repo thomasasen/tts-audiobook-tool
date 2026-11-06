@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "language": "de-DE",
+  "copyright": "Selbst verfasste Texte; freie Verwendung für Projektabnahmen",
+  "purpose": "Identische, reproduzierbare Blindhörtests für deutsche Fachbuch-TTS; keine echten Hörbefunde",
+  "tests": [
+    {
+      "id": "DE-01",
+      "category": "Erzähltext",
+      "text": "Am Montag begann das Team mit einer kurzen Besprechung. Alle kannten das Ziel, aber niemand wollte eine Entscheidung überstürzen.",
+      "focus": "Gleichmäßiger Erzählfluss und natürliche Satzpausen"
+    },
+    {
+      "id": "DE-02",
+      "category": "Langer komplexer Satz",
+      "text": "Obwohl der Kunde bereits im vergangenen Quartal zugesagt hatte, die internen Prozesse zu vereinheitlichen, verschob die Geschäftsführung die Entscheidung, weil die Kosten für die Integration noch nicht zuverlässig ermittelt worden waren.",
+      "focus": "Sinnvolle Gliederung des Nebensatzgefüges"
+    },
+    {
+      "id": "DE-03",
+      "category": "Fachbegriffe deutsch und englisch",
+      "text": "Die Sales-Pipeline enthält qualifizierte Opportunities. Im CRM erfasst das Team einen Business Case, eine MEDDPICC-Analyse und die nächsten Schritte im Account Plan.",
+      "focus": "Code-Switching ohne amerikanischen Akzent auf deutschen Wörtern"
+    },
+    {
+      "id": "DE-04",
+      "category": "Kennzahlen und Währungen",
+      "text": "Die Annual Recurring Revenue steigt von 1,25 auf 1,6 Millionen Euro. Das entspricht rund 28 Prozent Wachstum, während die Abwanderungsquote bei 3,5 Prozent liegt.",
+      "focus": "Zahlen, Dezimaltrennzeichen, Millionen und Prozent"
+    },
+    {
+      "id": "DE-05",
+      "category": "Akronyme",
+      "text": "ARR, NRR, ROI, SLA und EBITDA sind wichtige Kennzahlen. Eine API verbindet das ERP-System mit der SaaS-Anwendung.",
+      "focus": "Buchstabierung versus gebräuchliche Aussprache"
+    },
+    {
+      "id": "DE-06",
+      "category": "Eigennamen",
+      "text": "Mara Seifert aus Regensburg bespricht mit Leon Baumgartner und der fiktiven Nordtal Software GmbH einen internationalen Rollout nach Zürich.",
+      "focus": "Deutsche Eigennamen und Ortsnamen"
+    },
+    {
+      "id": "DE-07",
+      "category": "Aufzählung",
+      "text": "Drei Punkte sind wichtig: Erstens ein messbares Ziel; zweitens ein klarer Entscheider; drittens ein realistischer Termin. Keine dieser Voraussetzungen ist optional.",
+      "focus": "Rhythmische Trennung von Aufzählungspunkten"
+    },
+    {
+      "id": "DE-08",
+      "category": "Fragen und Ausrufe",
+      "text": "Wer entscheidet am Ende über das Budget? Welche Risiken bleiben offen? Das ist ein überraschend gutes Ergebnis!",
+      "focus": "Frageintonation und nicht übertriebene Ausrufe"
+    },
+    {
+      "id": "DE-09",
+      "category": "Direkte Rede",
+      "text": "Die Vertriebsleiterin fragt: „Haben wir den Vertrag geprüft?“ Der Kollege antwortet: „Ja, aber die Laufzeit müssen wir noch abstimmen.“",
+      "focus": "Natürliches Zitieren und Sprechpausen"
+    },
+    {
+      "id": "DE-10",
+      "category": "Kapitelbeginn",
+      "text": "Kapitel drei. Vom ersten Gespräch zur belastbaren Prognose. In diesem Kapitel betrachten wir die Entscheidungen, die einen Auftrag wirklich voranbringen.",
+      "focus": "Ruhe nach Kapitelüberschrift und eindeutiger Einstieg"
+    },
+    {
+      "id": "DE-11",
+      "category": "Kapitelende",
+      "text": "Die gemeinsame Entscheidung ist dokumentiert. Damit sind die Grundlagen geschaffen, und wir können uns im nächsten Kapitel der Umsetzung zuwenden.",
+      "focus": "Passender Abschluss ohne abrupte Silbe"
+    },
+    {
+      "id": "DE-12",
+      "category": "Gemischte Zahlen",
+      "text": "Im Jahr 2026 arbeiten 14 Teams an 105 Projekten. Die durchschnittliche Laufzeit beträgt 18 Monate, ein Paket kostet 49,90 Euro und der Support ist von 8 bis 17 Uhr erreichbar.",
+      "focus": "Jahreszahlen, Uhrzeit, Preis, Zählzahlen"
+    }
+  ]
+}
