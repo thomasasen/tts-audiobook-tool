@@ -10,7 +10,7 @@ Usage: bash runpod/autostart.sh [--check-only] [--help]
 
 Environment variables:
   RUNPOD_WORKSPACE            Mounted network volume (default: /workspace)
-  RUNPOD_TTS_BRANCH           Git branch to deploy (default: feature/german-audiobook-studio-runpod)
+  RUNPOD_TTS_BRANCH           Git branch to deploy (default: feature/german-audiobook-release-validation)
   RUNPOD_TTS_MODELS           qwen | moss | both (default: both)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
 
@@ -30,7 +30,7 @@ while (( $# > 0 )); do
 done
 
 : "${RUNPOD_WORKSPACE:=/workspace}"
-: "${RUNPOD_TTS_BRANCH:=feature/german-audiobook-studio-runpod}"
+: "${RUNPOD_TTS_BRANCH:=feature/german-audiobook-release-validation}"
 : "${RUNPOD_TTS_MODELS:=qwen}"
 : "${RUNPOD_TTS_AUTOSTART_MODEL:=qwen}"
 case "$RUNPOD_WORKSPACE" in
@@ -46,7 +46,7 @@ case "$RUNPOD_TTS_AUTOSTART_MODEL" in
   *) printf 'Invalid RUNPOD_TTS_AUTOSTART_MODEL: %s\n' "$RUNPOD_TTS_AUTOSTART_MODEL" >&2; exit 2 ;;
 esac
 case "$RUNPOD_TTS_BRANCH" in
-  feature/german-audiobook-studio-runpod) ;; # Explicit reviewed deployment branch.
+  feature/german-audiobook-release-validation|feature/german-audiobook-studio-runpod) ;; # Audited prerelease branches.
   *) printf 'Unsupported deployment branch: %s\n' "$RUNPOD_TTS_BRANCH" >&2; exit 2 ;;
 esac
 if [[ "$RUNPOD_TTS_MODELS" != "both" && "$RUNPOD_TTS_AUTOSTART_MODEL" != "menu"
