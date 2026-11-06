@@ -71,7 +71,7 @@ def test_production_exports_playable_m4b_with_two_chapter_titles(env):
     with av.open(str(exported)) as container:
         assert len(container.streams.audio) == 1
         assert container.metadata.get("title") == "Management-Handbuch"
-        chapters = list(container.chapters)
+        chapters = list(container.chapters())
         assert len(chapters) == 2
         assert [ch.metadata["title"] for ch in chapters] == ["Vorwort", "Kapitel 1"]
         duration = sum(frame.samples for packet in container.demux(audio=0)
