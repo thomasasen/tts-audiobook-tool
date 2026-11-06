@@ -572,7 +572,8 @@ def _run(job_id: str):
                 prompt = _normalize_de(segment["text"], plan["glossary"])
                 if not prompt:
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
-                for attempt in range(3):
+                infer_started = time.perf_counter()
+for attempt in range(3):
                     try:
                         seconds = _synthesize(prompt, path)
                         break
@@ -580,8 +581,10 @@ def _run(job_id: str):
                         if attempt == 2:
                             raise
                         time.sleep(1)
+                inference_seconds = round(time.perf_counter() - infer_started, 3)
                 _atomic_json(meta, {"fingerprint": fingerprint, "text": segment["text"],
                                     "prompt": prompt, "duration": seconds,
+                                    "inference_seconds": inference_seconds,
                                     "quality": _audio_quality(path, prompt)})
             duration += seconds
             done += 1
