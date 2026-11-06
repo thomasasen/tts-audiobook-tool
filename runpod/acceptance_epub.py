@@ -23,9 +23,29 @@ def build_epub(*, repeat: int = 1) -> bytes:
          "Die Vereinbarung steht am Ende eines strukturierten Prozesses."),
     ]
     xml = '<?xml version="1.0" encoding="UTF-8"?>'
+    # Exercise more than ordinary paragraphs: nested headings, structured
+    # lists, abbreviations, currency, punctuation and mixed-language terms.
+    # All texts are independently authored and may be shared in CI.
+    extras = {
+        "chapter1": (
+            "<h2>Messbare Kriterien</h2>"
+            "<p>Im CRM-System sinkt die Bearbeitungszeit von 120 auf 85 Minuten. "
+            "Das entspricht 29 Prozent. Das SaaS-Budget beträgt 2.500 Euro pro Monat.</p>"
+            "<ul><li>Ziel: eine belastbare Pipeline.</li>"
+            "<li>Kontrolle: ein monatliches Forecast-Review.</li>"
+            "<li>Risiko: fehlende Datenqualität.</li></ul>"
+        ),
+        "chapter2": (
+            "<h2>Gesprächsführung</h2>"
+            "<p>Die Leiterin fragt: &#8222;Ist der Business Case für 2027 belastbar?&#8220; "
+            "Der Kollege antwortet: &#8222;Ja, aber prüfen wir zunächst den ARR.&#8220;</p>"
+            "<p>Eine klare Entscheidung braucht Zahlen, Verantwortung und Vertrauen!</p>"
+        ),
+    }
     xhtml = []
     for ident, heading, phrase in sections:
         paragraphs = "".join(f"<p>{escape(phrase)}</p>" for _ in range(repeat if ident != "toc" else 1))
+        paragraphs += extras.get(ident, "")
         xhtml.append((ident, heading,
             f'{xml}<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{escape(heading)}</title></head>'
             f'<body><h1>{escape(heading)}</h1>{paragraphs}</body></html>'))
