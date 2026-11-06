@@ -61,6 +61,8 @@ def _init_storage() -> None:
     root = data_dir()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     (root / "studio-projects").mkdir(mode=0o700, exist_ok=True)
+    os.chmod(root, 0o700)
+    os.chmod(root / "studio-projects", 0o700)
     with _db() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS studio_projects (
             id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
