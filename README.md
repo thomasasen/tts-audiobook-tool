@@ -16,7 +16,7 @@
 **RunPod Docker Start Command (vollständig kopieren):**
 
 ```bash
-bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/german-audiobook-studio-runpod/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
+bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/german-audiobook-release-validation/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
 ```
 
 Der Start lädt den ausgewählten Git-Branch konservativ in `/workspace/tts-audiobook-tool`, richtet die Qwen-/Grundumgebung und die **fest vorgegebene deutsche Thorsten-CosyVoice3-Stimme** in separaten Python-Umgebungen ein, erstellt die React-Oberfläche und startet **beide** Arbeitswege: die bisherige TUI im tmux-Fenster `audiobook`, das Web-Studio im tmux-Fenster `audiobook-web`.
