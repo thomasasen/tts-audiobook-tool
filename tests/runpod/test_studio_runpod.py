@@ -31,10 +31,10 @@ class TestGermanStudioRunPod(unittest.TestCase):
         root = (ROOT / "README.md").read_text(encoding="utf-8")
         autostart = (ROOT / "runpod/autostart.sh").read_text(encoding="utf-8")
         self.assertIn(
-            "feature/german-audiobook-studio-runpod/runpod/autostart.sh", root
+            "feature/german-audiobook-release-validation/runpod/autostart.sh", root
         )
         self.assertIn(
-            'RUNPOD_TTS_BRANCH:=feature/german-audiobook-studio-runpod', autostart
+            'RUNPOD_TTS_BRANCH:=feature/german-audiobook-release-validation', autostart
         )
         self.assertIn("runpod/start-web.sh", autostart)
         self.assertIn("runpod/install-thorsten.sh", autostart)
