@@ -52,6 +52,29 @@ class TestRunPodAutostart(unittest.TestCase):
             self.assertIn("Autostart: qwen", result.stdout)
             self.assertFalse((Path(workspace) / "tts-audiobook-tool").exists())
 
+    def test_help_default_matches_effective_auto_start_default(self):
+        help_response = self.call("--help")
+        self.assertEqual(help_response.returncode, 0)
+        self.assertIn("RUNPOD_TTS_MODELS           qwen | moss | both (default: qwen)", help_response.stdout)
+        with tempfile.TemporaryDirectory() as workspace:
+            actual = self.call("--check-only", extra_env={
+                "RUNPOD_WORKSPACE": workspace,
+                "RUNPOD_TTS_MODELS": "qwen",
+                "RUNPOD_TTS_AUTOSTART_MODEL": "qwen",
+            })
+        self.assertEqual(actual.returncode, 0, actual.stderr)
+        self.assertIn("Install: qwen", actual.stdout)
+        self.assertIn("Autostart: qwen", actual.stdout)
+
+    def test_readme_separates_web_studio_from_legacy_tui(self):
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("15 GB", readme)
+        self.assertIn("60 GB Network Volume", readme)
+        self.assertIn("Abgrenzung: deutsches Web-Studio und ursprüngliche Konsolenanwendung", readme)
+        self.assertIn("Ursprüngliche TUI (Konsole)", readme)
+        self.assertIn("keine Benutzer-Stimmklone oder Referenzaufnahme", readme)
+        self.assertLess(readme.index("RunPod-Template vollständig einrichten"), readme.index("# Table of contents"))
+
     def test_invalid_model_is_rejected_without_side_effects(self):
         result = self.call(
             "--check-only",
