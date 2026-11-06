@@ -30,7 +30,7 @@ fi
 if [[ ! -d "$MODEL_ROOT/.git" ]]; then
   git clone https://github.com/FunAudioLLM/CosyVoice.git "$MODEL_ROOT"
 fi
-if [[ -n "$(git -C "$MODEL_ROOT" status --porcelain)" ]]; then
+if [[ -n "$(git -C "$MODEL_ROOT" status --porcelain --untracked-files=no)" ]]; then
   echo "CosyVoice checkout has local changes. Refusing to overwrite it." >&2
   exit 1
 fi
