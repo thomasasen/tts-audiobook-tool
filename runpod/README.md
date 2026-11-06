@@ -1,10 +1,10 @@
 # RunPod: German Audiobook Studio (integrierter Entwicklungsbranch)
 
-**Status:** API-/Frontend- und statische RunPod-Tests bestanden, **GPU und echte deutsche Sprachausgabe nicht abgenommen**. Der vollständige kopierbare Docker-Startbefehl steht ganz oben in der [README](../README.md). Diese Anleitung beschreibt den Betrieb und Fehlerfälle.
+**Status:** Der neue Release-Validierungsbranch ergänzt EPUB-/Browser-/Recovery-Prüfungen. **GPU und echte deutsche Sprachausgabe sind weiterhin nicht abgenommen**. Der vollständige kopierbare Docker-Startbefehl steht ganz oben in der [README](../README.md). Diese Anleitung beschreibt den Betrieb und Fehlerfälle.
 
 ## Architektur
 
-- `/workspace/tts-audiobook-tool`: der geprüfte Branch `feature/german-audiobook-studio-runpod`.
+- `/workspace/tts-audiobook-tool`: der geprüfte Branch `feature/german-audiobook-release-validation`.
 - `/workspace/audiobook-data`: ausschließlich persistente Daten und Modelle, niemals Git-Artefakte.
 - `/workspace/audiobook-data/venvs/qwen`: Python 3.12, bestehende Projektlaufzeit und TUI.
 - `/workspace/audiobook-data/venvs/thorsten`: isolierte Python-3.11-CosyVoice3-Umgebung.
