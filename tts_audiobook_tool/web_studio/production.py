@@ -506,6 +506,14 @@ def create_job(project_id: str) -> dict:
     try:
         with _studio()._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            # Project deletion can race with manifest preparation. Re-check
+            # the canonical project row *inside* this same writer transaction:
+            # otherwise a deleted project could gain an orphan audio job.
+            if db.execute(
+                "SELECT 1 FROM studio_projects WHERE id=? AND status IN ('Vorbereitet','Fertig')",
+                (project_id,),
+            ).fetchone() is None:
+                raise ValueError("Das Projekt wurde zwischenzeitlich gelöscht oder verändert.")
             if db.execute(
                 "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('queued','running','paused','exporting')",
                 (project_id,),
@@ -541,6 +549,14 @@ def change_job(project_id: str, job_id: str, action: str) -> dict:
         ).rowcount
         if updated != 1:
             raise ValueError("Der Auftragsstatus hat sich inzwischen geändert.")
+        if action == "cancel":
+            # A cancelled job must not strand the book in "Warteschlange".
+            # The old in-flight segment can finish, but it cannot change the
+            # cancelled job's state or mark the project as completed.
+            db.execute(
+                "UPDATE studio_projects SET status='Vorbereitet',updated_at=? WHERE id=?",
+                (_now(), project_id),
+            )
     _WAKE.set()
     return public_job(project_id, job_id)
 
