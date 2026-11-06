@@ -42,7 +42,7 @@ Die Web-Tests prüfen Authentifizierung, Archivabwehr, Kapitelvorschau, deutsche
 
 Prüfe:
 ```bash
-python -m pytest tests/web/test_studio_api.py -q
+python -m pytest tests/web/test_studio_api.py -q --confcutdir=tests/web
 cd web && npm run build
 ```
 
