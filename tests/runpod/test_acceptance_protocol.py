@@ -29,6 +29,21 @@ class TestRunPodLiveAcceptanceContract(unittest.TestCase):
             self.assertIn("Prüfbuch für deutsche Hörbücher", opf)
             self.assertIn("Dieses Testbuch", archive.read("OEBPS/foreword.xhtml").decode("utf-8"))
 
+    def test_original_fixture_covers_subheadings_lists_and_technical_language(self):
+        archive_bytes = build_epub(repeat=2)
+        with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
+            one = archive.read("OEBPS/chapter1.xhtml").decode("utf-8")
+            two = archive.read("OEBPS/chapter2.xhtml").decode("utf-8")
+        self.assertIn("<h2>Messbare Kriterien</h2>", one)
+        self.assertIn("<ul>", one)
+        self.assertEqual(one.count("<li>"), 3)
+        self.assertIn("CRM-System", one)
+        self.assertIn("2.500 Euro", one)
+        self.assertIn("Forecast-Review", one)
+        self.assertIn("2027", two)
+        self.assertIn("Business Case", two)
+        self.assertIn("&#8222;", two)
+
     def test_fixture_repeat_guard(self):
         with self.assertRaises(ValueError):
             build_epub(repeat=0)
