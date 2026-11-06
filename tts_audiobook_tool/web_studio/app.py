@@ -1,0 +1,412 @@
+"""Authenticated German Audiobook Studio: project library and EPUB preparation.
+
+Launch with:
+    AUDIOBOOK_STUDIO_TOKEN=<random 32+ characters> \
+    AUDIOBOOK_STUDIO_DATA_DIR=/workspace/audiobook-data \
+    uvicorn tts_audiobook_tool.web_studio.app:app --host 0.0.0.0 --port 7860
+
+Dependencies are declared in web/requirements.txt. No GPU is needed to
+import and inspect an EPUB. Never publish the private data directory.
+"""
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import re
+import secrets
+import shutil
+import sqlite3
+import tempfile
+import uuid
+import zipfile
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
+MAX_ZIP_ENTRIES = 5000
+MAX_CHAPTERS = 5000
+FIRST_TEXT_CHARS = 1500
+TOC = re.compile(r"^\s*(?:inhaltsverzeichnis|table\s+of\s+contents|contents|toc)\s*$", re.I)
+PREFACE = re.compile(r"^\s*(?:vorwort|foreword|preface)(?:\b|\s|:)", re.I)
+UUID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def data_dir() -> Path:
+    return Path(os.environ.get("AUDIOBOOK_STUDIO_DATA_DIR", "/workspace/audiobook-data")).expanduser().resolve()
+
+
+def _require_token() -> str:
+    token = os.environ.get("AUDIOBOOK_STUDIO_TOKEN", "")
+    if len(token) < 32:
+        raise RuntimeError("AUDIOBOOK_STUDIO_TOKEN muss mindestens 32 Zeichen lang sein.")
+    return token
+
+
+def require_auth(authorization: Annotated[str | None, Header()] = None) -> None:
+    token = _require_token()
+    supplied = authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
+    if not hmac.compare_digest(supplied.encode(), token.encode()):
+        raise HTTPException(status_code=401, detail="Zugriff verweigert. Bitte gültigen Zugangsschlüssel eingeben.")
+
+
+def _init_storage() -> None:
+    root = data_dir()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    (root / "studio-projects").mkdir(mode=0o700, exist_ok=True)
+    with _db() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS studio_projects (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL,
+            filename TEXT NOT NULL, chapter_count INTEGER NOT NULL,
+            selected_start INTEGER NOT NULL, excluded_json TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        )""")
+
+
+@contextmanager
+def _db():
+    path = data_dir() / "studio.sqlite3"
+    db = sqlite3.connect(path, timeout=30)
+    db.row_factory = sqlite3.Row
+    try:
+        yield db
+        db.commit()
+    finally:
+        db.close()
+
+
+def _project_dir(project_id: str) -> Path:
+    if not UUID_RE.fullmatch(project_id):
+        raise HTTPException(404, "Projekt wurde nicht gefunden.")
+    return data_dir() / "studio-projects" / project_id
+
+
+def _project(project_id: str) -> dict:
+    _project_dir(project_id)
+    with _db() as db:
+        row = db.execute("SELECT * FROM studio_projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Projekt wurde nicht gefunden.")
+    return dict(row)
+
+
+def _validate_epub(path: Path) -> None:
+    try:
+        if not zipfile.is_zipfile(path):
+            raise ValueError("Die Datei ist kein gültiges EPUB-/ZIP-Archiv.")
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_ZIP_ENTRIES:
+                raise ValueError("Das EPUB enthält zu viele Archiveinträge.")
+            total = 0
+            seen = set()
+            for item in entries:
+                name = item.filename
+                parts = PurePosixPath(name).parts
+                if not name or name.startswith("/") or "\\" in name or ".." in parts:
+                    raise ValueError("Das EPUB enthält einen unzulässigen Archivpfad.")
+                if name in seen:
+                    raise ValueError("Das EPUB enthält doppelte Archivpfade.")
+                seen.add(name)
+                if item.flag_bits & 0x1:
+                    raise ValueError("Verschlüsselte EPUB-Dateien werden nicht unterstützt.")
+                if (item.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise ValueError("Symbolische Links sind im EPUB nicht zulässig.")
+                total += item.file_size
+                if total > MAX_UNCOMPRESSED_BYTES:
+                    raise ValueError("Das entpackte EPUB überschreitet das Größenlimit.")
+                if item.file_size > 10 * 1024 * 1024 and item.file_size > max(1, item.compress_size) * 300:
+                    raise ValueError("Verdächtiges Kompressionsverhältnis im EPUB.")
+            if "mimetype" not in seen or archive.read("mimetype").strip() != b"application/epub+zip":
+                raise ValueError("Die EPUB-Kennzeichnung fehlt oder ist ungültig.")
+    except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
+        raise ValueError("Das EPUB kann nicht sicher gelesen werden.") from exc
+
+
+def _extract(path: Path):
+    # Use the application's canonical EPUB parser, including spine and
+    # navigation logic. Never parse user-provided HTML in the web layer.
+    from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
+    result = EpubExtractor.extract_import_chapters(str(path))
+    if not result.chapters:
+        raise ValueError("Das EPUB enthält keine auslesbaren Kapitel.")
+    if len(result.chapters) > MAX_CHAPTERS:
+        raise ValueError("Das EPUB enthält zu viele Kapitel.")
+    return result
+
+
+def _catalogue(result) -> dict:
+    chapters = [
+        {
+            "index": i,
+            "title": (chapter.title or f"Abschnitt {i + 1}")[:250],
+            "preview": chapter.text[:FIRST_TEXT_CHARS],
+            "characters": len(chapter.text),
+            "is_toc": bool(TOC.fullmatch((chapter.title or "").strip())),
+        }
+        for i, chapter in enumerate(result.chapters)
+    ]
+    candidates = [c["index"] for c in chapters if not c["is_toc"]]
+    if not candidates:
+        raise ValueError("Nur Inhaltsverzeichnisse gefunden. Kein Vorlesetext vorhanden.")
+    prefaces = [i for i in candidates if PREFACE.match(chapters[i]["title"])]
+    start = prefaces[0] if prefaces else candidates[0]
+    return {
+        "title": (result.book_title or "Unbenanntes Buch")[:250],
+        "chapters": chapters,
+        "suggested_start": start,
+        "warnings": (result.significant_warnings or result.warnings)[:50],
+    }
+
+
+def _public_project(row: dict, catalogue: dict | None = None) -> dict:
+    item = {
+        "id": row["id"], "title": row["title"], "status": row["status"],
+        "filename": row["filename"], "chapter_count": row["chapter_count"],
+        "selected_start": row["selected_start"],
+        "excluded_indices": json.loads(row["excluded_json"]),
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+    if catalogue is not None:
+        item.update(catalogue)
+    return item
+
+
+class ChapterSelection(BaseModel):
+    start_index: int = Field(ge=0)
+    excluded_indices: list[int] = Field(default_factory=list, max_length=MAX_CHAPTERS)
+
+
+app = FastAPI(
+    title="German Audiobook Studio", version="0.1.0",
+    description="Geschützte Projektvorbereitung für deutsche EPUB-Hörbücher.",
+    docs_url=None, redoc_url=None, openapi_url=None,
+)
+
+
+@app.middleware("http")
+async def secure_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "connect-src 'self'; img-src 'self' data:; media-src 'self'; "
+        "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    )
+    return response
+
+
+@app.on_event("startup")
+def on_startup():
+    _require_token()
+    _init_storage()
+
+
+@app.get("/api/health")
+def health():
+    # Public health reveals neither data nor secrets.
+    return {"status": "ok", "service": "german-audiobook-studio"}
+
+
+@app.get("/api/session", dependencies=[Depends(require_auth)])
+def session():
+    return {"authenticated": True, "language": "de"}
+
+
+@app.get("/api/projects", dependencies=[Depends(require_auth)])
+def projects():
+    with _db() as db:
+        rows = db.execute("SELECT * FROM studio_projects ORDER BY updated_at DESC").fetchall()
+    return {"projects": [_public_project(dict(row)) for row in rows]}
+
+
+@app.post("/api/projects", dependencies=[Depends(require_auth)], status_code=201)
+async def create_project(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".epub"):
+        raise HTTPException(400, "Bitte eine EPUB-Datei auswählen.")
+    project_id = uuid.uuid4().hex
+    directory = _project_dir(project_id)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    path = directory / "source.epub"
+    total = 0
+    try:
+        # Chunked upload: reject files that exceed the maximum even if the
+        # client omits Content-Length.
+        with path.open("xb") as target:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise ValueError("Die EPUB-Datei ist größer als 60 MB.")
+                target.write(chunk)
+        _validate_epub(path)
+        result = _extract(path)
+        catalogue = _catalogue(result)
+        (directory / "chapters.json").write_text(
+            json.dumps(catalogue, ensure_ascii=False), encoding="utf-8"
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        with _db() as db:
+            db.execute(
+                """INSERT INTO studio_projects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    project_id, catalogue["title"], "Entwurf",
+                    Path(file.filename).name[:255], len(catalogue["chapters"]),
+                    catalogue["suggested_start"], "[]", now, now,
+                ),
+            )
+        return _public_project(_project(project_id), catalogue)
+    except ValueError as exc:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise HTTPException(422, str(exc)) from exc
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    finally:
+        await file.close()
+
+
+@app.get("/api/projects/{project_id}", dependencies=[Depends(require_auth)])
+def get_project(project_id: str):
+    row = _project(project_id)
+    path = _project_dir(project_id) / "chapters.json"
+    try:
+        catalogue = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, "Kapitelinformationen können nicht geladen werden.") from exc
+    return _public_project(row, catalogue)
+
+
+@app.put("/api/projects/{project_id}/chapters", dependencies=[Depends(require_auth)])
+def select_chapters(project_id: str, selection: ChapterSelection):
+    row = _project(project_id)
+    if row["status"] not in {"Entwurf", "Vorbereitet"}:
+        raise HTTPException(409, "Das Projekt kann in seinem aktuellen Zustand nicht bearbeitet werden.")
+    directory = _project_dir(project_id)
+    catalogue = json.loads((directory / "chapters.json").read_text(encoding="utf-8"))
+    chapters = catalogue["chapters"]
+    if selection.start_index >= len(chapters) or chapters[selection.start_index]["is_toc"]:
+        raise HTTPException(422, "Ungültiger Vorlesebeginn: Ein Inhaltsverzeichnis ist nicht zulässig.")
+    excluded = set(selection.excluded_indices)
+    if any(i < 0 or i >= len(chapters) for i in excluded):
+        raise HTTPException(422, "Ungültige Kapitelauswahl.")
+    excluded.update(i for i, chapter in enumerate(chapters) if chapter["is_toc"])
+    included = [i for i in range(selection.start_index, len(chapters)) if i not in excluded]
+    if not included or included[0] != selection.start_index:
+        raise HTTPException(422, "Mindestens das Startkapitel muss enthalten sein.")
+
+    # Import and persist with the existing project schema, not a new book
+    # representation. No TTS execution is triggered by this operation.
+    from tts_audiobook_tool.project import Project
+    from tts_audiobook_tool.project_support.project_text_io_util import ProjectTextIOUtil
+    from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
+
+    try:
+        book = EpubExtractor.import_epub(
+            str(directory / "source.epub"),
+            max_words=Project().max_words,
+            segmentation_strategy=Project().segmentation_strategy,
+            language_code="de",
+        )
+        if len(book.chapters) != len(chapters):
+            raise ValueError("Die EPUB-Kapitel haben sich seit dem Import verändert.")
+        bounds = [0] + book.section_start_indices + [len(book.phrase_groups)]
+        selected_groups = []
+        selected_titles = []
+        selected_markers = []
+        selected_raw = []
+        for i in included:
+            if selected_groups:
+                selected_markers.append(len(selected_groups))
+            selected_groups.extend(book.phrase_groups[bounds[i]:bounds[i + 1]])
+            selected_titles.append(book.chapters[i].title)
+            selected_raw.append(book.chapters[i].text)
+        if not selected_groups:
+            raise ValueError("Die Auswahl enthält keinen sprechbaren Text.")
+
+        engine_dir = directory / "engine"
+        engine_dir.mkdir(mode=0o700, exist_ok=True)
+        project = Project(dir_path=str(engine_dir), language_code="de")
+        error = ProjectTextIOUtil.set_phrase_groups_chapters_and_save(
+            project, phrase_groups=selected_groups,
+            section_start_indices=selected_markers,
+            strategy=project.segmentation_strategy,
+            max_words=project.max_words,
+            language_code="de",
+            raw_text="\n\n".join(selected_raw),
+            title=book.book_title,
+            section_titles=selected_titles,
+        )
+        if error:
+            raise ValueError("Projektspeicherung fehlgeschlagen: " + error)
+        error = EpubExtractor.copy_epub_to_project(str(directory / "source.epub"), str(engine_dir))
+        if error:
+            raise ValueError("EPUB-Kopie fehlgeschlagen: " + error)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    now = datetime.now(timezone.utc).isoformat()
+    with _db() as db:
+        db.execute(
+            """UPDATE studio_projects SET selected_start=?, excluded_json=?, status=?, updated_at=? WHERE id=?""",
+            (selection.start_index, json.dumps(sorted(excluded)), "Vorbereitet", now, project_id),
+        )
+    return get_project(project_id)
+
+
+@app.get("/api/voices", dependencies=[Depends(require_auth)])
+def voices():
+    # Only verified AND privately installed voices can become available.
+    # This is a source candidate, not a synthetic profile ready to use.
+    return {
+        "ready": [],
+        "candidates": [{
+            "id": "thorsten-neutral-review",
+            "name": "Thorsten Müller · Neutral",
+            "description": "Deutsche Männerstimme. Referenzauswahl, rechtliche Einzelprüfung und Hörabnahme stehen aus.",
+            "status": "under_review",
+            "license": "CC0-1.0 (Dataset)",
+            "source": "https://huggingface.co/datasets/Thorsten-Voice/TV-44kHz-Full",
+        }],
+    }
+
+
+@app.get("/api/capabilities", dependencies=[Depends(require_auth)])
+def capabilities():
+    return {
+        "epub_import": True,
+        "chapter_selection": True,
+        "tts_generation": False,
+        "audio_export": False,
+        "reason": "GPU-Worker, rechtlich geprüfte Referenz und Hörabnahme noch nicht integriert.",
+    }
+
+
+@app.get("/")
+def index():
+    path = Path(__file__).resolve().parents[2] / "web" / "dist" / "index.html"
+    if path.is_file():
+        return FileResponse(path, media_type="text/html")
+    return JSONResponse(
+        {"message": "Frontend noch nicht gebaut. Bitte in web/ npm ci && npm run build ausführen."},
+        status_code=503,
+    )
+
+
+@app.get("/assets/{asset_name}")
+def asset(asset_name: str):
+    # Only built assets, no arbitrary traversal or private file serving.
+    if not re.fullmatch(r"[a-zA-Z0-9_.-]+", asset_name):
+        raise HTTPException(404, "Datei nicht gefunden.")
+    path = Path(__file__).resolve().parents[2] / "web" / "dist" / "assets" / asset_name
+    if not path.is_file() or path.is_symlink():
+        raise HTTPException(404, "Datei nicht gefunden.")
+    return FileResponse(path)
