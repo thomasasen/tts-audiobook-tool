@@ -104,9 +104,9 @@ def api(route: str, *, method: str = "GET", value: dict | None = None,
                 return response.read(MAX_DOWNLOAD_BYTES + 1)
             return json.loads(response.read(1024 * 1024))
     except HTTPError as exc:
-        details = exc.read(4096).decode("utf-8", errors="replace")
-        # Do not echo token or private book text from any unexpected server error.
-        raise RuntimeError(f"HTTP {exc.code} bei {route}. Serverantwort: {details[:300]}") from exc
+        exc.read(4096)  # Drain a bounded error body without revealing private text.
+        # Never echo private user book text, even if an upstream error includes it.
+        raise RuntimeError(f"HTTP {exc.code} bei {route}; Details im privaten Serverlog.") from exc
     except URLError as exc:
         raise RuntimeError("Lokaler Webserver nicht erreichbar (Port 7860).") from exc
 
@@ -195,8 +195,8 @@ def status(*, checkpoint: bool = False, verify_restart: bool = False) -> dict:
         "server_instance": instance,
     }
     if checkpoint:
-        if job["status"] not in ("running", "queued") or job["done"] < 1:
-            raise RuntimeError("Checkpoint erst nach mindestens einem erzeugten Segment setzen.")
+        if job["status"] not in ("running", "queued") or not 1 <= job["done"] < job["total"]:
+            raise RuntimeError("Checkpoint nur bei laufendem, noch nicht abgeschlossenem Auftrag mit mindestens einem Segment setzen.")
         current["checkpoint"] = {"instance": instance, "done": job["done"],
                                   "created_at": timestamp()}
         json_file(state_path(), current)
@@ -211,6 +211,13 @@ def status(*, checkpoint: bool = False, verify_restart: bool = False) -> dict:
             raise RuntimeError("Datenverlust erkannt: Fortschritt hinter dem Checkpoint.")
         if job["status"] in ("failed", "cancelled"):
             raise RuntimeError("Auftrag konnte nach Neustart nicht fortgesetzt werden.")
+        # A new server ID with an unchanged queued job does not prove resume.
+        # Require fresh progress or a genuinely finished production after restart.
+        if job["done"] == previous["done"] and job["status"] not in ("generated", "completed"):
+            raise RuntimeError(
+                "Server wurde neu gestartet, aber kein neuer Generierungsfortschritt nachgewiesen. "
+                "Status später erneut prüfen, während der Auftrag weiterläuft."
+            )
         data["recovery_verified"] = True
         current["recovery_verified"] = True
         json_file(state_path(), current)
@@ -259,8 +266,10 @@ def finish() -> dict:
             timings.append(float(meta["inference_seconds"]))
     current["inference_segments_measured"] = len(timings)
     current["inference_seconds"] = round(sum(timings), 1)
-    current["rtf_inference"] = (round(sum(timings) / duration, 3)
-                                if len(timings) == job["total"] else None)
+    # Historical 'inference_seconds' includes first model load and retries.
+    # Name the ratio accurately: it is not isolated decoder GPU-inference time.
+    current["rtf_generation_wall"] = (round(sum(timings) / duration, 3)
+                                      if len(timings) == job["total"] else None)
     current["m4b_size_bytes"] = local.stat().st_size
     current["chapter_titles"] = titles
     current["final_gpu"] = hardware()
@@ -269,7 +278,7 @@ def finish() -> dict:
     return {
         "result": "Technischer EPUB→M4B-Workflow bestanden; HÖRABNAHME NOCH OFFEN",
         "m4b": str(local), "chapters": titles, "audio_seconds": round(duration, 1),
-        "real_time_factor_inference": current["rtf_inference"],
+        "real_time_factor_generation_wall": current["rtf_generation_wall"],
         "inference_segments_measured": current["inference_segments_measured"],
         "wall_time_including_manual_interruption_s": current["render_elapsed_seconds"],
         "recovery_verified": current.get("recovery_verified", False),
