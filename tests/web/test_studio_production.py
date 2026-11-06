@@ -354,3 +354,68 @@ def test_cancelled_job_does_not_become_generated_when_inference_finishes(env, mo
         production._STOP.set()
     assert production._job(created["id"])["status"] == "cancelled"
     assert studio._project(project_id)["status"] == "Vorbereitet"
+
+
+def _prepare_fake_installed_voice(monkeypatch):
+    """Small artificial files model identity, not downloaded or trusted weights."""
+    root = studio.data_dir()
+    model = root / "models" / "CosyVoice"
+    model.mkdir(parents=True, exist_ok=True)
+    script = model / "infer_thorsten.py"
+    script.write_text("print('synthetic test script')", encoding="utf-8")
+    (model / ".studio-ready").write_text("test-model-version", encoding="utf-8")
+    manifest = root / "models" / "thorsten-model-sha256.txt"
+    manifest.write_text("synthetic-private-checksum-manifest", encoding="utf-8")
+    python = root / "venvs" / "thorsten" / "bin" / "python"
+    python.parent.mkdir(parents=True, exist_ok=True)
+    python.write_text("fake executable for unit tests", encoding="utf-8")
+    monkeypatch.setenv("AUDIOBOOK_THORSTEN_PYTHON", str(python))
+    monkeypatch.setenv("AUDIOBOOK_THORSTEN_SCRIPT", str(script))
+    sample = root / "voice-samples" / "thorsten.wav"
+    sample.parent.mkdir(parents=True, exist_ok=True)
+    rate = 16000
+    with wave.open(str(sample), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(rate)
+        output.writeframes(struct.pack("<" + "h" * rate, *([900] * rate)))
+    return manifest, script
+
+
+def test_voice_approval_is_invalidated_after_model_or_code_change(env, monkeypatch):
+    manifest, script = _prepare_fake_installed_voice(monkeypatch)
+    assert production.voice_ready() is False
+    capabilities = env.get("/api/capabilities", headers=HEADERS).json()
+    assert capabilities["voice_preview_available"] is True
+    assert capabilities["tts_generation"] is False
+
+    production.approve_sample()  # Simulation: not evidence of a real listening test.
+    assert production.voice_ready() is True
+
+    manifest.write_text("altered-weight-checksums", encoding="utf-8")
+    assert production.voice_ready() is False
+    with pytest.raises(ValueError, match="zuerst"):
+        production.create_job(uuid.uuid4().hex)
+
+    manifest.write_text("synthetic-private-checksum-manifest", encoding="utf-8")
+    assert production.voice_ready() is True
+    script.write_text("print('new model runtime')", encoding="utf-8")
+    assert production.voice_ready() is False
+
+
+def test_previously_planned_job_cannot_mix_changed_voice_weights(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    manifest, _ = _prepare_fake_installed_voice(monkeypatch)
+    production.approve_sample()
+    job = production.create_job(project_id)
+    plan = json.loads((production._jobs_dir(job["id"]) / "plan.json").read_text(encoding="utf-8"))
+    assert plan["version"] == 2
+    assert plan["model_identity"] == production._model_identity()
+    assert len(plan["model_identity"]) == 64
+
+    manifest.write_text("different-model-after-job-was-created", encoding="utf-8")
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job["id"],))
+    with pytest.raises(ValueError, match="Modellgewichte"):
+        production._run(job["id"])
