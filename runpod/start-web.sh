@@ -46,6 +46,10 @@ if (( ${#AUDIOBOOK_STUDIO_TOKEN} < 32 )); then
 fi
 export AUDIOBOOK_STUDIO_TOKEN
 export AUDIOBOOK_STUDIO_DATA_DIR="$AUDIOBOOK_DATA_ROOT"
+# Optional on-device Whisper ASR checks. False positives are review flags, not errors.
+if [[ ! -v AUDIOBOOK_STUDIO_ASR_MODEL ]]; then
+  export AUDIOBOOK_STUDIO_ASR_MODEL=small
+fi
 
 THORSTEN_ROOT="$AUDIOBOOK_DATA_ROOT/models/CosyVoice"
 if [[ -s "$THORSTEN_ROOT/.studio-ready" &&
