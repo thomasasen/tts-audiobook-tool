@@ -1,6 +1,6 @@
 # RunPod: German Audiobook Studio (integrierter Entwicklungsbranch)
 
-**Status:** Der neue Release-Validierungsbranch ergänzt EPUB-/Browser-/Recovery-Prüfungen. **GPU und echte deutsche Sprachausgabe sind weiterhin nicht abgenommen**. Der vollständige kopierbare Docker-Startbefehl steht ganz oben in der [README](../README.md). Diese Anleitung beschreibt den Betrieb und Fehlerfälle.
+**Status:** Der Entwicklungsbranch `feature/german-audiobook-release-hardening` (Draft-PR #14) ergänzt EPUB-/Browser-/Recovery-Prüfungen. **GPU und echte deutsche Sprachausgabe sind weiterhin nicht abgenommen.** Die maßgebliche RunPod-Template-Konfiguration, die aktuelle Speicherempfehlung (15 GB Container Disk und 60 GB Network Volume) und der kopierbare Docker-Startbefehl stehen **ausschließlich am Anfang der [Haupt-README](../README.md)**. Diese Datei beschreibt die technische Umsetzung und Fehlerfälle; die originale TUI hat davon getrennte Funktionen und kann Referenzstimmen nutzen.
 
 ## Architektur
 
