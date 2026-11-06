@@ -311,14 +311,18 @@ def select_chapters(project_id: str, selection: ChapterSelection):
     # Import and persist with the existing project schema, not a new book
     # representation. No TTS execution is triggered by this operation.
     from tts_audiobook_tool.project import Project
+    from tts_audiobook_tool.constants import (
+        MAX_WORDS_PER_SEGMENT_DEFAULT, PROJECT_DEFAULT_SEGMENTATION_STRATEGY,
+    )
     from tts_audiobook_tool.project_support.project_text_io_util import ProjectTextIOUtil
     from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
 
+    project = None
     try:
         book = EpubExtractor.import_epub(
             str(directory / "source.epub"),
-            max_words=Project().max_words,
-            segmentation_strategy=Project().segmentation_strategy,
+            max_words=MAX_WORDS_PER_SEGMENT_DEFAULT,
+            segmentation_strategy=PROJECT_DEFAULT_SEGMENTATION_STRATEGY,
             language_code="de",
         )
         if len(book.chapters) != len(chapters):
@@ -357,6 +361,9 @@ def select_chapters(project_id: str, selection: ChapterSelection):
             raise ValueError("EPUB-Kopie fehlgeschlagen: " + error)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    finally:
+        if project is not None:
+            project.kill()
     now = datetime.now(timezone.utc).isoformat()
     with _db() as db:
         db.execute(
