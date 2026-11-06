@@ -1,9 +1,12 @@
 """Offline contracts for GPU acceptance: synthetic fixture and fail-closed CLI."""
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import subprocess
 import sys
+from unittest.mock import patch
 import tempfile
 import unittest
 import zipfile
@@ -67,6 +70,63 @@ class TestRunPodLiveAcceptanceContract(unittest.TestCase):
             self.assertEqual(run.returncode, 1)
             self.assertIn("NICHT BESTANDEN", run.stderr)
             self.assertFalse((Path(temporary) / "missing").exists())
+
+    def test_recovery_rejects_new_instance_without_progress(self):
+        # Imported acceptance controller uses only stdlib and a temporary
+        # private state. This does not claim a real RunPod restart.
+        spec = importlib.util.spec_from_file_location(
+            "studio_acceptance_test", ROOT / "runpod/acceptance.py"
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        sys.path.insert(0, str(ROOT / "runpod"))
+        try:
+            controller = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(controller)
+        finally:
+            sys.path.remove(str(ROOT / "runpod"))
+
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            current = {
+                "job_id": "test_job", "project_id": "test_project",
+                "checkpoint": {"instance": "before", "done": 2},
+            }
+            (folder / "current.json").write_text(json.dumps(current), encoding="utf-8")
+            job = {"status": "queued", "done": 2, "total": 5, "duration": 1.0,
+                   "chapter": "Vorwort"}
+            session = {"instance_id": "after"}
+            with (patch.object(controller, "root", return_value=folder),
+                  patch.object(controller, "get_status",
+                               side_effect=lambda: (controller.state(), job)),
+                  patch.object(controller, "api", return_value=session)):
+                with self.assertRaisesRegex(RuntimeError, "kein neuer Generierungsfortschritt"):
+                    controller.status(verify_restart=True)
+                self.assertFalse(controller.state().get("recovery_verified", False))
+                job["done"] = 3
+                result = controller.status(verify_restart=True)
+                self.assertTrue(result["recovery_verified"])
+                self.assertTrue(controller.state()["recovery_verified"])
+
+    def test_checkpoint_rejects_already_generated_book(self):
+        spec = importlib.util.spec_from_file_location(
+            "studio_acceptance_checkpoint_test", ROOT / "runpod/acceptance.py"
+        )
+        sys.path.insert(0, str(ROOT / "runpod"))
+        try:
+            controller = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(controller)
+        finally:
+            sys.path.remove(str(ROOT / "runpod"))
+        with tempfile.TemporaryDirectory() as temp:
+            job = {"status": "generated", "done": 5, "total": 5,
+                   "duration": 3.0, "chapter": "Kapitel 2"}
+            with (patch.object(controller, "root", return_value=Path(temp)),
+                  patch.object(controller, "get_status",
+                               return_value=({"job_id": "x"}, job)),
+                  patch.object(controller, "api", return_value={"instance_id": "i"})):
+                with self.assertRaisesRegex(RuntimeError, "noch nicht abgeschlossen"):
+                    controller.status(checkpoint=True)
 
     def test_review_gate_never_auto_approves_voice(self):
         source = (ROOT / "runpod/acceptance.py").read_text(encoding="utf-8")
