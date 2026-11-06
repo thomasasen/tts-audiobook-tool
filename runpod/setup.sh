@@ -115,12 +115,16 @@ verify_model_imports() {
   local model="$1" python="$2" version="$3"
   "$python" - "$model" "$version" <<'PY'
 import importlib.util
+import importlib.metadata
 import sys
 import torch
 
 model, expected = sys.argv[1:]
-name = "qwen_tts" if model == "qwen" else "transformers"
-assert importlib.util.find_spec(name) is not None, f"Missing package: {name}"
+if model == "qwen":
+    assert importlib.util.find_spec("qwen_tts") is not None, "Missing package: qwen_tts"
+else:
+    # Match the upstream launcher catalog (local_module_test = "dist:moss-tts").
+    assert importlib.metadata.distribution("moss-tts"), "Missing dist: moss-tts"
 assert torch.__version__.split("+", 1)[0] == expected, (
     f"torch {torch.__version__}; expected {expected}"
 )
