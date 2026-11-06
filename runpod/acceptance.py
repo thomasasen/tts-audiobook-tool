@@ -29,7 +29,10 @@ from urllib.request import Request, urlopen
 
 from acceptance_epub import build_epub
 
-BASE = "http://127.0.0.1:7860"
+PORT = os.environ.get("AUDIOBOOK_STUDIO_PORT", "7860")
+if not PORT.isdigit() or not 1 <= int(PORT) <= 65535:
+    raise RuntimeError("Ungültiger lokaler AUDIOBOOK_STUDIO_PORT.")
+BASE = "http://127.0.0.1:" + PORT
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 
@@ -246,7 +249,18 @@ def finish() -> dict:
     current["completed_at"] = timestamp()
     current["duration_seconds"] = duration
     current["render_elapsed_seconds"] = round(time.time() - current["started_unix"], 1)
-    current["rtf_including_qc_export"] = round(current["render_elapsed_seconds"] / duration, 3)
+    # Use per-segment inference durations, not wall time across manual listening
+    # pauses or a pod restart. Only the private local segment metadata is read.
+    segments = root().parent / "studio-jobs" / current["job_id"] / "audio"
+    timings = []
+    for path in sorted(segments.glob("*.json")):
+        meta = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(meta.get("inference_seconds"), (int, float)):
+            timings.append(float(meta["inference_seconds"]))
+    current["inference_segments_measured"] = len(timings)
+    current["inference_seconds"] = round(sum(timings), 1)
+    current["rtf_inference"] = (round(sum(timings) / duration, 3)
+                                if len(timings) == job["total"] else None)
     current["m4b_size_bytes"] = local.stat().st_size
     current["chapter_titles"] = titles
     current["final_gpu"] = hardware()
@@ -255,7 +269,9 @@ def finish() -> dict:
     return {
         "result": "Technischer EPUB→M4B-Workflow bestanden; HÖRABNAHME NOCH OFFEN",
         "m4b": str(local), "chapters": titles, "audio_seconds": round(duration, 1),
-        "real_time_factor_including_qc_export": current["rtf_including_qc_export"],
+        "real_time_factor_inference": current["rtf_inference"],
+        "inference_segments_measured": current["inference_segments_measured"],
+        "wall_time_including_manual_interruption_s": current["render_elapsed_seconds"],
         "recovery_verified": current.get("recovery_verified", False),
         "listen_to_output": True,
     }
