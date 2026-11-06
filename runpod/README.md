@@ -1,10 +1,10 @@
 # RunPod: German Audiobook Studio (integrierter Entwicklungsbranch)
 
-**Status:** Der Entwicklungsbranch `feature/german-audiobook-release-hardening` (Draft-PR #14) ergänzt EPUB-/Browser-/Recovery-Prüfungen. **GPU und echte deutsche Sprachausgabe sind weiterhin nicht abgenommen.** Die maßgebliche RunPod-Template-Konfiguration, die aktuelle Speicherempfehlung (15 GB Container Disk und 60 GB Network Volume) und der kopierbare Docker-Startbefehl stehen **ausschließlich am Anfang der [Haupt-README](../README.md)**. Diese Datei beschreibt die technische Umsetzung und Fehlerfälle; die originale TUI hat davon getrennte Funktionen und kann Referenzstimmen nutzen.
+**Status:** Der für `master` freigegebene Integrationsstand aus PR #14 ergänzt EPUB-/Browser-/Recovery-Prüfungen. **GPU und echte deutsche Sprachausgabe sind weiterhin nicht abgenommen.** Die maßgebliche RunPod-Template-Konfiguration, die aktuelle Speicherempfehlung (15 GB Container Disk und 60 GB Network Volume) und der kopierbare Docker-Startbefehl stehen **ausschließlich am Anfang der [Haupt-README](../README.md)**. Diese Datei beschreibt die technische Umsetzung und Fehlerfälle; die originale TUI hat davon getrennte Funktionen und kann Referenzstimmen nutzen.
 
 ## Architektur
 
-- `/workspace/tts-audiobook-tool`: der geprüfte Branch `feature/german-audiobook-release-hardening`.
+- `/workspace/tts-audiobook-tool`: Standardbranch `master` (RunPod-Test, keine Produktionsfreigabe).
 - `/workspace/audiobook-data`: ausschließlich persistente Daten und Modelle, niemals Git-Artefakte.
 - `/workspace/audiobook-data/venvs/qwen`: Python 3.12, bestehende Projektlaufzeit und TUI.
 - `/workspace/audiobook-data/venvs/thorsten`: isolierte Python-3.11-CosyVoice3-Umgebung.
