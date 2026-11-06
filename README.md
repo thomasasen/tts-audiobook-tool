@@ -7,13 +7,13 @@
 | Einstellung | Empfehlung |
 | --- | --- |
 | Template | RunPod PyTorch, Linux mit NVIDIA/CUDA, Git und /start.sh |
-| GPU | **RTX 3090 (24 GB)** für günstige Thorsten-Tests; **A40/A6000 (48 GB)** für mehr Modellspielraum. RTX 4090 ist eine schnellere, aber häufig teurere Alternative. Kosten pro generierter Hörstunde müssen gemessen werden. |
+| GPU | **RTX 3090 (24 GB)** als praktikabler erster GPU-Test mit viel System-RAM. **RTX A5000 (24 GB)** ist pro Pod-Stunde günstiger, hat laut RunPod-Angebot aber nur 25 GB System-RAM. **A40/A6000 (48 GB)** bieten mehr VRAM; ob sie günstiger je fertig erzeugter Hörstunde sind, ist noch nicht gemessen. |
 | CPU / RAM | Mindestens 8 vCPU / 32 GB RAM empfohlen |
 | Persistentes Volume | **Mindestens 100 GB** an /workspace; für viele Buchprojekte und parallele Modellcaches 150–200 GB |
 | Exponierter HTTP-Port | 7860 (RunPod HTTPS-Proxy) |
 | Umgebungsvariablen | Optional: RUNPOD_TTS_MODELS=qwen (Vorgabe), RUNPOD_TTS_AUTOSTART_MODEL=qwen, AUDIOBOOK_STUDIO_PORT=7860, AUDIOBOOK_STUDIO_TOKEN (min. 32 Zeichen) |
 
-**RunPod Docker Start Command (vollständig kopieren):**
+**Orientierung der Pod-Stundenpreise (RunPod, Stand 04.11.2026):** RTX A5000 ca. 0,27 USD/h, RTX 3090 ca. 0,50 USD/h, A40 oder RTX A6000 ca. 0,59 USD/h und RTX 4090 ca. 0,89 USD/h. Die Verfügbarkeit und der tatsächliche Preis können nach Region/Cloud-Typ abweichen. Diese Werte messen **nicht** den Durchsatz oder die Kosten pro fertiger Hörbuchstunde. [Aktuelle Preise beim Anbieter](https://www.runpod.io/pricing).\n\n**RunPod Docker Start Command (vollständig kopieren):**
 
 Aktueller geprüfter **Entwicklungsbranch für die GPU-Abnahme: `feature/german-audiobook-release-hardening` (PR #14)**. Dies ist ausdrücklich **kein** freigegebener Produktionsrelease. Automatische Aktualisierungen laden neue Branch-Commits nach; für einen späteren produktiven Release ist ein unveränderlicher Commit-Hash erforderlich.
 
