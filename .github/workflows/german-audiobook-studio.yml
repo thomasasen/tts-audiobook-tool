@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install minimal web dependencies
-        run: python -m pip install -r web/requirements.txt pytest httpx
+        run: python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy
       - name: Compile Python adapter
         run: python -m compileall -q tts_audiobook_tool/web_studio
       - name: Web API tests
