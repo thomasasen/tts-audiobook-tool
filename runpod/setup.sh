@@ -72,7 +72,7 @@ echo "Setup log: $LOG_FILE"
 
 install_system_packages() {
   local missing=0
-  for cmd in git ffmpeg ffprobe tmux; do
+  for cmd in git ffmpeg ffprobe tmux node npm; do
     if ! command -v "$cmd" >/dev/null 2>&1; then missing=1; fi
   done
   if ! dpkg-query -W -f='${Status}' libportaudio2 2>/dev/null | grep -q 'install ok installed'; then
@@ -95,7 +95,7 @@ install_system_packages() {
   fi
   "${apt[@]}" update
   DEBIAN_FRONTEND=noninteractive "${apt[@]}" install -y --no-install-recommends \
-    ca-certificates git ffmpeg libportaudio2 python3-venv python3-pip tmux
+    ca-certificates git ffmpeg libportaudio2 python3-venv python3-pip tmux nodejs npm sox libsox-fmt-all
 }
 
 install_system_packages
