@@ -45,6 +45,14 @@ type Job = {
   duration: number
   error: string
 }
+type QualityIssue = {index: number; status: string; warnings: string[]; asr_similarity?: number | null}
+type QualityReport = {checked: number; total: number; issues: QualityIssue[]}
+const STATUS_LABELS: Record<string, string> = {
+  queued: 'Warteschlange', running: 'Wird vertont', paused: 'Pausiert',
+  failed: 'Fehlgeschlagen', generated: 'Audio erzeugt',
+  completed: 'Export abgeschlossen', cancelled: 'Abgebrochen',
+  exporting: 'M4B wird erstellt',
+}
 type Capabilities = {
   epub_import: boolean
   chapter_selection: boolean
@@ -95,6 +103,7 @@ export default function Studio() {
   const [excluded, setExcluded] = useState<number[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
   const [job, setJob] = useState<Job | null>(null)
+  const [quality, setQuality] = useState<QualityReport | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [glossary, setGlossary] = useState('')
   const [audioUrl, setAudioUrl] = useState('')
@@ -104,6 +113,10 @@ export default function Studio() {
   async function refreshJob(id: string, projectId: string) {
     const latest = await api<Job>(`/api/projects/${projectId}/jobs/${id}`, token)
     setJob(latest)
+    if (['generated','completed'].includes(latest.status)) {
+      const report = await api<QualityReport>('/api/projects/' + projectId + '/jobs/' + id + '/quality', token)
+      setQuality(report)
+    }
     if (['generated', 'completed', 'failed', 'cancelled'].includes(latest.status)) {
       await refreshProjects()
     }
@@ -167,7 +180,11 @@ export default function Studio() {
       api<{jobs: Job[]}>(`/api/projects/${projectId}/jobs`, token),
       api<Capabilities>('/api/capabilities', token),
     ])
-    setJob(list.jobs[0] ?? null); setCapabilities(caps)
+    const selected = list.jobs[0] ?? null
+    setJob(selected); setCapabilities(caps)
+    if (selected && ['generated','completed'].includes(selected.status)) {
+      setQuality(await api<QualityReport>('/api/projects/' + projectId + '/jobs/' + selected.id + '/quality', token))
+    } else setQuality(null)
   }
 
   async function productionAction(action: 'start'|'pause'|'resume'|'cancel'|'export') {
@@ -189,6 +206,17 @@ export default function Studio() {
       await refreshProjects()
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
+  }
+
+  async function retrySegment(index: number) {
+    if (!active || !job) return
+    if (!window.confirm('Dieses Segment mit der aktuellen Stimme neu erzeugen? Ein vorhandener M4B-Export wird ungültig.')) return
+    setBusy(true); setError('')
+    try {
+      const next = await api<Job>('/api/projects/' + active.id + '/jobs/' + job.id + '/segments/' + index + '/retry', token, {method:'POST'})
+      setJob(next); setQuality(null); setNotice('Segment zur erneuten Erzeugung vorgemerkt.')
+    } catch (err) {setError((err as Error).message)}
+    finally {setBusy(false)}
   }
 
   async function deleteProject(id: string) {
@@ -225,7 +253,7 @@ export default function Studio() {
   function signOut() {
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
     if (audioUrl) URL.revokeObjectURL(audioUrl)
-    setAudioUrl(''); setJob(null); setNotice(''); setError(''); setView('library')
+    setAudioUrl(''); setJob(null); setQuality(null); setNotice(''); setError(''); setView('library')
   }
 
   async function refreshProjects() {
@@ -289,7 +317,8 @@ export default function Studio() {
     try {
       const catalog = await api<{ready: VoiceCandidate[], candidates: VoiceCandidate[]}>('/api/voices', token)
       setVoices([...catalog.ready, ...catalog.candidates])
-      setPreviewPlayed(false)
+      if (audioUrl) URL.revokeObjectURL(audioUrl)
+      setAudioUrl(''); setPreviewPlayed(false)
       setCapabilities(await api<Capabilities>('/api/capabilities', token))
       setView('voices')
     } catch (err) { setError((err as Error).message) }
@@ -417,7 +446,7 @@ export default function Studio() {
                   <button className="primary-btn" disabled={busy || !capabilities?.tts_generation || active.status !== 'Vorbereitet'} onClick={() => productionAction('start')}><PlayCircle size={18}/> Vertonung starten</button>
                   {!capabilities?.tts_generation && <button className="outline-btn" onClick={showVoices}><Volume2 size={17}/> Sprecher prüfen</button>}
                 </> : <>
-                  <div className="panel-head"><h2>Auftrag</h2><span className="status-chip">{job.status}</span></div>
+                  <div className="panel-head"><h2>Auftrag</h2><span className="status-chip">{STATUS_LABELS[job.status] ?? job.status}</span></div>
                   <p>Aktuelles Kapitel: {job.chapter || 'Noch kein Kapitel begonnen'}</p>
                   <progress max={Math.max(1,job.total)} value={job.done} aria-label="Fortschritt"/><p>{job.done} von {job.total} Segmenten · {Math.round(job.duration)} Sekunden Audio</p>
                   {job.error && <p className="error" role="alert">{job.error}</p>}
@@ -426,9 +455,9 @@ export default function Studio() {
                     {['paused','failed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('resume')}><PlayCircle size={17}/> Fortsetzen</button>}
                     {['queued','running','paused','failed'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('cancel')}><StopCircle size={17}/> Abbrechen</button>}
                     {['generated','completed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('export')}><FileAudio size={17}/> M4B erstellen</button>}
-                    {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/\${active.id}/jobs/\${job.id}/download`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
+                    {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/${active.id}/jobs/${job.id}/download`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
                     {job.status === 'completed' && <button className="primary-btn" disabled={busy} onClick={async () => {
-                      const response = await fetch(`/api/projects/\${active.id}/jobs/\${job.id}/download`, {headers:{Authorization:`Bearer \${token}`}})
+                      const response = await fetch(`/api/projects/${active.id}/jobs/${job.id}/download`, {headers:{Authorization:`Bearer ${token}`}})
                       if(!response.ok) {setError('Download nicht verfügbar.');return}
                       const url=URL.createObjectURL(await response.blob())
                       const link=document.createElement('a');link.href=url;link.download='audiobook.m4b';link.click()
@@ -438,8 +467,20 @@ export default function Studio() {
                   {job.done > 0 && <div className="segment-preview">
                     <label htmlFor="segment-index">Segment zum Anhören (0–{job.done-1})</label>
                     <input id="segment-index" type="number" min={0} max={job.done-1} value={Math.min(sampleIndex,job.done-1)} onChange={e => setSampleIndex(Number(e.target.value))}/>
-                    <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/\${active.id}/jobs/\${job.id}/segments/\${Math.min(sampleIndex,job.done-1)}`)}><PlayCircle size={17}/> Segment anhören</button>
+                    <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/${active.id}/jobs/${job.id}/segments/${Math.min(sampleIndex,job.done-1)}`)}><PlayCircle size={17}/> Segment anhören</button>
                   </div>}
+                  {quality && <section className="quality-check" aria-label="Qualitätskontrolle">
+                    <h3>Qualitätskontrolle</h3>
+                    <p>{quality.checked} von {quality.total} Segmenten per ASR geprüft. Automatische Hinweise erfordern menschliche Kontrolle.</p>
+                    {quality.issues.length === 0 ? <p>Keine gemeldeten Auffälligkeiten. Eine vollständige Hörabnahme ersetzt dies nicht.</p> : <ul>{quality.issues.map(issue =>
+                      <li key={issue.index}><strong>Segment {issue.index + 1}</strong> · {issue.warnings.join(' ') || 'Spracherkennung nicht verfügbar.'}
+                        <div className="job-actions">
+                          <button className="outline-btn" disabled={busy} onClick={() => loadAudio('/api/projects/' + active.id + '/jobs/' + job.id + '/segments/' + issue.index)}><PlayCircle size={17}/> Anhören</button>
+                          <button className="outline-btn" disabled={busy || !['generated','completed'].includes(job.status)} onClick={() => retrySegment(issue.index)}><RotateCcw size={17}/> Neu erzeugen</button>
+                        </div>
+                      </li>
+                    )}</ul>}
+                  </section>}
                   {audioUrl && <audio src={audioUrl} controls className="chapter-player"/>}
                 </>}
               </div>
