@@ -453,6 +453,7 @@ export default function Studio() {
                   <div className="job-actions">
                     {['queued','running'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('pause')}><PauseCircle size={17}/> Pausieren</button>}
                     {['paused','failed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('resume')}><PlayCircle size={17}/> Fortsetzen</button>}
+                    {job.status === 'cancelled' && <button className="primary-btn" disabled={busy || !capabilities?.tts_generation} onClick={() => productionAction('start')}><PlayCircle size={17}/> Neuen Versuch starten</button>}
                     {['queued','running','paused','failed'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('cancel')}><StopCircle size={17}/> Abbrechen</button>}
                     {['generated','completed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('export')}><FileAudio size={17}/> M4B erstellen</button>}
                     {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/${active.id}/jobs/${job.id}/download`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
