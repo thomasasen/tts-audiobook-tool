@@ -573,7 +573,7 @@ def _run(job_id: str):
                 if not prompt:
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
                 infer_started = time.perf_counter()
-for attempt in range(3):
+                for attempt in range(3):
                     try:
                         seconds = _synthesize(prompt, path)
                         break
