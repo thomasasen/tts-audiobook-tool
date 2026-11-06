@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type FormEvent, type ChangeEvent } from 'react'
 import {
   ArrowLeft, BookOpen, Check, ChevronRight, CloudUpload, FileAudio,
   FolderOpen, Headphones, LockKeyhole, Moon, ShieldCheck, Sun,
@@ -77,7 +77,7 @@ export default function Studio() {
   const [excluded, setExcluded] = useState<number[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
-  async function signIn(event: React.FormEvent) {
+  async function signIn(event: FormEvent) {
     event.preventDefault()
     setBusy(true); setError('')
     try {
@@ -111,7 +111,7 @@ export default function Studio() {
     finally { setBusy(false) }
   }
 
-  async function upload(event: React.ChangeEvent<HTMLInputElement>) {
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
     if (fileRef.current) fileRef.current.value = ''
