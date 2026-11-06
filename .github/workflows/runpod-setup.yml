@@ -1,0 +1,31 @@
+name: RunPod setup static tests
+
+on:
+  push:
+    paths:
+      - 'runpod/**'
+      - 'tests/runpod/**'
+      - '.github/workflows/runpod-setup.yml'
+  pull_request:
+    paths:
+      - 'runpod/**'
+      - 'tests/runpod/**'
+      - '.github/workflows/runpod-setup.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify shell scripts
+        run: |
+          bash -n runpod/env.sh runpod/setup.sh runpod/start.sh
+          bash runpod/setup.sh --help
+          bash runpod/start.sh --help
+      - name: Run dependency-free RunPod tests
+        run: python3 -m unittest discover -s tests/runpod -p 'test_*.py' -v
+      - name: Inspect diagnostic JSON (GPU not required)
+        run: python3 runpod/doctor.py --json
