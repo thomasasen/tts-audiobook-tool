@@ -280,3 +280,77 @@ def test_simultaneous_requests_cannot_create_two_active_jobs(env, monkeypatch):
                 outcomes.append(("rejected", str(exc)))
     assert sorted(result[0] for result in outcomes) == ["created", "rejected"]
     assert len(production.list_jobs(project_id)) == 1
+
+
+def test_cancelled_job_allows_clean_new_attempt(env, monkeypatch):
+    """A real cancellation must not permanently strand an imported book."""
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+
+    first = env.post(f"/api/projects/{project_id}/jobs", headers=HEADERS)
+    assert first.status_code == 201
+    assert studio._project(project_id)["status"] == "Warteschlange"
+
+    cancelled = env.post(
+        f"/api/projects/{project_id}/jobs/{first.json()['id']}/control",
+        headers=HEADERS, json={"action": "cancel"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert studio._project(project_id)["status"] == "Vorbereitet"
+
+    second = env.post(f"/api/projects/{project_id}/jobs", headers=HEADERS)
+    assert second.status_code == 201
+    assert second.json()["id"] != first.json()["id"]
+    assert production._job(first.json()["id"])["status"] == "cancelled"
+
+
+def test_deleted_project_cannot_gain_orphan_job(env, monkeypatch):
+    """A removal between preflight and DB insert must be caught in transaction."""
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+
+    def remove_during_preflight(_project_id):
+        with studio._db() as db:
+            db.execute("DELETE FROM studio_projects WHERE id=?", (project_id,))
+        return {}
+
+    monkeypatch.setattr(production, "project_glossary", remove_during_preflight)
+    with pytest.raises(ValueError, match="zwischenzeitlich gelöscht"):
+        production.create_job(project_id)
+    with studio._db() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM studio_jobs WHERE project_id=?", (project_id,)
+        ).fetchone()[0] == 0
+    jobs_dir = studio.data_dir() / "studio-jobs"
+    assert not list(jobs_dir.glob("*/plan.json"))
+
+
+def test_cancelled_job_does_not_become_generated_when_inference_finishes(env, monkeypatch):
+    """In-flight TTS may return after cancellation, but never revive the job."""
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    created = production.create_job(project_id)
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (created["id"],))
+
+    monkeypatch.setattr(production, "_normalize_de", lambda text, _: text)
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+
+    def cancel_while_synthesizing(_text, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"simulated WAV for cancellation race")
+        production.change_job(project_id, created["id"], "cancel")
+        return 1.0
+
+    monkeypatch.setattr(production, "_synthesize", cancel_while_synthesizing)
+    production._STOP.clear()
+    try:
+        production._run(created["id"])
+    finally:
+        production._STOP.set()
+    assert production._job(created["id"])["status"] == "cancelled"
+    assert studio._project(project_id)["status"] == "Vorbereitet"
