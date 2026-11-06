@@ -52,7 +52,7 @@ def test_german_imprint_identified_in_front_matter():
 def test_de_word_in_normal_heading_not_a_toc():
     assert not Skip.has_table_of_contents_href_or_title_signal("kapitel-3.xhtml", "Inhaltliche Grundlagen")
     result = Skip.detect_table_of_contents_skip(
-        readable_spine_index=2, readable_spine_count=12,
+        readable_spine_index=8, readable_spine_count=20,
         href="kapitel-3.xhtml", title="Inhaltliche Grundlagen",
         html=_toc_html("Inhaltliche Grundlagen"),
     )
