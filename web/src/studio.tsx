@@ -127,7 +127,7 @@ export default function Studio() {
       }
       const url = URL.createObjectURL(await response.blob())
       setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return url })
-      setPreviewPlayed(true)
+      setPreviewPlayed(false)
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
   }
@@ -240,8 +240,8 @@ export default function Studio() {
       setActive(project)
       setStart(project.selected_start)
       setExcluded(project.excluded_indices)
-      if (next === 'export') await refreshProduction(id)
       setJob(null)
+      if (next === 'export') await refreshProduction(id)
       setView(next)
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -406,7 +406,7 @@ export default function Studio() {
                   catch (err) { setError((err as Error).message) }
                 }}><Check size={17}/> Nach Anhören freigeben</button></div>
               </div></div>)}</div>
-              {audioUrl && <div className="panel audio-preview"><h3>Hörprobe</h3><audio src={audioUrl} controls onPlay={() => setPreviewPlayed(true)}/><p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p></div>}
+              {audioUrl && <div className="panel audio-preview"><h3>Hörprobe</h3><audio src={audioUrl} controls onEnded={() => setPreviewPlayed(true)}/><p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p></div>}
             </>}
             {view === 'export' && active && <>
               <div className="page-heading"><div><p className="eyebrow">PRODUKTION UND EXPORT</p><h1>Hörbuch erstellen</h1><p>{active.title}</p></div></div>
@@ -426,9 +426,9 @@ export default function Studio() {
                     {['paused','failed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('resume')}><PlayCircle size={17}/> Fortsetzen</button>}
                     {['queued','running','paused','failed'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('cancel')}><StopCircle size={17}/> Abbrechen</button>}
                     {['generated','completed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('export')}><FileAudio size={17}/> M4B erstellen</button>}
-                    {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(\`/api/projects/\${active.id}/jobs/\${job.id}/download\`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
+                    {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/\${active.id}/jobs/\${job.id}/download`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
                     {job.status === 'completed' && <button className="primary-btn" disabled={busy} onClick={async () => {
-                      const response = await fetch(\`/api/projects/\${active.id}/jobs/\${job.id}/download\`, {headers:{Authorization:\`Bearer \${token}\`}})
+                      const response = await fetch(`/api/projects/\${active.id}/jobs/\${job.id}/download`, {headers:{Authorization:`Bearer \${token}`}})
                       if(!response.ok) {setError('Download nicht verfügbar.');return}
                       const url=URL.createObjectURL(await response.blob())
                       const link=document.createElement('a');link.href=url;link.download='audiobook.m4b';link.click()
@@ -438,7 +438,7 @@ export default function Studio() {
                   {job.done > 0 && <div className="segment-preview">
                     <label htmlFor="segment-index">Segment zum Anhören (0–{job.done-1})</label>
                     <input id="segment-index" type="number" min={0} max={job.done-1} value={Math.min(sampleIndex,job.done-1)} onChange={e => setSampleIndex(Number(e.target.value))}/>
-                    <button className="outline-btn" disabled={busy} onClick={() => loadAudio(\`/api/projects/\${active.id}/jobs/\${job.id}/segments/\${Math.min(sampleIndex,job.done-1)}\`)}><PlayCircle size={17}/> Segment anhören</button>
+                    <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/\${active.id}/jobs/\${job.id}/segments/\${Math.min(sampleIndex,job.done-1)}`)}><PlayCircle size={17}/> Segment anhören</button>
                   </div>}
                   {audioUrl && <audio src={audioUrl} controls className="chapter-player"/>}
                 </>}
