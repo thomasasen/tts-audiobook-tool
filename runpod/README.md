@@ -9,6 +9,70 @@ requirements. Qwen3-TTS and MOSS-TTS need different Torch versions and **must
 not** share a virtual environment. The GPU driver must support the CUDA
 runtime installed by the pinned Torch packages.
 
+## Recommended RunPod Pod settings (automatic start)
+
+| RunPod setting | Recommended value |
+| --- | --- |
+| GPU | **1x NVIDIA RTX A6000, 48 GB VRAM** (or A40 48 GB) |
+| Template | Official **PyTorch 2.8 / CUDA 12.8** with SSH enabled |
+| Container Disk | **50 GB** (disposable, for OS packages/temp files) |
+| Network Volume | **150 GB Standard**, attached at `/workspace` **before** creating the Pod |
+| Volume storage location | In the same RunPod data center as the GPU |
+| Ports | SSH/Web Terminal; no custom public HTTP port |
+| Startup environment | `RUNPOD_TTS_MODELS=both`, `RUNPOD_TTS_AUTOSTART_MODEL=qwen` (defaults) |
+
+GPU choice prioritizes ample VRAM for both local models rather than peak speed.
+RunPod's published Pod prices (October 2026) listed RTX A6000 at about
+**$0.59/hour**; real offers and storage charges vary. The Standard Network
+Volume was listed around **$0.07/GB/month** under 1 TB. A dedicated network
+volume survives even terminating the GPU Pod; a regular Pod Volume does not.
+Choose your region/volume first, then a GPU in the same data center.
+
+In the **Docker Command** field, paste this **single command**:
+
+```bash
+bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/runpod-p0/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
+```
+
+Why `/start.sh &`? Official RunPod PyTorch containers normally use
+`/start.sh` to keep SSH/Jupyter services alive. Replacing their Docker
+command without invoking it can disable remote terminal access. This wrapper
+keeps those services and the container running, **even if the audiobook
+bootstrap fails**, so you can still inspect logs and repair the installation.
+
+On every Pod start, `runpod/autostart.sh`:
+1. Verifies the persistent mount and checks out/fast-forwards this fork's
+   `feature/runpod-p0` branch without resetting local changes.
+2. Calls `runpod/setup.sh --models both` to install/reuse Python 3.12,
+   pinned Qwen3 and MOSS environments and shared model caches on the volume.
+3. Starts the original text UI in a detached `tmux` session on Qwen by
+   default (or reuses an existing session). Does **not** start a public server.
+4. Writes installation logs under
+   `/workspace/audiobook-data/logs/autostart-*.log`.
+
+To access the running application, open RunPod's SSH/Web Terminal:
+
+```bash
+tmux attach -t audiobook
+```
+
+Detach without stopping audio generation with **Ctrl+B**, then **D**.
+Exit the TUI normally when finished. To start with MOSS next time, set the
+Pod environment variable `RUNPOD_TTS_AUTOSTART_MODEL=moss` and restart
+the Pod. To select models on startup, set it to `menu`. You can always
+run `bash /workspace/tts-audiobook-tool/runpod/start.sh --model moss`
+manually from a second terminal.
+
+**Current limitation:** This automatic startup has only been checked
+statically in CI, not verified on an actual RunPod GPU. The first boot may
+need to download model weights when they are selected in the app, and
+a successful setup is not proof that GPU inference and voice quality pass.
+
+**Security:** The startup command downloads code from your GitHub fork.
+Only use a repository/branch you trust and review changes before merging.
+Reference voice clips, licensed EPUBs and exported audio must remain on the
+private `/workspace/audiobook-data` volume, never in this public Git repo.
+
 ## 1. Provision the Pod
 
 1. In the RunPod dashboard, create a **GPU Pod** using the official **PyTorch
