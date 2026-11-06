@@ -42,6 +42,7 @@ def main() -> None:
 
     print(json.dumps({"ready": True}), flush=True)
     for line in sys.stdin:
+        request = {}
         try:
             request = json.loads(line)
             output = Path(request["output"])
