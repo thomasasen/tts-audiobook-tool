@@ -426,13 +426,13 @@ def approve_voice():
 
 @app.get("/api/capabilities", dependencies=[Depends(require_auth)])
 def capabilities():
-    from .production import _config
+    from .production import _model_identity
     return {
         "epub_import": True,
         "chapter_selection": True,
         "tts_generation": production.voice_ready(),
         "audio_export": True,
-        "voice_preview_available": _config() is not None,
+        "voice_preview_available": _model_identity() is not None,
         "reason": ("Produktion freigegeben." if production.voice_ready()
                    else "Thorsten-CosyVoice3 muss installiert, probeweise erzeugt und angehört werden."),
     }
