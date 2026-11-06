@@ -1,6 +1,6 @@
 # German Audiobook Studio: RunPod-Schnellstart (Entwicklungsstand)
 
-> **Für den ersten echten GPU-Test, noch kein Produktionsrelease.** Der RunPod-Start und die Weboberfläche sind automatisiert geprüft; eine echte CUDA-Vertonung, vollständige deutsche Hörabnahme, Pod-Wiederaufnahme und EPUB→M4B-Abnahme auf einer GPU stehen aus. Verwendet wird der Entwicklungsbranch [`feature/german-audiobook-release-hardening`](https://github.com/thomasasen/tts-audiobook-tool/pull/14), **nicht `master`**.
+> **Für den ersten echten GPU-Test, noch kein Produktionsrelease.** RunPod-Start und Weboberfläche sind automatisiert geprüft; echte CUDA-Vertonung, deutsche Hörabnahme, Pod-Wiederaufnahme und EPUB→M4B-Abnahme auf einer GPU stehen aus. Die geprüfte Studio-Implementierung wird nach der Integrationsfreigabe aus **`master`** geladen; ein Merge ist keine Produktionsfreigabe.
 
 ## 1. RunPod-Template vollständig einrichten
 
@@ -29,10 +29,10 @@ Diese Werte kannst du beim Erstellen eines **privaten Pod-Templates** direkt üb
 
 ### Docker Start Command – vollständig kopieren
 
-**Wichtig:** In das Feld **Docker Start Command** kommt der gesamte folgende Befehl, **nicht** nur `/start.sh` und **nicht** die Container-Image-Bezeichnung. Das Skript lädt den Entwicklungsbranch von PR #14, installiert die benötigten Umgebungen im Network Volume und startet Web-Studio sowie TUI.
+**Wichtig:** In das Feld **Docker Start Command** kommt der gesamte folgende Befehl, **nicht** nur `/start.sh` und **nicht** die Container-Image-Bezeichnung. Das Skript lädt den Repository-Standardbranch `master`, installiert die benötigten Umgebungen im Network Volume und startet Web-Studio sowie TUI. Der erstmalige Einsatz ist weiterhin ein GPU-Test, kein produktiver Betrieb.
 
 ```bash
-bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/feature/german-audiobook-release-hardening/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
+bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/master/runpod/autostart.sh -o /tmp/tts-autostart.sh; then bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
 ```
 
 > Der Befehl hält `/start.sh` für die RunPod-Basisdienste aktiv. **Achtung:** Bei einem Fehler des Autostarts kann der Pod trotzdem weiterlaufen und GPU-Kosten verursachen; der Text `Audiobook setup failed` ist kein Erfolgsstatus. Bei Problemen zunächst die Logs prüfen oder den Pod stoppen.
@@ -92,7 +92,7 @@ bash /workspace/tts-audiobook-tool/runpod/setup.sh --check-only
 
 Die Thorsten-Hörprobe ist erst nach erfolgreicher Modellinstallation verfügbar. Eine echte deutsche Hörabnahme, vollständige CUDA-Generierung, GPU-EPUB→M4B-Abnahme und Wiederaufnahme nach einem Pod-Neustart stehen weiterhin aus. Siehe [Abnahmeprotokoll](runpod/ACCEPTANCE.md) und [QA-/Release-Status](runpod/RELEASE_STATUS_2026-11-07.md).
 
-**Entwicklungsstand:** [Draft-PR #14](https://github.com/thomasasen/tts-audiobook-tool/pull/14), der die abhängigen Änderungen aus PRs #8 bis #13 integriert. Der unabhängige PR #6 betrifft ältere RunPod-Arbeiten und muss bei einem späteren Merge abgeglichen werden. Der Repository-Standardbranch heißt **`master`** und enthält diese neue Studioversion noch nicht.
+**Integration:** [PR #14](https://github.com/thomasasen/tts-audiobook-tool/pull/14) enthält die Änderungen aus der abhängigen PR-Kette #8 bis #13. Der Repository-Standardbranch heißt **`master`**. Die Integration der Studioversion in `master` bedeutet ausdrücklich **keine produktive GPU-/Stimmfreigabe**. PR #6 ist ein separater älterer RunPod-Arbeitszweig und wird nicht zusätzlich unbesehen gemergt.
 
 ## 3. Abgrenzung: deutsches Web-Studio und ursprüngliche Konsolenanwendung
 
