@@ -40,4 +40,4 @@ Stand: 06.11.2026. **Kein Produktions- oder GPU-Test wurde behauptet.**
 - [ ] Browser-End-to-End-Tests und visuelles Review samt Barrierefreiheit und Fehlerzuständen
 - [ ] Last-/Security-Test mit vollem Datenträger und problematischen EPUB-Dateien
 
-Automatisierte Tests belegen Funktionalität, keine Sprachqualität. Keine ungeprüften Merges in master. Große Debug- und Testarchive nicht in Git speichern.
+Automatisierte Tests belegen Funktionalität, keine Sprachqualität. Die Integration nach `master` erfordert ausdrückliche Eigentümerfreigabe und grüne CI; für die **produktive Freigabe** sind zusätzlich reale GPU-Hörtests und Recovery-Nachweise verbindlich. Große Debug- und Testarchive nicht in Git speichern.
