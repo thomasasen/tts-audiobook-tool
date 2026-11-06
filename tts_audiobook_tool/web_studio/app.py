@@ -538,20 +538,29 @@ def download_export(project_id: str, job_id: str):
 @app.delete("/api/projects/{project_id}", dependencies=[Depends(require_auth)])
 def delete_project(project_id: str):
     _project(project_id)
-    with _db() as db:
-        busy = db.execute(
-            "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('running','exporting','queued')",
-            (project_id,),
-        ).fetchone()
-        if busy:
-            raise HTTPException(409, "Bitte laufende Aufträge zuerst abbrechen.")
-        jobs = db.execute("SELECT id FROM studio_jobs WHERE project_id=?", (project_id,)).fetchall()
-        db.execute("DELETE FROM studio_jobs WHERE project_id=?", (project_id,))
-        db.execute("DELETE FROM studio_projects WHERE id=?", (project_id,))
-    shutil.rmtree(_project_dir(project_id))
-    for job in jobs:
-        shutil.rmtree(production._jobs_dir(job["id"]), ignore_errors=True)
-    return {"deleted": True}
+    # A 'paused' job can still have an in-flight segment being synthesized.
+    # Protect both database deletion and on-disk cleanup from the GPU worker,
+    # preview, segment retry and export.
+    if not production._GPU.acquire(blocking=False):
+        raise HTTPException(409, "Audioverarbeitung läuft. Bitte später erneut versuchen.")
+    try:
+        with _db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            busy = db.execute(
+                "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('running','exporting','queued')",
+                (project_id,),
+            ).fetchone()
+            if busy:
+                raise HTTPException(409, "Bitte laufende Aufträge zuerst abbrechen.")
+            jobs = db.execute("SELECT id FROM studio_jobs WHERE project_id=?", (project_id,)).fetchall()
+            db.execute("DELETE FROM studio_jobs WHERE project_id=?", (project_id,))
+            db.execute("DELETE FROM studio_projects WHERE id=?", (project_id,))
+        shutil.rmtree(_project_dir(project_id))
+        for job in jobs:
+            shutil.rmtree(production._jobs_dir(job["id"]), ignore_errors=True)
+        return {"deleted": True}
+    finally:
+        production._GPU.release()
 
 
 @app.get("/")
