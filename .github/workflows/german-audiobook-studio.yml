@@ -29,7 +29,7 @@ jobs:
       - name: Compile Python adapter
         run: python -m compileall -q tts_audiobook_tool/web_studio
       - name: Web API tests
-        run: python -m pytest tests/web/test_studio_api.py -q
+        run: python -m pytest tests/web/test_studio_api.py -q --confcutdir=tests/web
 
   frontend:
     runs-on: ubuntu-latest
