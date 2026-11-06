@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -212,10 +213,34 @@ async def secure_headers(request, call_next):
     return response
 
 
+def _init_engine_logging() -> None:
+    """Initialize the logger expected by the original Project V5 persistence.
+
+    The upstream TUI initializes L during App startup; FastAPI does not run
+    that startup. Keep web logs in the protected data root, never /tmp.
+    """
+    from tts_audiobook_tool.l import L
+
+    if getattr(L, "logger", None) is not None:
+        return
+    directory = data_dir() / "logs"
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+    log_path = directory / "studio-engine.log"
+    log_path.touch(mode=0o600, exist_ok=True)
+    os.chmod(log_path, 0o600)
+    logger = logging.getLogger("german-audiobook-studio.engine")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        logger.addHandler(logging.FileHandler(log_path, encoding="utf-8"))
+    L.logger = logger
+
+
 @app.on_event("startup")
 def on_startup():
     _require_token()
     _init_storage()
+    _init_engine_logging()
     production.init()
 
 
