@@ -40,7 +40,7 @@ class TestRunPodSupport(unittest.TestCase):
     def test_environment_uses_volume_and_keeps_paths_out_of_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
-                ["bash", "-c", 'source "$1"; printf "%s\\n%s\\n%s\\n" "$AUDIOBOOK_VENV_DIR" "$HF_HOME" "$AUDIOBOOK_REFERENCES_DIR" "$AUDIOBOOK_APP_HOME"',
+                ["bash", "-c", 'source "$1"; printf "%s\\n%s\\n%s\\n%s\\n" "$AUDIOBOOK_VENV_DIR" "$HF_HOME" "$AUDIOBOOK_REFERENCES_DIR" "$AUDIOBOOK_APP_HOME"',
                  "bash", str(ROOT / "runpod" / "env.sh")],
                 env={**os.environ, "RUNPOD_WORKSPACE": tmp, "AUDIOBOOK_DATA_ROOT": ""},
                 check=True, capture_output=True, text=True,
