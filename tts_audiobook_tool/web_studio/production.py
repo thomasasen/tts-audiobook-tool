@@ -169,7 +169,7 @@ def _model_identity() -> str | None:
             return None
         if len(version) > 256 or len(checksums) > 8192 or len(inference) > 100_000:
             return None
-        return hashlib.sha256(version + b"\\0" + checksums + b"\\0" + inference).hexdigest()
+        return hashlib.sha256(version + b"\0" + checksums + b"\0" + inference).hexdigest()
     except OSError:
         return None
 
