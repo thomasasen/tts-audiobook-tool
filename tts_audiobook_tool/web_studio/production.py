@@ -185,8 +185,21 @@ def _valid_audio(path: Path) -> float:
         frames = audio.getnframes()
         if frames < audio.getframerate() // 4:
             raise ValueError("Audiosegment ist ungewöhnlich kurz.")
-        payload = audio.readframes(min(frames, 16000))
-        if not payload or all(byte == 0 for byte in payload):
+        # Reading only the first second misses files truncated after that point.
+        # Verify the complete declared PCM payload before reusing a checkpoint.
+        bytes_per_frame = audio.getnchannels() * audio.getsampwidth()
+        read_frames = 0
+        has_signal = False
+        while read_frames < frames:
+            payload = audio.readframes(min(65536, frames - read_frames))
+            if not payload or len(payload) % bytes_per_frame:
+                raise ValueError("Audiosegment ist abgeschnitten oder beschädigt.")
+            read_frames += len(payload) // bytes_per_frame
+            if not has_signal and any(payload):
+                has_signal = True
+        if read_frames != frames:
+            raise ValueError("Audiosegment ist abgeschnitten oder beschädigt.")
+        if not has_signal:
             raise ValueError("Audiosegment enthält keine Sprache.")
         return frames / audio.getframerate()
 
@@ -481,12 +494,6 @@ def create_job(project_id: str) -> dict:
         raise ValueError("Bitte zuerst die Kapitelauswahl speichern.")
     if not voice_ready():
         raise ValueError("Keine freigegebene deutsche Stimme: zuerst eine echte Hörprobe prüfen.")
-    with _studio()._db() as db:
-        if db.execute(
-            "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('queued','running','paused','exporting')",
-            (project_id,),
-        ).fetchone():
-            raise ValueError("Für dieses Projekt ist bereits ein Auftrag aktiv.")
     segments = _manifest(project_id)
     glossary = project_glossary(project_id)
     job_id = uuid.uuid4().hex
@@ -494,12 +501,26 @@ def create_job(project_id: str) -> dict:
         "version": 1, "project_id": project_id, "voice": VOICE_ID,
         "segments": segments, "glossary": glossary, "created_at": _now(),
     }
-    _atomic_json(_jobs_dir(job_id) / "plan.json", plan)
-    with _studio()._db() as db:
-        db.execute("INSERT INTO studio_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
-            job_id, project_id, VOICE_ID, "queued", 0, len(segments), "", 0.0, "", _now(), _now()
-        ))
-        db.execute("UPDATE studio_projects SET status='Warteschlange',updated_at=? WHERE id=?", (_now(),project_id))
+    # Serialize the active-job check with job creation across API requests.
+    # Without BEGIN IMMEDIATE, simultaneous requests can create duplicate jobs.
+    try:
+        with _studio()._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('queued','running','paused','exporting')",
+                (project_id,),
+            ).fetchone():
+                raise ValueError("Für dieses Projekt ist bereits ein Auftrag aktiv.")
+            _atomic_json(_jobs_dir(job_id) / "plan.json", plan)
+            db.execute("INSERT INTO studio_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
+                job_id, project_id, VOICE_ID, "queued", 0, len(segments), "", 0.0, "", _now(), _now()
+            ))
+            db.execute("UPDATE studio_projects SET status='Warteschlange',updated_at=? WHERE id=?",
+                       (_now(), project_id))
+    except Exception:
+        # An uncommitted plan must never become a visible orphan job.
+        (_jobs_dir(job_id) / "plan.json").unlink(missing_ok=True)
+        raise
     _WAKE.set()
     return public_job(project_id, job_id)
 
@@ -514,8 +535,12 @@ def change_job(project_id: str, job_id: str, action: str) -> dict:
     if action not in targets or job["status"] not in targets[action][0]:
         raise ValueError("Dieser Zustandswechsel ist nicht zulässig.")
     with _studio()._db() as db:
-        db.execute("UPDATE studio_jobs SET status=?,updated_at=? WHERE id=? AND status=?",
-                   (targets[action][1], _now(), job_id, job["status"]))
+        updated = db.execute(
+            "UPDATE studio_jobs SET status=?,updated_at=? WHERE id=? AND status=?",
+            (targets[action][1], _now(), job_id, job["status"]),
+        ).rowcount
+        if updated != 1:
+            raise ValueError("Der Auftragsstatus hat sich inzwischen geändert.")
     _WAKE.set()
     return public_job(project_id, job_id)
 
@@ -542,8 +567,9 @@ def _loop():
 
 
 def _run(job_id: str):
-    if not _GPU.acquire(blocking=False):
-        raise RuntimeError("GPU ist bereits belegt.")
+    # Export and manual previews may briefly own the GPU lock. Waiting must
+    # not permanently fail a queued job that has not started inference yet.
+    _GPU.acquire()
     try:
         job = _job(job_id)
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
@@ -586,6 +612,10 @@ def _run(job_id: str):
                                     "prompt": prompt, "duration": seconds,
                                     "inference_seconds": inference_seconds,
                                     "quality": _audio_quality(path, prompt)})
+            # Pause/cancel/shutdown may have arrived during a long GPU call.
+            # Preserve the valid segment, but never overwrite the new status.
+            if _STOP.is_set() or _job(job_id)["status"] != "running":
+                return
             duration += seconds
             done += 1
             if segment["title"] != chapter or done % 5 == 0 or done == len(segments):
@@ -594,9 +624,13 @@ def _run(job_id: str):
                     db.execute("UPDATE studio_jobs SET done=?,duration=?,chapter=?,updated_at=? WHERE id=?",
                                (done,duration,chapter,_now(),job_id))
         with _studio()._db() as db:
-            db.execute("UPDATE studio_jobs SET status='generated',done=?,duration=?,updated_at=? WHERE id=? AND status='running'",
-                       (done,duration,_now(),job_id))
-            db.execute("UPDATE studio_projects SET status='Audio bereit',updated_at=? WHERE id=?", (_now(),job["project_id"]))
+            completed = db.execute(
+                "UPDATE studio_jobs SET status='generated',done=?,duration=?,updated_at=? WHERE id=? AND status='running'",
+                (done, duration, _now(), job_id),
+            ).rowcount
+            if completed == 1:
+                db.execute("UPDATE studio_projects SET status='Audio bereit',updated_at=? WHERE id=?",
+                           (_now(), job["project_id"]))
     finally:
         _GPU.release()
 
@@ -638,22 +672,38 @@ def quality_report(project_id: str, job_id: str) -> dict:
 
 
 def retry_segment(project_id: str, job_id: str, index: int) -> dict:
-    job = public_job(project_id, job_id)
-    if job["status"] not in ("generated", "completed"):
-        raise ValueError("Einzelne Segmente können erst nach der Generierung erneut erzeugt werden.")
-    if not 0 <= index < job["total"]:
-        raise ValueError("Ungültiger Segmentindex.")
-    if not voice_ready():
-        raise ValueError("Die freigegebene deutsche Stimme ist nicht verfügbar.")
-    path = _jobs_dir(job_id) / "audio" / f"{index:07d}.wav"
-    path.unlink(missing_ok=True)
-    path.with_suffix(".json").unlink(missing_ok=True)
-    (_jobs_dir(job_id) / "audiobook.m4b").unlink(missing_ok=True)
-    with _studio()._db() as db:
-        db.execute("UPDATE studio_jobs SET status='queued',done=0,duration=0,chapter='',error='',updated_at=? WHERE id=?",
-                   (_now(), job_id))
-        db.execute("UPDATE studio_projects SET status='Warteschlange',updated_at=? WHERE id=?",
-                   (_now(),project_id))
+    # A retry invalidates one cached segment. It must never remove files
+    # during export or while another API request owns the GPU state.
+    if not _GPU.acquire(blocking=False):
+        raise ValueError("Audioverarbeitung läuft; bitte den Vorgang erneut versuchen.")
+    try:
+        job = public_job(project_id, job_id)
+        if job["status"] not in ("generated", "completed"):
+            raise ValueError("Einzelne Segmente können erst nach der Generierung erneut erzeugt werden.")
+        if not 0 <= index < job["total"]:
+            raise ValueError("Ungültiger Segmentindex.")
+        if not voice_ready():
+            raise ValueError("Die freigegebene deutsche Stimme ist nicht verfügbar.")
+        path = _jobs_dir(job_id) / "audio" / f"{index:07d}.wav"
+        # The worker cannot see a queued job before the cache invalidation
+        # finishes: BEGIN IMMEDIATE keeps the queue transition atomic.
+        with _studio()._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute("SELECT status FROM studio_jobs WHERE id=?", (job_id,)).fetchone()
+            if current is None or current["status"] not in ("generated", "completed"):
+                raise ValueError("Der Auftragsstatus hat sich inzwischen geändert.")
+            path.unlink(missing_ok=True)
+            path.with_suffix(".json").unlink(missing_ok=True)
+            # Retain the previous completed M4B until the replacement is
+            # exported atomically. It remains inaccessible while queued.
+            db.execute(
+                "UPDATE studio_jobs SET status='queued',done=0,duration=0,chapter='',error='',updated_at=? WHERE id=?",
+                (_now(), job_id),
+            )
+            db.execute("UPDATE studio_projects SET status='Warteschlange',updated_at=? WHERE id=?",
+                       (_now(), project_id))
+    finally:
+        _GPU.release()
     _WAKE.set()
     return public_job(project_id, job_id)
 
@@ -666,6 +716,11 @@ def export_job(project_id: str, job_id: str) -> Path:
     if not _GPU.acquire(blocking=False):
         raise ValueError("Die GPU ist belegt.")
     try:
+        # A retry or cancellation may have changed the state while this
+        # export request waited for the lock.
+        job = public_job(project_id, job_id)
+        if job["status"] not in ("generated", "completed"):
+            raise ValueError("Alle Audiosegmente müssen fertig sein.")
         if job["status"] == "completed":
             existing = _jobs_dir(job_id) / "audiobook.m4b"
             if existing.is_file():
