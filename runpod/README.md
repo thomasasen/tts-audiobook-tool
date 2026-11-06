@@ -75,8 +75,13 @@ Persistent directory layout:
   cache/pip/                       # Python wheel cache
   references/                      # private voice-reference recordings
   projects/                        # private EPUBs and audio projects
+  home/                            # persisted upstream app preferences
   logs/                            # setup logs
 ```
+
+The start wrapper also points the app's `HOME` at this persistent `home/`
+folder because upstream preferences use `Path.home()`. This avoids losing
+project preferences and recent-directory selections when the Pod resets.
 
 Use `AUDIOBOOK_PROJECTS_DIR` and `AUDIOBOOK_REFERENCES_DIR` as the locations
 for imported book files and reference voice samples, respectively. Do not
