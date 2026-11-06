@@ -8,6 +8,7 @@ MODEL_DIR="$MODEL_ROOT/pretrained_models/CosyVoice3-0.5B"
 VENV="$AUDIOBOOK_VENV_DIR/thorsten"
 UV="$AUDIOBOOK_DATA_ROOT/tools/uv-bootstrap/bin/uv"
 VERSION="CosyVoice-ace7c47-Thorsten-CosyVoice3-2026-11-v1"
+CHECKSUMS="$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models" "$AUDIOBOOK_VENV_DIR"
 if [[ ! -x "$UV" ]]; then
   echo "Run bash runpod/setup.sh --models qwen before installing Thorsten." >&2
@@ -16,9 +17,15 @@ fi
 if [[ -f "$MODEL_ROOT/.studio-ready" && "$(cat "$MODEL_ROOT/.studio-ready")" == "$VERSION" &&
       -x "$VENV/bin/python" && -s "$MODEL_DIR/llm.pt" &&
       -s "$MODEL_DIR/flow.pt" && -s "$MODEL_DIR/spk2info.pt" &&
-      -s "$MODEL_DIR/hift.pt" && -s "$MODEL_ROOT/infer_thorsten.py" ]]; then
-  echo "Thorsten CosyVoice3 is already present on the persistent volume."
+      -s "$MODEL_DIR/hift.pt" && -s "$MODEL_ROOT/infer_thorsten.py" &&
+      -s "$CHECKSUMS" ]] &&
+   (cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS"); then
+  echo "Thorsten CosyVoice3 weights verified against persistent SHA-256 manifest."
   exit 0
+fi
+if [[ -f "$MODEL_ROOT/.studio-ready" ]]; then
+  echo "Thorsten cached model is incomplete or its SHA-256 manifest differs; reinstalling." >&2
+  rm -f "$MODEL_ROOT/.studio-ready"
 fi
 
 # The upstream Thorsten model card recommends Python 3.10/3.11 and pins the
@@ -69,9 +76,13 @@ PY
 (
   cd "$MODEL_DIR"
   sha256sum llm.pt flow.pt spk2info.pt hift.pt \
-    > "$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
+    > "$CHECKSUMS"
 )
-chmod 600 "$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
+chmod 600 "$CHECKSUMS"
+(cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS") || {
+  echo "Downloaded Thorsten weights failed the local SHA-256 consistency check." >&2
+  exit 1
+}
 # The marker is written only after every installation stage has passed.
 printf '%s\n' "$VERSION" > "$MODEL_ROOT/.studio-ready"
 echo "Thorsten engine installed in $MODEL_ROOT."
