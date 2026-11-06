@@ -32,6 +32,12 @@ if [[ ! -t 0 || ! -t 1 ]]; then
   exit 1
 fi
 
+# Upstream app_paths.get_app_user_dir() uses Path.home(). RunPod's /root is
+# ephemeral, so persist application preferences in the mounted data volume.
+mkdir -p "$AUDIOBOOK_APP_HOME"
+chmod 700 "$AUDIOBOOK_APP_HOME" || true
+export HOME="$AUDIOBOOK_APP_HOME"
+
 cd "$REPO_DIR"
 if [[ "$MODEL" == "menu" ]]; then
   echo "Project directory for new audiobook projects: $AUDIOBOOK_PROJECTS_DIR"
