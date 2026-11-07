@@ -83,9 +83,29 @@ ensure_thorsten_pkg_resources
 # The common RunPod image sets HF_HUB_ENABLE_HF_TRANSFER=1 without providing
 # hf_transfer in this separate Python 3.11 venv. env.sh forces standard HTTP.
 echo "Thorsten model download mode: standard Hugging Face HTTP (HF_HUB_ENABLE_HF_TRANSFER=$HF_HUB_ENABLE_HF_TRANSFER)"
-"$VENV/bin/hf" download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR"
-"$VENV/bin/hf" download Thorsten-Voice/CosyVoice3 --local-dir "$MODEL_DIR" \
-  --include llm.pt flow.pt spk2info.pt infer_thorsten.py
+PREFETCH_VERSION="$MODEL_ROOT/.prefetch-complete"
+PREFETCH_SUMS="$MODEL_ROOT/.prefetch-sha256.txt"
+if [[ -f "$PREFETCH_VERSION" ]]; then
+  if [[ "$(cat "$PREFETCH_VERSION")" != "$VERSION" || ! -s "$PREFETCH_SUMS" ]] ||
+     ! (cd "$MODEL_DIR" && sha256sum --check --status "$PREFETCH_SUMS"); then
+    echo "Prefetched model checksum/version invalid; refusing to trust/rebaseline." >&2
+    exit 1
+  fi
+  echo "Using completed, SHA-256 checked Thorsten prefetch: skipping both model downloads."
+else
+  # No prior prefetch: the regular installer is still valid standalone.
+  # Base THEN fine-tune is mandatory; both snapshot repos contain llm.pt etc.
+  : "${RUNPOD_TTS_DOWNLOAD_WORKERS:=4}"
+  if [[ ! "$RUNPOD_TTS_DOWNLOAD_WORKERS" =~ ^[1-8]$ ]]; then
+    echo "RUNPOD_TTS_DOWNLOAD_WORKERS must be 1..8." >&2
+    exit 2
+  fi
+  "$VENV/bin/hf" download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR" \
+    --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
+  "$VENV/bin/hf" download Thorsten-Voice/CosyVoice3 --local-dir "$MODEL_DIR" \
+    --include llm.pt flow.pt spk2info.pt infer_thorsten.py \
+    --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
+fi
 cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
 for artifact in llm.pt flow.pt spk2info.pt hift.pt; do
   test -s "$MODEL_DIR/$artifact" || { echo "Required model file missing: $artifact" >&2; exit 1; }
