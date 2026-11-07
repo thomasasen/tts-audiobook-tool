@@ -567,7 +567,9 @@ export default function Studio() {
                 <div className="panel-head"><h2>{previewTask.status === 'ready' ? 'Hörprobe erzeugt' : previewTask.status === 'failed' ? 'Hörprobe fehlgeschlagen' : 'Hörprobe wird erzeugt'}</h2>
                   <span className="status-chip">{previewTask.status === 'running' ? 'In Bearbeitung' : previewTask.status === 'ready' ? 'Bereit zur Hörkontrolle' : 'Fehler'}</span>
                 </div>
-                <p role="status" aria-live="polite">{previewTask.stage}</p>
+                {previewTask.status === 'failed'
+                  ? <div className="message error" role="alert"><AlertCircle size={18}/><span>{previewTask.error || previewTask.stage}</span></div>
+                  : <p role="status" aria-live="polite">{previewTask.stage}</p>}
                 {previewTask.status === 'running' && <progress aria-label="Hörprobe wird verarbeitet (Fortschritt der Modellberechnung nicht messbar)"/>}
                 <p className="helper">Die Modellinitialisierung und GPU-Synthese liefern keine belastbaren Prozentwerte. Die Arbeitsschritte werden live angezeigt.</p>
                 <details className="activity-log">
