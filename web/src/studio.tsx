@@ -4,6 +4,7 @@ import {
   FolderOpen, Headphones, LockKeyhole, Moon, ShieldCheck, Sun,
   Volume2, AlertCircle, RotateCcw, Trash2, PlayCircle, PauseCircle, StopCircle
 } from 'lucide-react'
+import { downloadAuthenticatedM4b, supportsDirectSave, type DownloadProgress } from './download'
 
 type Chapter = {
   index: number
@@ -154,6 +155,9 @@ export default function Studio() {
   const [previewAudioError, setPreviewAudioError] = useState('')
   const [jobActivity, setJobActivity] = useState<JobActivity | null>(null)
   const [exportPending, setExportPending] = useState(false)
+  const [downloadPending, setDownloadPending] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null)
+  const downloadAbort = useRef<AbortController | null>(null)
   const handledPreview = useRef<string | null>(null)
   const activeObjectUrl = useRef<string | null>(null)
 
@@ -168,6 +172,7 @@ export default function Studio() {
   }
 
   useEffect(() => () => {
+    downloadAbort.current?.abort()
     if (activeObjectUrl.current) URL.revokeObjectURL(activeObjectUrl.current)
     activeObjectUrl.current = null
   }, [])
@@ -400,7 +405,35 @@ export default function Studio() {
     finally { setBusy(false) }
   }
 
+  async function startM4bDownload() {
+    if (!active || !job || job.status !== 'completed' || downloadPending) return
+    const controller = new AbortController()
+    downloadAbort.current = controller
+    setDownloadPending(true)
+    setDownloadProgress(null)
+    setError('')
+    const filename = (active.title || 'Hoerbuch').replace(/[\\/:*?"<>|]/g, '_').slice(0, 90) + '.m4b'
+    try {
+      const result = await downloadAuthenticatedM4b(
+        `/api/projects/${active.id}/jobs/${job.id}/download`,
+        token, filename, controller.signal, setDownloadProgress,
+      )
+      setNotice(`M4B übertragen (${(result.bytes / (1024 * 1024)).toFixed(1)} MB, ${result.mode === 'stream' ? 'direkt gespeichert' : 'begrenzter Browser-Download'}).`)
+    } catch (error) {
+      const exc = error as Error
+      if (controller.signal.aborted || exc.name === 'AbortError') {
+        setNotice('M4B-Download abgebrochen. Unvollständige Zieldatei wurde verworfen.')
+      } else {
+        setError(exc.message || 'M4B-Download fehlgeschlagen.')
+      }
+    } finally {
+      if (downloadAbort.current === controller) downloadAbort.current = null
+      setDownloadPending(false)
+    }
+  }
+
   function signOut() {
+    downloadAbort.current?.abort()
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
     setOwnedAudioUrl(''); setJob(null); setJobActivity(null); setQuality(null); setPreviewTask(null)
     setPreviewAudioError(''); setPreviewAudioValid(false); setPreviewPlayed(false); setExportPending(false)
@@ -698,20 +731,20 @@ export default function Studio() {
                     <ol>{jobActivity?.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>) ?? <li>Noch keine Einträge vorhanden.</li>}</ol>
                   </details>
                   {job.error && <p className="error" role="alert">{job.error}</p>}
+                  {job.status === 'completed' && <p className="helper">Download-Modus: {supportsDirectSave() ? 'Direkt auf Datenträger speichern (streaming, ohne großen Browser-Blob)' : 'Browser-Fallback bis 96 MB. Für größere Bücher Chrome oder Edge verwenden.'}</p>}
+                  {downloadPending && <div role="status" aria-live="polite" className="production-time-metrics">
+                    <span>M4B-Download: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen{downloadProgress?.total ? ` von ${(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB` : ''}</span>
+                    <progress aria-label="M4B-Download" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
+                  </div>}
                   <div className="job-actions">
                     {['queued','running'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('pause')}><PauseCircle size={17}/> Pausieren</button>}
                     {['paused','failed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('resume')}><PlayCircle size={17}/> Fortsetzen</button>}
                     {job.status === 'cancelled' && <button className="primary-btn" disabled={busy || !capabilities?.tts_generation} onClick={() => productionAction('start')}><PlayCircle size={17}/> Neuen Versuch starten</button>}
                     {['queued','running','paused','failed'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('cancel')}><StopCircle size={17}/> Abbrechen</button>}
                     {['generated','completed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('export')}><FileAudio size={17}/> M4B erstellen</button>}
-                    {job.status === 'completed' && <button className="outline-btn" disabled={busy} onClick={() => loadAudio(`/api/projects/${active.id}/jobs/${job.id}/download`)}><Headphones size={17}/> Fertiges Hörbuch anhören</button>}
-                    {job.status === 'completed' && <button className="primary-btn" disabled={busy} onClick={async () => {
-                      const response = await fetch(`/api/projects/${active.id}/jobs/${job.id}/download`, {headers:{Authorization:`Bearer ${token}`}})
-                      if(!response.ok) {setError('Download nicht verfügbar.');return}
-                      const url=URL.createObjectURL(await response.blob())
-                      const link=document.createElement('a');link.href=url;link.download='audiobook.m4b';link.click()
-                      window.setTimeout(()=>URL.revokeObjectURL(url),5000)
-                    }}>M4B herunterladen</button>}
+                    {job.status === 'completed' && <p className="helper">Das komplette M4B wird zum Speicherziel gestreamt. Für einzelne Hörproben den Segmentplayer unten verwenden.</p>}
+                    {job.status === 'completed' && <button className="primary-btn" disabled={busy || downloadPending} onClick={() => {void startM4bDownload()}}><FileAudio size={17}/> {downloadPending ? 'M4B wird übertragen …' : 'M4B herunterladen'}</button>}
+                    {downloadPending && <button className="outline-btn" onClick={() => downloadAbort.current?.abort()}><StopCircle size={17}/> Download abbrechen</button>}
                   </div>
                   {job.done > 0 && <div className="segment-preview">
                     <label htmlFor="segment-index">Segment zum Anhören (0–{job.done-1})</label>
