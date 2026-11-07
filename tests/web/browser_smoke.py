@@ -15,6 +15,7 @@ import wave
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -308,6 +309,54 @@ def main() -> None:
                     restart = page.get_by_role("button", name="Neuen Versuch starten")
                     restart.wait_for()
                     assert restart.is_enabled(), "Cancelled jobs must offer a new attempt"
+
+                    # Production must display actual progress, an elapsed
+                    # clock and a rolling ETA calibrated from real checkpoints.
+                    page.unroute("**/api/projects/*/jobs")
+                    simulated_now = datetime.now(timezone.utc)
+                    production_job = {
+                        "id": "b" * 32, "project_id": "synthetic", "status": "running",
+                        "done": 3, "total": 6, "chapter": "Kapitel 1",
+                        "duration": 19.1, "error": "",
+                        "created_at": (simulated_now - timedelta(minutes=2)).isoformat(),
+                    }
+                    import json
+                    page.route(
+                        "**/api/projects/*/jobs",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body=json.dumps({"jobs": [production_job]}),
+                        ),
+                    )
+                    page.route(
+                        "**/api/projects/*/jobs/*/activity",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body=json.dumps({
+                                "id": "b" * 32, "status": "running", "done": 3, "total": 6,
+                                "percent": 50, "elapsed_seconds": 120,
+                                "remaining_seconds": 240, "eta_sample_count": 3,
+                                "calculated_at": datetime.now(timezone.utc).isoformat(),
+                                "events": [{"at": simulated_now.isoformat(),
+                                            "message": "3 von 6 Audiosegmenten fertig."}],
+                            }),
+                        ),
+                    )
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    page.get_by_text("3 von 6 Segmenten tatsächlich fertig", exact=False).wait_for()
+                    page.get_by_text("Vergangene Zeit", exact=True).wait_for()
+                    page.get_by_text("Geschätzte Restzeit", exact=True).wait_for()
+                    metrics = page.locator(".production-time-metrics strong")
+                    assert metrics.count() == 2
+                    assert "Min." in metrics.nth(0).inner_text()
+                    page.wait_for_function(
+                        "() => { const e = document.querySelectorAll('.production-time-metrics strong');"
+                        " return e.length === 2 && e[1].textContent?.includes('Min.'); }",
+                        timeout=10000,
+                    )
+                    assert page.get_by_label("Fertiggestellte Audiosegmente").get_attribute("value") == "3"
+                    page.unroute("**/api/projects/*/jobs/*/activity")
+                    page.unroute("**/api/projects/*/jobs")
 
                     page.get_by_role("button", name="Dunkles Design").click()
                     assert "dark" in page.locator(".shell").get_attribute("class")
