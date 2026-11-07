@@ -42,11 +42,11 @@ class EpubSourceChapter:
     media_type: str
     html: str
     navigation_targets: list[EpubNavigationTarget] = field(default_factory=list)
-    # Navigation spine resources can also contain real prose outside <nav>.
-    # Such documents must not be dropped solely because of EPUB nav metadata.
-    contains_reading_text_outside_nav: bool = False
     # The document's stylesheets, for display formatting; None when it has none
     css: EpubCssResolver | None = None
+    # Keep positional constructor compatibility for existing Project-V5 code.
+    # EPUB nav resources can also contain prose outside their <nav> elements.
+    contains_reading_text_outside_nav: bool = False
 
 
 @dataclass
