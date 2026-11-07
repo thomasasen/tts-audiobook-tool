@@ -1691,6 +1691,41 @@ class TestEpubExtractor(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+    def test_xhtml_contents_uses_unambiguous_german_titles(self):
+        links = "".join(
+            f'<p><a href="chapter{i}.xhtml#start">{i}. Deutscher Abschnitt {i}</a></p>'
+            for i in range(1, 10)
+        )
+        book = StubEpubBookWithSpine([
+            StubEpubSpineItem(
+                "contents", "contents.xhtml",
+                "<body><h1>Inhaltsverzeichnis</h1>" + links + "</body>",
+            ),
+        ])
+        targets = [make_navigation_target(str(i), f"chapter{i}.xhtml#start", i) for i in range(1, 10)]
+        resolved = EpubExtractor.apply_xhtml_contents_titles(book, targets)
+        self.assertEqual([item.title for item in resolved], [
+            f"{i}. Deutscher Abschnitt {i}" for i in range(1, 10)
+        ])
+        self.assertEqual([item.href for item in resolved], [item.href for item in targets])
+
+    def test_xhtml_contents_rejects_conflicting_labels(self):
+        links = "".join(
+            f'<a href="chapter{i}.xhtml">Kapitel {i}</a>'
+            for i in range(1, 10)
+        )
+        book = StubEpubBookWithSpine([
+            StubEpubSpineItem(
+                "contents", "contents.xhtml",
+                "<body><h1>Inhaltsverzeichnis</h1>" + links
+                + '<a href="chapter1.xhtml">Anderer Titel</a></body>',
+            ),
+        ])
+        targets = [make_navigation_target("1", "chapter1.xhtml", 0)]
+        self.assertEqual(
+            EpubExtractor.apply_xhtml_contents_titles(book, targets)[0].title, "1",
+        )
+
     def test_drop_cap_reconstructs_split_initials_and_preserves_fragment(self):
         chapter = EpubSourceChapter(
             "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
