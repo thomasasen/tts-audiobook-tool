@@ -76,6 +76,8 @@ exit 0
 
         uv.write_text("""#!/bin/sh
 if [ "$1" = "--version" ]; then echo "uv 0.13.7"; exit 0; fi
+if [ "$1" = "sync" ]; then exit 0; fi
+if [ "$1" = "pip" ] && [ "$2" = "freeze" ]; then echo "fake-package==1.0"; exit 0; fi
 if [ "$*" = "python install 3.11.18" ]; then exit 0; fi
 printf '%s\n' "$*" >> "$FAKE_DOWNLOAD_AUDIT"
 case "$*" in

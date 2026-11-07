@@ -84,9 +84,18 @@ class TestGermanStudioRunPod(unittest.TestCase):
                 for name in names
             ), encoding="utf-8")
 
+            runtime_manifest = root / "models/thorsten-runtime-sha256.txt"
+            runtime_manifest.write_text(
+                hashlib.sha256(b"fake-package==1.0\\n").hexdigest() + "\\n",
+                encoding="utf-8",
+            )
             uv = root / "tools/uv-bootstrap/bin/uv"
             uv.parent.mkdir(parents=True)
-            uv.write_text("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"uv 0.13.7\"; exit 0; fi\nexit 88\n", encoding="utf-8")
+            uv.write_text("""#!/bin/sh
+if [ "$1" = "--version" ]; then echo "uv 0.13.7"; exit 0; fi
+if [ "$1" = "pip" ] && [ "$2" = "freeze" ]; then echo "fake-package==1.0"; exit 0; fi
+exit 88
+""", encoding="utf-8")
             uv.chmod(0o755)
 
             fake_bin = Path(work) / "bin"
