@@ -11,6 +11,7 @@ on:
       - "runpod/acceptance*.py"
       - "runpod/asr_cpu_smoke.py"
       - ".github/workflows/german-audiobook-studio.yml"
+      - "plan.md"
   push:
     branches:
       - "master"
