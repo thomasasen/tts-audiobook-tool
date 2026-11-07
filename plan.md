@@ -297,7 +297,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 |---|---|---|---|---|
 | A01 | OFFEN | — | — | — |
 | A02 | OFFEN | — | — | — |
-| A03 | OFFEN | — | — | — |
+| A03 | IN ARBEIT (nur Quellcode-Pinning) | [Draft PR #17](https://github.com/thomasasen/tts-audiobook-tool/pull/17) | Shell- und Offline-Konfigurationstests ergänzt; CI auf aktuellem SHA noch zu prüfen | Ungepinntes Hugging-Face-Modellmaterial/transitive Abhängigkeiten; echter Pod-/Rollback-Test ausstehend. Nicht releasefähig. |
 | A04 | OFFEN | — | — | — |
 | B01 | OFFEN | — | — | — |
 | B02 | OFFEN | — | — | — |
@@ -313,6 +313,14 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | E03 | OFFEN / GPU- UND HÖRABNAHME VORAUSGESETZT | — | — | — |
 
 Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄLLT (fachliche Begründung). Abhaken nur bei FERTIG; einmalige Statushinweise ändern die Checkbox nicht.
+
+### A03 – Teilimplementierung in Draft-PR #17
+
+**Ist-Befund:** `runpod/autostart.sh` holt bislang beim Wiederanlauf den neuesten `master`-Stand. Die Thorsten-/Base-Hugging-Face-Repos werden ohne feste Revisionen heruntergeladen; lokale Prüfsummen dokumentieren nur den Downloadzustand und sind kein Upstream-Vertrauensanker.
+
+**Teil 1 umgesetzt:** `runpod/autostart.sh` besitzt optionalen Release-Parameter `RUNPOD_TTS_COMMIT` (vollständige 40-Hex-SHA; nur `master` erlaubt; Zugehörigkeit zur Master-Historie und exakte HEAD-Gleichheit kontrolliert). Ohne Commit bleibt bewusster Entwicklungsmodus. `runpod/README.md` erklärt Start, Upgrade und Rollback mit SHA an zwei Stellen. `tests/runpod/test_runpod_autostart.py` prüft ungültige Werte/Branches und Offline-Vertragsinvarianten.
+
+**Unbedingt offen:** getestete vollständige Pins für CosyVoice-Code, Thorsten-SFT und Basisgewichte einschließlich Caches, Locks der Dritt-Abhängigkeiten, echte RunPod-Install-/Rollback-Simulation. Ohne diese ist A03 **nicht FERTIG**, das Produkt bleibt nicht freigegeben. Finalen CI-Head von PR #17 separat prüfen. A01 auf PR #15 und A02 auf PR #16 sind unabhängig noch ungemergt.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
