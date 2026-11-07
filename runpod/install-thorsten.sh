@@ -3,11 +3,13 @@
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/env.sh"
+source "$SCRIPT_DIR/model-pins.env"
+source "$SCRIPT_DIR/model-source.sh"
 MODEL_ROOT="$AUDIOBOOK_DATA_ROOT/models/CosyVoice"
 MODEL_DIR="$MODEL_ROOT/pretrained_models/CosyVoice3-0.5B"
 VENV="$AUDIOBOOK_VENV_DIR/thorsten"
 UV="$AUDIOBOOK_DATA_ROOT/tools/uv-bootstrap/bin/uv"
-VERSION="CosyVoice-ace7c47-Thorsten-CosyVoice3-2026-11-v1"
+VERSION="$MODEL_RELEASE_ID"
 CHECKSUMS="$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models" "$AUDIOBOOK_VENV_DIR"
 if [[ ! -x "$UV" ]]; then
@@ -37,9 +39,11 @@ ensure_thorsten_pkg_resources
 if [[ -f "$MODEL_ROOT/.studio-ready" && "$(cat "$MODEL_ROOT/.studio-ready")" == "$VERSION" &&
       -x "$VENV/bin/python" && -s "$MODEL_DIR/llm.pt" &&
       -s "$MODEL_DIR/flow.pt" && -s "$MODEL_DIR/spk2info.pt" &&
-      -s "$MODEL_DIR/hift.pt" && -s "$MODEL_ROOT/infer_thorsten.py" &&
-      -s "$CHECKSUMS" ]] &&
-   (cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS"); then
+      -s "$MODEL_DIR/hift.pt" && -s "$MODEL_DIR/infer_thorsten.py" &&
+      -s "$MODEL_ROOT/infer_thorsten.py" && -s "$CHECKSUMS" ]] &&
+   verify_cosyvoice_checkout "$MODEL_ROOT" &&
+   (cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS") &&
+   cmp -s "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"; then
   echo "Thorsten CosyVoice3 weights verified against persistent SHA-256 manifest."
   exit 0
 fi
@@ -54,25 +58,25 @@ fi
 
 # The upstream Thorsten model card recommends Python 3.10/3.11 and pins the
 # CosyVoice framework commit. Do NOT try to share Python 3.12 Qwen/MOSS deps.
-"$UV" python install 3.11
+"$UV" python install "$THORSTEN_PYTHON_VERSION"
 if [[ ! -x "$VENV/bin/python" ]]; then
-  "$UV" venv --python 3.11 --seed "$VENV"
+  "$UV" venv --python "$THORSTEN_PYTHON_VERSION" --seed "$VENV"
+else
+  actual_python_version="$("$VENV/bin/python" -c 'import platform; print(platform.python_version())')"
+  if [[ "$actual_python_version" != "$THORSTEN_PYTHON_VERSION" ]]; then
+    echo "Existing Thorsten venv uses Python $actual_python_version; expected $THORSTEN_PYTHON_VERSION." >&2
+    echo "Preserve the old environment and create a fresh venv before retrying; no automatic deletion is performed." >&2
+    exit 1
+  fi
 fi
-if [[ ! -d "$MODEL_ROOT/.git" ]]; then
-  git clone https://github.com/FunAudioLLM/CosyVoice.git "$MODEL_ROOT"
-fi
-if [[ -n "$(git -C "$MODEL_ROOT" status --porcelain --untracked-files=no)" ]]; then
-  echo "CosyVoice checkout has local changes. Refusing to overwrite it." >&2
-  exit 1
-fi
-git -C "$MODEL_ROOT" checkout --detach ace7c47
-git -C "$MODEL_ROOT" submodule update --init --recursive
+ensure_cosyvoice_checkout "$MODEL_ROOT"
 if command -v apt-get >/dev/null 2>&1 && [[ "$EUID" -eq 0 ]]; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sox libsox-fmt-all
 fi
 # Do not upgrade setuptools: v82+ removes pkg_resources needed by Lightning.
 "$VENV/bin/python" -m pip install --disable-pip-version-check --no-input "setuptools==80.9.0"
-"$VENV/bin/python" -m pip install --disable-pip-version-check openai-whisper huggingface_hub
+"$VENV/bin/python" -m pip install --disable-pip-version-check --no-input \
+  "openai-whisper==20231117" "huggingface_hub==${HF_HUB_VERSION}"
 grep -v '^openai-whisper' "$MODEL_ROOT/requirements.txt" > "$AUDIOBOOK_DATA_ROOT/cosyvoice-requirements.txt"
 "$VENV/bin/python" -m pip install --disable-pip-version-check -r "$AUDIOBOOK_DATA_ROOT/cosyvoice-requirements.txt"
 # Guard against transitive upgrades that could remove pkg_resources again.
@@ -100,32 +104,49 @@ else
     echo "RUNPOD_TTS_DOWNLOAD_WORKERS must be 1..8." >&2
     exit 2
   fi
-  "$VENV/bin/hf" download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR" \
-    --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
-  "$VENV/bin/hf" download Thorsten-Voice/CosyVoice3 llm.pt flow.pt spk2info.pt infer_thorsten.py \
+  "$VENV/bin/hf" download "$BASE_MODEL_ID" --revision "$BASE_MODEL_REVISION" \
     --local-dir "$MODEL_DIR" --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
+  "$VENV/bin/hf" download "$THORSTEN_MODEL_ID" llm.pt flow.pt spk2info.pt infer_thorsten.py \
+    --revision "$THORSTEN_MODEL_REVISION" --local-dir "$MODEL_DIR" \
+    --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
 fi
 cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
-for artifact in llm.pt flow.pt spk2info.pt hift.pt; do
+for artifact in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py; do
   test -s "$MODEL_DIR/$artifact" || { echo "Required model file missing: $artifact" >&2; exit 1; }
 done
+for artifact in cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx speech_tokenizer_v3.batch.onnx; do
+  test -s "$MODEL_DIR/$artifact" || { echo "Required base-model artifact missing: $artifact" >&2; exit 1; }
+done
+cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
+cmp -s "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py" || {
+  echo "Thorsten inference adapter copy failed integrity check." >&2
+  exit 1
+}
 # Fail before declaring ready if the native runtime cannot even import.
 # Actual GPU model loading remains a separate mandatory live acceptance step.
 (
   cd "$MODEL_ROOT"
   PYTHONPATH="$MODEL_ROOT:$MODEL_ROOT/third_party/Matcha-TTS:${PYTHONPATH:-}" \
     "$VENV/bin/python" - <<'PY'
+import sys
 import torch
 import torchaudio
+from importlib.metadata import version
 from cosyvoice.cli.cosyvoice import CosyVoice3
+assert sys.version_info[:3] == (3, 11, 18), sys.version
+assert torch.__version__.split("+", 1)[0] == "2.3.1", torch.__version__
+assert torchaudio.__version__.split("+", 1)[0] == "2.3.1", torchaudio.__version__
+assert version("huggingface-hub") == "0.36.0"
+assert version("openai-whisper") == "20231117"
 print("Thorsten native runtime import OK", torch.__version__)
 PY
 )
 # A private weight checksum audit record, never committed to Git.
 (
   cd "$MODEL_DIR"
-  sha256sum llm.pt flow.pt spk2info.pt hift.pt \
-    > "$CHECKSUMS"
+  sha256sum llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py \
+    cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx \
+    speech_tokenizer_v3.batch.onnx > "$CHECKSUMS"
 )
 chmod 600 "$CHECKSUMS"
 (cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS") || {
