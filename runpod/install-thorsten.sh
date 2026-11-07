@@ -101,7 +101,7 @@ echo "Thorsten model download mode: standard Hugging Face HTTP (HF_HUB_ENABLE_HF
 PREFETCH_VERSION="$MODEL_ROOT/.prefetch-complete"
 PREFETCH_SUMS="$MODEL_ROOT/.prefetch-sha256.txt"
 if [[ -f "$PREFETCH_VERSION" ]]; then
-  if [[ "$(cat "$PREFETCH_VERSION")" != "$VERSION" || ! -s "$PREFETCH_SUMS" ]] ||
+  if [[ "$(cat "$PREFETCH_VERSION")" != "$MODEL_RELEASE_ID" || ! -s "$PREFETCH_SUMS" ]] ||
      ! (cd "$MODEL_DIR" && sha256sum --check --status "$PREFETCH_SUMS"); then
     echo "Prefetched model checksum/version invalid; refusing to trust/rebaseline." >&2
     exit 1
