@@ -76,6 +76,32 @@ def main() -> None:
                     page.get_by_role("button", name="Glossar speichern").click()
                     page.get_by_text("Ausspracheglossar wurde aktualisiert", exact=False).wait_for(timeout=10000)
 
+                    # Regression: FastAPI and upstream proxies sometimes send
+                    # a plain-text 500 instead of JSON. The UI must show the
+                    # HTTP status/endpoint, never a SyntaxError in the alert.
+                    page.route(
+                        "**/api/voices",
+                        lambda route: route.fulfill(
+                            status=500, content_type="text/plain",
+                            body="Internal Server Error",
+                        ),
+                    )
+                    page.get_by_role("button", name="Sprecher").click()
+                    page.get_by_text("Serverfehler (HTTP 500) bei /api/voices", exact=False).wait_for()
+                    assert "Unexpected token" not in page.locator(".message.error").inner_text()
+                    page.unroute("**/api/voices")
+
+                    page.route(
+                        "**/api/capabilities",
+                        lambda route: route.fulfill(
+                            status=200, content_type="text/plain",
+                            body="Internal Server Error",
+                        ),
+                    )
+                    page.get_by_role("button", name="Sprecher").click()
+                    page.get_by_text("Unerwartete Serverantwort (HTTP 200) bei /api/capabilities", exact=False).wait_for()
+                    page.unroute("**/api/capabilities")
+
                     page.get_by_role("button", name="Sprecher").click()
                     page.get_by_text("Freigabe offen").wait_for()
                     assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_disabled()
