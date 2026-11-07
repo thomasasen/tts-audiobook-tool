@@ -1586,6 +1586,108 @@ class TestEpubExtractor(unittest.TestCase):
         )
 
 
+    def test_fragment_sections_have_exact_source_and_output_text_spans(self):
+        source = EpubSourceChapter(
+            "Fallback", "Text/story.xhtml", "application/xhtml+xml",
+            '<html><body><h1 id="one">One</h1><p>First section prose.</p>'
+            '<h1 id="two">Two</h1><p>Second section prose.</p></body></html>',
+            [
+                make_navigation_target("First", "Text/story.xhtml#one", 0),
+                make_navigation_target("Second", "Text/story.xhtml#two", 1),
+            ],
+        )
+        with patch.object(EpubExtractor, "load_source_chapters", return_value=([source], "", [], [])):
+            result = EpubExtractor.extract_import_chapters("book.epub")
+        self.assertEqual(len(result.chapters), 2)
+        for chapter in result.chapters:
+            self.assertEqual(len(chapter.source_spans), 1)
+            span = chapter.source_spans[0]
+            self.assertEqual(span.source_href, "Text/story.xhtml")
+            self.assertEqual(span.mapping_status, "mapped")
+            self.assertEqual(span.source_end - span.source_start, len(chapter.text))
+            self.assertEqual(span.output_start, 0)
+            self.assertEqual(span.output_end, len(chapter.text))
+
+    def test_manual_speaker_overrides_replace_complex_elements_only_after_explicit_input(self):
+        chapter = EpubSourceChapter(
+            "Chapter", "Text/chapter.xhtml", "application/xhtml+xml",
+            """<html><body><p>Einleitung.</p>
+            <table><tr><td>Rohwert 4711</td></tr></table>
+            <figure><img src="chart.png" alt="Rohes Bildlabel"/><figcaption>Rohcaption</figcaption></figure>
+            <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi><mo>=</mo><mn>5</mn></math>
+            <img src="logo.png" alt="Rohes Logo"/>
+            <p>Schluss.</p></body></html>""",
+            speaker_overrides={
+                "table:0": "Die Tabelle nennt den Messwert viertausendsiebenhundertelf.",
+                "figure:0": "Die Abbildung zeigt den Verlauf.",
+                "math:0": "x ist gleich fünf.",
+                "img:1": "Das Firmenlogo ist abgebildet.",
+            },
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertIn("Die Tabelle nennt den Messwert viertausendsiebenhundertelf.", result.text)
+        self.assertIn("Die Abbildung zeigt den Verlauf.", result.text)
+        self.assertIn("x ist gleich fünf.", result.text)
+        self.assertIn("Das Firmenlogo ist abgebildet.", result.text)
+        self.assertNotIn("Rohwert 4711", result.text)
+        self.assertNotIn("Rohcaption", result.text)
+        self.assertNotIn("Rohes Logo", result.text)
+
+    def test_navigation_spine_with_non_paragraph_prose_is_not_discarded(self):
+        html = """<html><body>
+          <nav epub:type="toc"><ol><li><a href="one.xhtml">Kapitel eins</a></li>
+          <li><a href="two.xhtml">Kapitel zwei</a></li></ol></nav>
+          <div class="reading-copy">Dieses Buch erläutert die Grundlagen einer strukturierten
+          Zusammenarbeit. Der folgende Abschnitt beschreibt die fachlichen Zusammenhänge
+          und erklärt die wichtigsten Entscheidungen im beruflichen Alltag.</div>
+        </body></html>"""
+        nav = StubEpubSpineItem("nav", "Navigation/nav.xhtml", html)
+        nav.properties = ["nav"]
+        book = StubEpubBookWithSpine([nav])
+        with patch("os.path.exists", return_value=True), \
+                patch("ebooklib.epub.read_epub", return_value=book), \
+                patch.object(EpubExtractor, "extract_navigation_targets", return_value=[]):
+            source, _, warnings, significant = EpubExtractor.load_source_chapters("test.epub")
+        self.assertEqual(len(source), 1, warnings)
+        self.assertTrue(source[0].contains_reading_text_outside_nav)
+        spoken = BeautifulSoupEpubChapterTextExtractor().extract_text(source[0]).text
+        self.assertIn("Dieses Buch erläutert", spoken)
+        self.assertNotIn("Kapitel eins", spoken)
+        self.assertTrue(any("readable prose outside" in warning for warning in significant))
+
+    def test_heuristic_skip_is_explained_and_can_be_overridden(self):
+        copyright_html = """<html><body><h1>Copyright</h1>
+          <p>Copyright © 2025 Example Press.</p><p>All rights reserved.</p>
+          <p>ISBN 978-1-2345-6789-0.</p></body></html>"""
+        items = [
+            StubEpubSpineItem("copyright", "Text/copyright.xhtml", copyright_html),
+            StubEpubSpineItem(
+                "chapter", "Text/chapter.xhtml",
+                "<html><body><h1>Chapter 1</h1><p>Ein ausführlicher und gut lesbarer Abschnitt mit genügend Inhalt für das Hörbuch.</p></body></html>",
+            ),
+        ]
+        book = StubEpubBookWithSpine(items=items, metadata_values=[("Testbuch", {})])
+        with patch("os.path.exists", return_value=True), patch("ebooklib.epub.read_epub", return_value=book):
+            records = []
+            source, _, _, _ = EpubExtractor.load_source_chapters("book.epub", audit_records=records)
+            self.assertNotIn("Text/copyright.xhtml", [item.href for item in source])
+            skipped = next(item for item in records if item["href"] == "Text/copyright.xhtml")
+            self.assertEqual(skipped["kind"], "publication-metadata")
+            self.assertTrue(skipped["can_restore"])
+            self.assertIn("Copyright", skipped["preview"])
+
+            override_records = []
+            restored, _, _, _ = EpubExtractor.load_source_chapters(
+                "book.epub",
+                audit_records=override_records,
+                include_skipped_hrefs={"Text/copyright.xhtml"},
+            )
+        self.assertIn("Text/copyright.xhtml", [item.href for item in restored])
+        restored_record = next(item for item in override_records if item["href"] == "Text/copyright.xhtml")
+        self.assertEqual(restored_record["status"], "retained")
+        self.assertTrue(restored_record["overridden"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

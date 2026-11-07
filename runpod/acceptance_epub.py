@@ -10,7 +10,7 @@ import zipfile
 from xml.sax.saxutils import escape
 
 
-def build_epub(*, repeat: int = 1) -> bytes:
+def build_epub(*, repeat: int = 1, include_audit_cases: bool = False) -> bytes:
     if not 1 <= repeat <= 50:
         raise ValueError("repeat must be between 1 and 50")
     sections = [
@@ -22,6 +22,11 @@ def build_epub(*, repeat: int = 1) -> bytes:
         ("chapter2", "Kapitel 2", "Im nächsten Gespräch prüfen wir den wirtschaftlichen Nutzen und die Risiken. "
          "Die Vereinbarung steht am Ende eines strukturierten Prozesses."),
     ]
+    if include_audit_cases:
+        sections.insert(1, (
+            "copyright", "Copyright",
+            "Copyright © 2025 Example Press. All rights reserved. ISBN 978-1-2345-6789-0.",
+        ))
     xml = '<?xml version="1.0" encoding="UTF-8"?>'
     # Exercise more than ordinary paragraphs: nested headings, structured
     # lists, abbreviations, currency, punctuation and mixed-language terms.
@@ -42,6 +47,18 @@ def build_epub(*, repeat: int = 1) -> bytes:
             "<p>Eine klare Entscheidung braucht Zahlen, Verantwortung und Vertrauen!</p>"
         ),
     }
+    if include_audit_cases:
+        extras["chapter1"] += (
+            "<table><caption>Messwerte</caption><tr><th>Jahr</th><th>Wert</th></tr>"
+            "<tr><td>2026</td><td>42</td></tr></table>"
+            '<figure><img src="chart.svg" alt="Diagramm mit Umsatzverlauf"/>'
+            "<figcaption>Umsatzentwicklung</figcaption></figure>"
+            '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi><mo>=</mo><mn>5</mn></math>'
+            '<a role="doc-noteref" href="#fn1">1</a>'
+            '<aside role="doc-footnote" id="fn1">Die Messwerte stammen aus dem Beispiel.</aside>'
+            '<hr/><div class="scene-break">* * *</div>'
+            '<img src="chart.svg" alt="Firmenlogo"/>'
+        )
     xhtml = []
     for ident, heading, phrase in sections:
         paragraphs = "".join(f"<p>{escape(phrase)}</p>" for _ in range(repeat if ident != "toc" else 1))
@@ -80,4 +97,9 @@ def build_epub(*, repeat: int = 1) -> bytes:
         zf.writestr("OEBPS/nav.xhtml", nav)
         for ident, _, document in xhtml:
             zf.writestr(f"OEBPS/{ident}.xhtml", document)
+        if include_audit_cases:
+            zf.writestr(
+                "OEBPS/chart.svg",
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 10 L5 0 L10 10"/></svg>',
+            )
     return memory.getvalue()

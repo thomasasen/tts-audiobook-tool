@@ -13,12 +13,36 @@ type Chapter = {
   characters: number
   is_toc: boolean
 }
+type AuditResource = {
+  index: number; href: string; status: string; characters?: number; preview?: string
+  included_by_user?: boolean; override_reason?: string; mapped_segments?: number
+}
+type AuditSkipped = {
+  index: number; href?: string; status: string; kind?: string; reason: string
+  preview?: string; can_restore?: boolean; overridden?: boolean
+}
+type AuditReviewElement = {
+  source_href: string; element_key: string; kind: string; preview: string
+  source_text: string; alt_text: string; caption: string; handling: string
+  can_edit: boolean; speaker_text: string; approved: boolean
+}
+type AuditSourceMapping = {
+  chapter_index: number; chapter_title: string; source_href: string
+  source_start: number | null; source_end: number | null
+  output_start: number | null; output_end: number | null
+  navigation_title: string; mapping_status: string
+}
+type SpeakerOverride = {source_href: string; element_key: string; speaker_text: string; approved: boolean}
 type ContentAudit = {
   version: number
   status: string
   summary: Record<string, number>
-  resources: Array<{index: number; href: string; status: string; characters?: number; preview?: string}>
-  skipped: Array<{index: number; href?: string; status: string; reason: string; preview?: string}>
+  resources: AuditResource[]
+  skipped: AuditSkipped[]
+  source_mapping?: AuditSourceMapping[]
+  chapter_coverage?: Record<string, {total_non_whitespace_characters: number; mapped_non_whitespace_characters: number; unmapped_non_whitespace_characters: number; coverage_percent: number}>
+  restorable_source_hrefs?: string[]
+  review_elements?: AuditReviewElement[]
   warnings: string[]
   review_notes: string[]
 }
@@ -35,6 +59,8 @@ type BookProject = {
   suggested_start?: number
   warnings?: string[]
   content_audit?: ContentAudit
+  included_source_hrefs?: string[]
+  speaker_overrides?: SpeakerOverride[]
 }
 type VoiceCandidate = {
   id: string
@@ -150,6 +176,7 @@ export default function Studio() {
   const [dark, setDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches)
   const [start, setStart] = useState(0)
   const [excluded, setExcluded] = useState<number[]>([])
+  const [speakerDrafts, setSpeakerDrafts] = useState<Record<string, string>>({})
   const fileRef = useRef<HTMLInputElement>(null)
   const [job, setJob] = useState<Job | null>(null)
   const [quality, setQuality] = useState<QualityReport | null>(null)
@@ -462,6 +489,7 @@ export default function Studio() {
       setActive(project)
       setStart(project.selected_start)
       setExcluded(project.excluded_indices)
+      setSpeakerDrafts({})
       setJob(null); setJobActivity(null)
       if (next === 'export') await refreshProduction(id)
       setView(next)
@@ -482,6 +510,7 @@ export default function Studio() {
       setActive(project)
       setStart(project.suggested_start ?? project.selected_start)
       setExcluded(project.chapters?.filter(c => c.is_toc).map(c => c.index) ?? [])
+      setSpeakerDrafts({})
       setView('chapters')
       setNotice('EPUB erfolgreich analysiert. Bitte Vorlesebeginn und Kapitel prüfen.')
     } catch (err) { setError((err as Error).message) }
@@ -503,6 +532,79 @@ export default function Studio() {
       setNotice('Kapitelauswahl im bestehenden Hörbuch-Projektformat gespeichert.')
     } catch (err) { setError((err as Error).message) }
     finally { setSaving(false) }
+  }
+
+  async function updateSourceOverride(href: string, include: boolean) {
+    if (!active || !href || busy || saving) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const next = new Set(active.included_source_hrefs ?? [])
+      if (include) next.add(href)
+      else next.delete(href)
+      const project = await api<BookProject>(`/api/projects/${active.id}/source-overrides`, token, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({include_hrefs: [...next]}),
+      })
+      setActive(project)
+      setStart(project.suggested_start ?? project.selected_start)
+      setExcluded(project.chapters?.filter(c => c.is_toc).map(c => c.index) ?? [])
+      setSpeakerDrafts({})
+      await refreshProjects()
+      setNotice(include
+        ? 'Quellabschnitt wurde zusätzlich aufgenommen. Bitte die neue Kapitel- und Textzuordnung prüfen.'
+        : 'Manuelle Quellaufnahme wurde zurückgesetzt.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function saveSpeakerOverride(element: AuditReviewElement) {
+    if (!active || !element.can_edit || busy || saving) return
+    const draftKey = `${element.source_href}::${element.element_key}`
+    const speakerText = (speakerDrafts[draftKey] ?? element.speaker_text ?? '').trim()
+    if (!speakerText) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const project = await api<BookProject>(`/api/projects/${active.id}/speaker-overrides`, token, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          source_href: element.source_href,
+          element_key: element.element_key,
+          speaker_text: speakerText,
+        }),
+      })
+      setActive(project)
+      setStart(project.suggested_start ?? project.selected_start)
+      setExcluded(project.chapters?.filter(c => c.is_toc).map(c => c.index) ?? [])
+      await refreshProjects()
+      setNotice('Sprecherfassung wurde übernommen und in die Textvorschau eingearbeitet.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  async function removeSpeakerOverride(element: AuditReviewElement) {
+    if (!active || !element.approved || busy || saving) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const project = await api<BookProject>(`/api/projects/${active.id}/speaker-overrides`, token, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          source_href: element.source_href,
+          element_key: element.element_key,
+          speaker_text: '',
+        }),
+      })
+      setActive(project)
+      setStart(project.suggested_start ?? project.selected_start)
+      setExcluded(project.chapters?.filter(c => c.is_toc).map(c => c.index) ?? [])
+      const draftKey = `${element.source_href}::${element.element_key}`
+      setSpeakerDrafts(previous => { const next = {...previous}; delete next[draftKey]; return next })
+      await refreshProjects()
+      setNotice('Sprecherfassung entfernt. Die ursprüngliche EPUB-Textbehandlung ist wieder aktiv.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setBusy(false) }
   }
 
   async function showVoices() {
@@ -610,13 +712,61 @@ export default function Studio() {
                   <div><strong>{active.content_audit.summary.spine_items ?? 0}</strong><small>Spine-Einträge</small></div>
                   <div><strong>{active.content_audit.summary.retained_spine_items ?? 0}</strong><small>zugeordnet</small></div>
                   <div><strong>{active.content_audit.summary.skipped_spine_items ?? 0}</strong><small>nicht zugeordnet</small></div>
+                  <div><strong>{active.content_audit.summary.mapping_coverage_percent ?? 0}%</strong><small>Text-Mapping-Abdeckung</small></div>
                   <div><strong>{(active.content_audit.summary.source_tables ?? 0) + (active.content_audit.summary.source_lists ?? 0)}</strong><small>Tabellen und Listen</small></div>
                   <div><strong>{active.content_audit.summary.source_images ?? 0}</strong><small>Abbildungen</small></div>
                   <div><strong>{active.content_audit.summary.source_mathml ?? 0}</strong><small>MathML-Elemente</small></div>
+                  <div><strong>{(active.content_audit.summary.source_footnotes ?? 0) + (active.content_audit.summary.source_footnote_refs ?? 0)}</strong><small>Fußnoten und Verweise</small></div>
                 </div>
+                <p className="audit-note">Die Abdeckung zählt Nicht-Leerzeichen im extrahierten Text. Sie belegt die Zuordnung der übernommenen Textspannen, nicht die semantische Vollständigkeit jeder Abbildung oder Tabelle.</p>
                 {active.content_audit.skipped.length > 0 && <details className="audit-skipped" open>
-                  <summary>{active.content_audit.skipped.length} Quellressourcen ohne eindeutige Kapitelzuordnung</summary>
-                  <ul>{active.content_audit.skipped.map((item, i) => <li key={`${item.href ?? item.index}-${i}`}><strong>{item.href ?? `Spine-Eintrag ${item.index + 1}`}</strong><span>{item.reason}</span>{item.preview && <small>{item.preview}</small>}</li>)}</ul>
+                  <summary>{active.content_audit.skipped.length} ausgelassene oder ungeklärte Quellressourcen</summary>
+                  <ul>{active.content_audit.skipped.map((item, i) => <li key={`${item.href ?? item.index}-${i}`}>
+                    <strong>{item.href ?? `Spine-Eintrag ${item.index + 1}`}</strong>
+                    <span>{item.reason}</span>
+                    {item.preview && <small>{item.preview}</small>}
+                    {item.href && item.can_restore && <button className="audit-action" disabled={busy || saving || active.status !== 'Entwurf'} onClick={() => {void updateSourceOverride(item.href!, true)}}>Trotzdem in den Vorlesetext aufnehmen</button>}
+                  </li>)}</ul>
+                </details>}
+                {active.content_audit.resources.filter(item => item.included_by_user).length > 0 && <details className="audit-skipped" open>
+                  <summary>{active.content_audit.resources.filter(item => item.included_by_user).length} manuell wieder aufgenommene Quellen</summary>
+                  <ul>{active.content_audit.resources.filter(item => item.included_by_user).map(item => <li key={item.href}>
+                    <strong>{item.href}</strong><span>Wurde trotz der automatischen Auslassungsregel aufgenommen. {item.override_reason}</span>
+                    <button className="audit-action" disabled={busy || saving || active.status !== 'Entwurf'} onClick={() => {void updateSourceOverride(item.href, false)}}>Automatische Auslassungsregel wieder anwenden</button>
+                  </li>)}</ul>
+                </details>}
+                {(active.content_audit.review_elements ?? []).length > 0 && <details className="audit-elements" open>
+                  <summary>{(active.content_audit.review_elements ?? []).length} komplexe Inhaltselemente zur menschlichen Prüfung</summary>
+                  <p className="helper">Optional kannst du für Tabellen, Formeln, Abbildungen und Bilder eine eigene Sprecherfassung formulieren. Sie wird erst nach deiner ausdrücklichen Übernahme verwendet und ersetzt dann die bisherige Textbehandlung dieses Elements. Es wird kein Inhalt automatisch erfunden.</p>
+                  {(active.content_audit.review_elements ?? []).map((element, i) => {
+                    const draftKey = `${element.source_href}::${element.element_key}`
+                    const value = speakerDrafts[draftKey] ?? element.speaker_text ?? ''
+                    const inputId = `speaker-version-${i}`
+                    return <div className="audit-element" key={draftKey}>
+                      <div className="audit-element-heading"><strong>{element.kind}</strong><span>{element.source_href}</span>{element.approved && <em>Übernommen</em>}</div>
+                      <p className="audit-element-source">{element.preview}</p>
+                      {element.source_text && element.source_text !== element.preview && <small>Quelltextinhalt: {element.source_text}</small>}
+                      {element.alt_text && element.alt_text !== element.preview && <small>Alternativtext: {element.alt_text}</small>}
+                      <small>{element.handling}</small>
+                      {element.can_edit ? <>
+                        <label htmlFor={inputId}>Optionale Sprecherfassung</label>
+                        <textarea id={inputId} rows={3} maxLength={1000} value={value} disabled={busy || saving || active.status !== 'Entwurf'} onChange={event => setSpeakerDrafts(previous => ({...previous, [draftKey]: event.target.value}))} placeholder="Nur den Inhalt formulieren, der tatsächlich vorgelesen werden soll."/>
+                        <div className="audit-element-actions">
+                          <button className="audit-action" disabled={busy || saving || active.status !== 'Entwurf' || !value.trim() || value.trim() === element.speaker_text.trim()} onClick={() => {void saveSpeakerOverride(element)}}>Sprecherfassung übernehmen</button>
+                          {element.approved && <button className="audit-action secondary" disabled={busy || saving || active.status !== 'Entwurf'} onClick={() => {void removeSpeakerOverride(element)}}>Zur Originalfassung zurückkehren</button>}
+                        </div>
+                      </> : <small>Dieses Element ist aktuell keiner übernommenen Quellressource zugeordnet. Nimm den Quellabschnitt zuerst manuell auf, falls er vorgelesen werden soll.</small>}
+                    </div>
+                  })}
+                </details>}
+                {(active.content_audit.source_mapping ?? []).length > 0 && <details className="audit-mapping">
+                  <summary>Quelltext-Zuordnung ({(active.content_audit.source_mapping ?? []).length} Textspannen)</summary>
+                  <p className="helper">Offsets beziehen sich auf normalisierten extrahierten Text, nicht auf Bytepositionen im EPUB.</p>
+                  <ol>{(active.content_audit.source_mapping ?? []).slice(0, 200).map((item, i) => <li key={`${item.chapter_index}-${item.source_href}-${item.output_start}-${i}`}>
+                    <strong>{item.chapter_title || `Abschnitt ${item.chapter_index + 1}`}</strong>
+                    <span>{item.source_href} · {item.mapping_status === 'mapped' ? `Quelle ${item.source_start}–${item.source_end}` : 'Quellposition nicht exakt auflösbar'}</span>
+                  </li>)}</ol>
+                  {(active.content_audit.source_mapping ?? []).length > 200 && <small>Es werden die ersten 200 von {(active.content_audit.source_mapping ?? []).length} Zuordnungen angezeigt.</small>}
                 </details>}
                 {active.content_audit.review_notes.map((note, i) => <p className="audit-note" key={i}>{note}</p>)}
                 {active.content_audit.warnings.length > 0 && <details className="warning-details"><summary><AlertCircle size={16}/> {active.content_audit.warnings.length} Audit-Hinweise</summary><ul>{active.content_audit.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
