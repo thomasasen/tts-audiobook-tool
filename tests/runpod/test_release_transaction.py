@@ -29,6 +29,7 @@ class TestReleaseTransaction(unittest.TestCase):
         (self.repo / "web").mkdir(parents=True)
         (self.repo / "runpod").mkdir()
         (self.repo / "runpod" / "model-pins.env").write_text('MODEL_RELEASE_ID="test-v1"\n', encoding="utf-8")
+        (self.repo / "README.md").write_text("old-code", encoding="utf-8")
         (self.repo / "web" / "dist").mkdir()
         (self.repo / "web" / "dist" / "index.html").write_text("old-ui", encoding="utf-8")
 
@@ -151,7 +152,7 @@ class TestReleaseTransaction(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "old"], check=True)
         backup = release.backup_release(self.data, self.venvs, self.repo, "code-bound-release")
         old_commit = json.loads((backup / "metadata.json").read_text())["repo_commit"]
-        (self.repo / "web" / "dist" / "index.html").write_text("changed", encoding="utf-8")
+        (self.repo / "README.md").write_text("new-code", encoding="utf-8")
         subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
         subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "new"], check=True)
         with self.assertRaisesRegex(RuntimeError, "Application code is"):
