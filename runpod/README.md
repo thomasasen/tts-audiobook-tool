@@ -92,3 +92,40 @@ Die CI prüft Bash-Startverträge, eine **tatsächlich isolierte Web-Python-Inst
 Beim beobachteten RunPod-Fehler 46 war die GPU in `nvidia-smi` sichtbar, aber selbst eine PyTorch-CUDA-Speicherzuweisung funktionierte nicht. Hier ist die konkrete Host-Zuweisung zu prüfen; der Fehler wird nicht durch wiederholte Modell-Downloads behoben.
 
 **Wichtig:** Ein neuer Pod übernimmt den im RunPod-Template gespeicherten Docker Start Command, nicht automatisch die zuletzt auf GitHub dokumentierte Vorlage. Der bekannte alte Commit `68291fd` aus `feature/runpod-p0` startet ausschließlich die ältere TUI. Nur der aktuelle `master/runpod/autostart.sh`-Aufruf startet das German Audiobook Studio automatisch.
+
+## Entwicklung und unveränderliche Quellcode-Releases (A03, Teil 1)
+
+Der oben dokumentierte normale Start nutzt `RUNPOD_TTS_BRANCH=master` **ohne**
+`RUNPOD_TTS_COMMIT` und ist ausdrücklich **Entwicklungsmodus**: Beim nächsten
+Pod-Neustart kann ein neuer Commit von `master` ausgecheckt werden.
+
+Für einen vorab getesteten Release setzt der Betreiber **beide** Komponenten
+auf denselben vollständigen, geprüften 40-stelligen Commit, nachdem dessen
+Code samt `runpod/autostart.sh` und diesen Release-Optionen in `master`
+integriert wurde:
+
+```bash
+# Muster: <FREIGEGEBENE_40_ZEICHEN_SHA> durch dieselbe geprüfte SHA ersetzen.
+# Ausschließlich für einen bereits in master enthaltenen Commit verwenden.
+bash -lc '/start.sh & pod_pid=$!; RELEASE_SHA="<FREIGEGEBENE_40_ZEICHEN_SHA>"; if curl -fsSL "https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/$RELEASE_SHA/runpod/autostart.sh" -o /tmp/tts-autostart.sh; then RUNPOD_TTS_BRANCH=master RUNPOD_TTS_COMMIT="$RELEASE_SHA" RUNPOD_TTS_MODELS=none bash /tmp/tts-autostart.sh || echo "Audiobook release bootstrap failed"; fi; wait "$pod_pid"'
+```
+
+Der Start prüft vor weiteren Installationen, dass `RUNPOD_TTS_COMMIT` genau
+40 Hex-Zeichen hat, aus der aktuellen `master`-Historie stammt und nach
+Checkout tatsächlich `HEAD` entspricht. Modifizierte getrackte Dateien
+führen zum Abbruch; kein Hard-Reset. Ein wiederholter Neustart wählt dieselbe
+SHA. Ein Upgrade erfordert eine bewusste Änderung **beider** SHA-Einträge
+im privaten Docker Start Command. Für ein Rollback wird entsprechend der
+zuvor tatsächlich getestete Commit eingesetzt. Die Projekt-/Buch-/Audiobestände
+auf `/workspace/audiobook-data` werden dabei nicht zurückgesetzt.
+
+**Release-Grenze:** Diese Funktion fixiert bisher **nur den
+Repository-Quellcode**. Der Thorsten-Installer lädt weiterhin nicht vollständig
+gepinntes Hugging-Face-Modellmaterial und einige transitive Python-/Node-
+Abhängigkeiten können sich ändern. Deshalb ist dies noch kein vollständig
+reproduzierbares Modell-Release. A03 bleibt bis zu verifizierten Upstream-
+Revisionspins, Dependency-Locks und echten Cache-/Rollback-Tests **IN ARBEIT**.
+Bei einem fehlenden/veränderten Modell-Cache darf keine neue Hörfreigabe
+behauptet werden. Kein Container wurde mit diesem Branch gestartet oder
+abgenommen.
+
