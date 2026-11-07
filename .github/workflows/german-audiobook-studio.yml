@@ -5,6 +5,9 @@ on:
     paths:
       - "tts_audiobook_tool/web_studio/**"
       - "tts_audiobook_tool/text_ops/epub_extractor.py"
+      - "tts_audiobook_tool/text_ops/epub_css.py"
+      - "tts_audiobook_tool/text_ops/epub_section_skip_detector.py"
+      - "tests/text/test_epub_b01_redteam.py"
       - "tts_audiobook_tool/text_ops/epub_content_audit.py"
       - "tts_audiobook_tool/text_ops/german_speech_normalizer.py"
       - "tests/text/test_epub_content_audit.py"
@@ -31,6 +34,9 @@ on:
     paths:
       - "tts_audiobook_tool/web_studio/**"
       - "tts_audiobook_tool/text_ops/epub_extractor.py"
+      - "tts_audiobook_tool/text_ops/epub_css.py"
+      - "tts_audiobook_tool/text_ops/epub_section_skip_detector.py"
+      - "tests/text/test_epub_b01_redteam.py"
       - "tts_audiobook_tool/text_ops/epub_content_audit.py"
       - "web/**"
       - "tests/text/test_epub_extractor.py"
@@ -65,7 +71,7 @@ jobs:
           "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/web -q --confcutdir=tests/web
       - name: EPUB navigation and extraction regressions
         run: |
-          "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_epub_extractor.py -q
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_epub_extractor.py tests/text/test_epub_b01_redteam.py tests/text/test_epub_content_audit.py tests/text/test_epub_section_skip_detector.py tests/text/test_epub_css.py -q
       - name: German TTS pronunciation and checkpoint regressions
         run: |
           "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_german_speech_normalizer.py -q
