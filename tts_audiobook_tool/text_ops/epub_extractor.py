@@ -221,7 +221,7 @@ class BeautifulSoupEpubChapterTextExtractor:
         BeautifulSoup = self.import_beautiful_soup()
         soup = BeautifulSoup(chapter.html, "html.parser")
         self.apply_speaker_overrides(soup, chapter.speaker_overrides)
-        drop_cap_warnings = self.repair_split_initials(soup, chapter.href)
+        drop_cap_warnings = self.repair_split_initials(soup, chapter.href, chapter.css)
         stats = EpubTextExtractionStats()
         warnings: list[str] = list(drop_cap_warnings)
         significant_warnings: list[str] = list(drop_cap_warnings)
@@ -280,7 +280,7 @@ class BeautifulSoupEpubChapterTextExtractor:
         )
 
     @staticmethod
-    def repair_split_initials(soup: Any, source_href: str) -> list[str]:
+    def repair_split_initials(soup: Any, source_href: str, css: EpubCssResolver | None = None) -> list[str]:
         """Repair only visibly marked split initials without merging adjacent paragraphs.
 
         Calibre-style EPUB exports sometimes place a large initial in a dedicated
@@ -293,12 +293,31 @@ class BeautifulSoupEpubChapterTextExtractor:
         for initial in list(soup.find_all("p")):
             if initial.parent is None:
                 continue
-            classes = [str(value).lower() for value in initial.get("class", [])]
-            marked = any(
-                re.search(r"(?:drop[-_]?cap|initial|^block_\d+$)", value)
-                for value in classes
-            ) or "float:left" in re.sub(r"\s+", "", str(initial.get("style", "")).lower())
-            if not marked:
+            # A one-word paragraph is not in itself evidence of a drop cap:
+            # relying on Calibre's numbered classes would destroy headings.
+            def declarations(node: Any) -> dict[str, str]:
+                values = css.declarations_for(
+                    node.name,
+                    frozenset(str(item) for item in node.get("class", [])),
+                    node.get("id"),
+                ).copy() if css is not None else {}
+                values.update(epub_css.parse_declarations(
+                    str(node.get("style", "")), include_layout=True,
+                ))
+                return values
+
+            layout = declarations(initial)
+            size = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(pt|px|em|rem|%)", layout.get("font-size", ""))
+            large = False
+            if size is not None:
+                amount = float(size.group(1))
+                large = amount >= {"pt": 20, "px": 27, "em": 2, "rem": 2, "%": 200}[size.group(2)]
+            parent = initial.parent
+            floated = (
+                getattr(parent, "name", None) == "div"
+                and declarations(parent).get("float") in {"left", "inline-start"}
+            )
+            if not (large or floated):
                 continue
             prefix = initial.get_text("", strip=True)
             if not prefix or len(prefix) > 14:
@@ -340,7 +359,13 @@ class BeautifulSoupEpubChapterTextExtractor:
                 fragment["id"] = initial["id"]
             if container is not initial and container.get("id") and not fragment.get("id"):
                 fragment["id"] = container["id"]
-            fragment.string = prefix + separator
+            first_initial_string = initial.find(string=True)
+            if first_initial_string is not None:
+                first_initial_string.replace_with(str(first_initial_string).lstrip())
+            for child in list(initial.contents):
+                fragment.append(child.extract())
+            if separator:
+                fragment.append(separator)
             if not separator:
                 # The next paragraph may start with layout indentation.
                 first_string = following.find(string=True)
