@@ -11,10 +11,15 @@ on:
       - "web/**"
       - "runpod/install-web.sh"
       - "runpod/start-web.sh"
+      - "runpod/model-pins.env"
+      - "runpod/locks/**"
+      - "requirements-qwen3tts.lock.txt"
+      - "requirements-moss.lock.txt"
       - "tests/web/**"
       - "runpod/acceptance*.py"
       - "runpod/asr_cpu_smoke.py"
       - ".github/workflows/german-audiobook-studio.yml"
+      - ".github/workflows/a03-release-locks.yml"
       - "plan.md"
   push:
     branches:
@@ -24,28 +29,34 @@ on:
       - "tts_audiobook_tool/web_studio/**"
       - "web/**"
       - "tests/web/**"
+      - "runpod/install-web.sh"
+      - "runpod/model-pins.env"
       - ".github/workflows/german-audiobook-studio.yml"
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - name: Install minimal web dependencies
-        run: python -m pip install -r web/requirements-runtime.txt pytest
-      - name: CPU-only Torch for upstream Project-V5 imports
-        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+          python-version: "3.12.16"
+      - name: Install pinned UV and hash-locked Web runtime
+        run: |
+          python -m pip install --disable-pip-version-check "uv==0.13.7"
+          uv python install 3.12.16
+          uv venv --python 3.12.16 --seed "$RUNNER_TEMP/audiobook-venv"
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --require-hashes --requirement web/requirements-runtime.lock.txt
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --no-deps --require-hashes --requirement web/torch-cpu.lock.txt
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" pytest==8.4.2
       - name: Compile Python adapter
-        run: python -m compileall -q tts_audiobook_tool/web_studio runpod/acceptance.py runpod/acceptance_epub.py
+        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m compileall -q tts_audiobook_tool/web_studio runpod/acceptance.py runpod/acceptance_epub.py
       - name: Web API tests
-        run: python -m pytest tests/web -q --confcutdir=tests/web
+        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/web -q --confcutdir=tests/web
       - name: EPUB navigation and extraction regressions
-        run: python -m pytest tests/text/test_epub_extractor.py -q
+        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_epub_extractor.py -q
       - name: German TTS pronunciation and checkpoint regressions
-        run: python -m pytest tests/text/test_german_speech_normalizer.py -q
+        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_german_speech_normalizer.py -q
 
   deployed-web-runtime:
     runs-on: ubuntu-24.04
@@ -53,10 +64,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.16"
       - name: Prepare pinned UV binary as in persistent RunPod volume
         run: |
-          python -m pip install uv==0.9.11
+          python -m pip install --disable-pip-version-check "uv==0.13.7"
           mkdir -p "$RUNNER_TEMP/audiobook-data/tools/uv-bootstrap/bin"
           ln -s "$(command -v uv)" "$RUNNER_TEMP/audiobook-data/tools/uv-bootstrap/bin/uv"
       - name: Execute actual isolated Web Studio installer
@@ -93,7 +104,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.16"
       - name: Install open-source German synthetic speech and pinned CPU ASR
         run: |
           sudo apt-get update -qq
@@ -108,7 +119,7 @@ jobs:
         run: python -m runpod.asr_cpu_smoke
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
@@ -117,30 +128,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install frontend dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install frontend dependencies from package lock
+        run: npm ci --no-audit --no-fund
       - name: Typecheck and production build
         run: npm run build
 
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.16"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install Python, EPUB and headless browser dependencies
+      - name: Install locked Python runtime and test browser
         run: |
-          python -m pip install -r web/requirements-runtime.txt pytest playwright
-          python -m playwright install --with-deps chromium
-      - name: CPU-only Torch for upstream Project-V5 imports
-        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
-      - name: Build the actual production UI
-        run: cd web && npm install --no-audit --no-fund && npm run build
+          python -m pip install --disable-pip-version-check "uv==0.13.7"
+          uv python install 3.12.16
+          uv venv --python 3.12.16 --seed "$RUNNER_TEMP/audiobook-venv"
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --require-hashes --requirement web/requirements-runtime.lock.txt
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --no-deps --require-hashes --requirement web/torch-cpu.lock.txt
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" playwright==1.56.0
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m playwright install --with-deps chromium
+      - name: Build the actual production UI from npm lock
+        run: cd web && npm ci --no-audit --no-fund && npm run build
       - name: Headless Chromium authenticated end-to-end
-        run: python tests/web/browser_smoke.py
+        run: "$RUNNER_TEMP/audiobook-venv/bin/python" tests/web/browser_smoke.py
         env:
           PYTHONPATH: .
