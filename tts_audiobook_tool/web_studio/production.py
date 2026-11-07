@@ -25,6 +25,23 @@ from pathlib import Path
 
 VOICE_ID = "thorsten-cosyvoice3"
 SAMPLE_TEXT = "Guten Tag. Dieses Fachbuch erklärt, wie gute Entscheidungen im Vertrieb entstehen."
+# Approximately five seconds per sample sentence; individual voices/speeds
+# vary. Do not truncate the recording in the middle of spoken words.
+SAMPLE_SENTENCES = (
+    SAMPLE_TEXT,
+    "Wir betrachten dazu konkrete Beispiele aus der Praxis und vergleichen unterschiedliche Vorgehensweisen.",
+    "Entscheidend ist, dass alle Beteiligten ihre Ziele verstehen und fundierte Entscheidungen treffen können.",
+    "Auch eine gute Vorbereitung hilft dabei, schwierige Gespräche strukturiert und verständlich zu führen.",
+    "Ein klares Verständnis für den Kunden ist die Grundlage erfolgreicher Zusammenarbeit über viele Jahre.",
+    "Im nächsten Abschnitt geht es um die Frage, wie sich Fortschritte objektiv messen lassen.",
+    "Dazu betrachten wir messbare Ergebnisse, typische Hindernisse und die Perspektiven der beteiligten Personen.",
+    "Gut geführte Gespräche schaffen Vertrauen, ohne mögliche Probleme oder offene Entscheidungen zu verschweigen.",
+    "Die folgenden Beispiele zeigen, weshalb sorgfältiges Nachfragen oft wichtiger ist als schnelle Antworten.",
+    "Ein professioneller Vertriebsprozess braucht nachvollziehbare Kriterien und eine verständliche gemeinsame Sprache.",
+    "Gerade bei komplexen Projekten sollten Chancen und Risiken regelmäßig geprüft und offen besprochen werden.",
+    "Damit endet diese Hörprobe. Beurteile bitte Aussprache, Verständlichkeit, Betonung und die gleichmäßige Sprecherstimme.",
+)
+SAMPLE_LENGTHS = {5: 1, 15: 3, 30: 6, 60: 12}
 MAX_SEGMENTS = 100_000
 MAX_GLOSSARY = 500
 _WAKE = threading.Event()
@@ -37,7 +54,7 @@ _ASR_MODEL = None
 _PREVIEW_LOCK = threading.Lock()
 _PREVIEW_STATE: dict = {
     "id": None, "status": "idle", "stage": "Noch keine Hörprobe gestartet.",
-    "events": [], "error": "",
+    "events": [], "error": "", "duration_seconds": 5,
 }
 _ACTIVITY_LOCK = threading.Lock()
 
@@ -371,7 +388,10 @@ def _synthesize(text: str, path: Path, on_progress=None) -> float:
         temp.unlink(missing_ok=True)
 
 
-def make_sample(on_progress=None) -> Path:
+def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
+    """Generate a curated approximate-length audition; never cut words."""
+    if duration_seconds not in SAMPLE_LENGTHS or type(duration_seconds) is not int:
+        raise ValueError("Hörprobenlänge muss 5, 15, 30 oder 60 Sekunden sein.")
     if _model_identity() is None:
         raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig und geprüft installiert werden.")
     if not _GPU.acquire(blocking=False):
@@ -383,7 +403,47 @@ def make_sample(on_progress=None) -> Path:
         if busy:
             raise ValueError("Es läuft bereits eine Hörbuchproduktion.")
         sample = data_dir() / "voice-samples" / "thorsten.wav"
-        _synthesize(SAMPLE_TEXT, sample, on_progress=on_progress)
+        phrases = SAMPLE_SENTENCES[:SAMPLE_LENGTHS[duration_seconds]]
+        if len(phrases) == 1:
+            _synthesize(phrases[0], sample, on_progress=on_progress)
+        else:
+            # Joining individual sentences keeps each model call short and
+            # produces one complete, browser-safe PCM-16 WAV for listening.
+            # Intermediate files are private and are removed after assembly.
+            import shutil
+            fragments_dir = sample.parent / ("preview-" + uuid.uuid4().hex)
+            fragments_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+            staged = sample.parent / (".thorsten-" + uuid.uuid4().hex + ".partial.wav")
+            try:
+                fragments: list[Path] = []
+                for index, sentence in enumerate(phrases):
+                    if on_progress is not None:
+                        on_progress(f"Hörprobe: Satz {index + 1} von {len(phrases)} wird erzeugt.")
+                    item = fragments_dir / f"{index:02d}.wav"
+                    _synthesize(sentence, item, on_progress=on_progress)
+                    _valid_browser_preview(item)
+                    fragments.append(item)
+                with wave.open(str(staged), "wb") as joined:
+                    expected = None
+                    for item in fragments:
+                        with wave.open(str(item), "rb") as source:
+                            params = (source.getnchannels(), source.getsampwidth(),
+                                      source.getframerate())
+                            if expected is None:
+                                expected = params
+                                joined.setnchannels(params[0])
+                                joined.setsampwidth(params[1])
+                                joined.setframerate(params[2])
+                            elif params != expected:
+                                raise ValueError("Inkompatible Audioformate in der Hörprobe.")
+                            joined.writeframes(source.readframes(source.getnframes()))
+                _valid_browser_preview(staged)
+                os.chmod(staged, 0o600)
+                os.replace(staged, sample)
+            finally:
+                staged.unlink(missing_ok=True)
+                shutil.rmtree(fragments_dir)
+        _valid_browser_preview(sample)
         _voice_proof().unlink(missing_ok=True)  # changed audio requires fresh listening
         return sample
     finally:
@@ -409,6 +469,7 @@ def preview_status() -> dict:
         return {
             "id": _PREVIEW_STATE["id"], "status": _PREVIEW_STATE["status"],
             "stage": _PREVIEW_STATE["stage"], "error": _PREVIEW_STATE["error"],
+            "duration_seconds": _PREVIEW_STATE["duration_seconds"],
             "events": list(_PREVIEW_STATE["events"]),
         }
 
@@ -425,11 +486,12 @@ def _preview_error(exc: Exception) -> str:
     return "Die Hörprobe konnte nicht erzeugt werden. Details stehen im privaten Thorsten-Worker-Log."
 
 
-def _preview_background(task_id: str) -> None:
+def _preview_background(task_id: str, duration_seconds: int) -> None:
     try:
         _preview_update(task_id, stage="GPU und Sprecherinstallation werden geprüft.")
         generated = make_sample(
-            on_progress=lambda message: _preview_update(task_id, stage=message)
+            on_progress=lambda message: _preview_update(task_id, stage=message),
+            duration_seconds=duration_seconds,
         )
         # make_sample checks the audio file, but verify again just before
         # publishing a ready state. Never publish an empty/truncated WAV.
@@ -444,7 +506,9 @@ def _preview_background(task_id: str) -> None:
         _preview_update(task_id, status="failed", stage=message, error=message)
 
 
-def start_sample() -> dict:
+def start_sample(duration_seconds: int = 5) -> dict:
+    if type(duration_seconds) is not int or duration_seconds not in SAMPLE_LENGTHS:
+        raise ValueError("Hörprobenlänge muss 5, 15, 30 oder 60 Sekunden sein.")
     if _model_identity() is None:
         raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig installiert sein.")
     with _PREVIEW_LOCK:
@@ -453,11 +517,11 @@ def start_sample() -> dict:
         task_id = uuid.uuid4().hex
         _PREVIEW_STATE.update({
             "id": task_id, "status": "running", "stage": "Hörprobe wird vorbereitet.",
-            "events": [{"at": _now(), "message": "Hörprobe angefordert."}],
-            "error": "",
+            "events": [{"at": _now(), "message": f"Hörprobe mit ungefähr {duration_seconds} Sekunden angefordert."}],
+            "error": "", "duration_seconds": duration_seconds,
         })
         thread = threading.Thread(
-            target=_preview_background, args=(task_id,),
+            target=_preview_background, args=(task_id, duration_seconds),
             daemon=True, name="studio-preview",
         )
         thread.start()
