@@ -31,11 +31,11 @@ jobs:
       - name: Install pinned UV lock compiler
         run: python -m pip install --disable-pip-version-check "uv==0.9.11"
       - name: Generate Python hash locks and npm package lock
-        run: bash runpod/generate-release-locks.sh "$RUNNER_TEMP/release-locks"
+        run: bash runpod/generate-release-locks.sh release-locks
       - name: Upload generated lock files for review and commit
         uses: actions/upload-artifact@v4
         with:
           name: a03-release-locks
-          path: "$RUNNER_TEMP/release-locks/"
+          path: release-locks/
           if-no-files-found: error
           retention-days: 7
