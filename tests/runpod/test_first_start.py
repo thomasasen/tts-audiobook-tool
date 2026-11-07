@@ -26,37 +26,37 @@ class TestFirstStart(unittest.TestCase):
         weights = model / "pretrained_models/CosyVoice3-0.5B"
         weights.mkdir(parents=True)
         (model / ".git").mkdir()
-        (model / "requirements.txt").write_text("torch>=2\\nopenai-whisper\\n")
+        (model / "requirements.txt").write_text("torch>=2\nopenai-whisper\n")
         uv = data / "tools/uv-bootstrap/bin/uv"
         uv.parent.mkdir(parents=True)
         venv = data / "venvs/thorsten/bin"
         venv.mkdir(parents=True)
         fake = root / "bin"
         fake.mkdir()
-        (fake / "git").write_text("#!/bin/sh\\nexit 0\\n")
+        (fake / "git").write_text("#!/bin/sh\nexit 0\n")
         (fake / "git").chmod(0o755)
-        (fake / "apt-get").write_text("#!/bin/sh\\nexit 0\\n")
+        (fake / "apt-get").write_text("#!/bin/sh\nexit 0\n")
         (fake / "apt-get").chmod(0o755)
         uv.write_text("""#!/bin/sh
-printf '%s\\n' "$*" >> "$FAKE_DOWNLOAD_AUDIT"
+printf '%s\n' "$*" >> "$FAKE_DOWNLOAD_AUDIT"
 case "$*" in
   *FunAudioLLM/Fun-CosyVoice3-0.5B-2512*)
     for n in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py; do
-      printf 'base:%s\\n' "$n" > "$FAKE_MODEL_DIR/$n"
+      printf 'base:%s\n' "$n" > "$FAKE_MODEL_DIR/$n"
     done ;;
   *Thorsten-Voice/CosyVoice3*)
     for n in llm.pt flow.pt spk2info.pt infer_thorsten.py; do
-      printf 'thorsten:%s\\n' "$n" > "$FAKE_MODEL_DIR/$n"
+      printf 'thorsten:%s\n' "$n" > "$FAKE_MODEL_DIR/$n"
     done ;;
   *) exit 90 ;;
 esac
 """)
         uv.chmod(0o755)
         py = venv / "python"
-        py.write_text("#!/bin/sh\\nexit 0\\n")
+        py.write_text("#!/bin/sh\nexit 0\n")
         py.chmod(0o755)
         hf = venv / "hf"
-        hf.write_text("#!/bin/sh\\nprintf '%s\\n' 'UNEXPECTED DOWNLOAD' >> \"$FAKE_DOWNLOAD_AUDIT\"; exit 78\\n")
+        hf.write_text("#!/bin/sh\nprintf '%s\n' 'UNEXPECTED DOWNLOAD' >> \"$FAKE_DOWNLOAD_AUDIT\"; exit 78\n")
         hf.chmod(0o755)
         env = {
             **os.environ,
@@ -122,7 +122,7 @@ esac
     def test_readme_docker_start_command_is_copyable_and_targets_master(self):
         text = (ROOT / "README.md").read_text(encoding="utf-8")
         match = re.search(
-            r"### Docker Start Command[^\\n]*\\n.*?\\n```bash\\n([^\\n]+)\\n```",
+            r"### Docker Start Command[^\n]*\n.*?\n```bash\n([^\n]+)\n```",
             text, flags=re.S,
         )
         self.assertIsNotNone(match, "A single-line command must appear in README")
