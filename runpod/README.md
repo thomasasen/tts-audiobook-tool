@@ -23,6 +23,16 @@ Die **aktuelle, einzige Startvorlage einschließlich Docker Start Command** steh
 
 Die Stufen sind bewusst begrenzt: maximal ein Frontend-Build, ein Web-Python-Installer und ein paralleler Thorsten-Vorabdownload. Ein neuer Thorsten-Download beginnt nur bei funktionierendem System-CUDA-Test und **mindestens 25 GiB** freiem Network-Volume-Speicher. Zur GPU-Initialisierung reicht `nvidia-smi` alleine nicht aus.
 
+## Hörproben und Fortschrittsprognosen
+
+Die Weboberfläche kann für Thorsten eine Hörprobe von **ungefähr 5, 15, 30 oder 60 Sekunden** erzeugen. Für längere Proben werden mehrere vollständige deutsche Sätze in einem lokalen PCM-16-WAV zusammengefügt, ohne den gesprochenen Text mitten im Wort abzuschneiden. Der jeweilige API-Startaufruf überträgt `duration_seconds` und akzeptiert ausschließlich diese vier Werte; aufgrund des Modelltempos ist die tatsächliche Länge nicht exakt vorhersagbar.
+
+Die Hörbuchproduktion zählt echte fertiggestellte Segmente und meldet unter dem projektgebundenen `GET /api/projects/{project_id}/jobs/{job_id}/activity` neben dem Fortschritt auch `elapsed_seconds`, `remaining_seconds`, `eta_sample_count` und `calculated_at`. Die **Restzeitprognose** basiert ab dem dritten vollständig verarbeiteten Segment auf den lokal gespeicherten Bearbeitungszeiten der letzten Segmente einschließlich Qualitätsprüfung. Sie berücksichtigt die Länge der ausstehenden Texte, verwendet einen robusten Median und wird bei jeder Statusabfrage neu ermittelt. Im Browser läuft ein sekündlicher Countdown zwischen den etwa dreisekündlichen API-Aktualisierungen. Bei Pausen, fehlenden Messwerten oder abgebrochenen Jobs wird keine unbegründete Restzeit angezeigt. Die separate Dauer des M4B-Exports ist darin **nicht** enthalten.
+
+Die Sprechstilanweisung per freiem Prompt ist bei der ausschließlich verwendeten fest trainierten Stimme `inference_sft(..., "thorsten")` **nicht nachgewiesen**. Die vom CosyVoice-Hersteller dokumentierte Anweisungsinferenz verlangt eine gesonderte Referenzaufnahme. Daher wird keine wirkungslose Prompt-Steuerung für Thorsten angeboten.
+
+**Bekannter Browserfehler:** Der Browser meldete Medienfehler 4, obwohl eine heruntergeladene WAV-Datei abspielbar war. Ursache war eine zu strenge Content Security Policy, die `blob:`-Medien blockierte. Der produktive Webserver erlaubt nun gezielt `media-src 'self' blob:` und `connect-src 'self' blob:`, während die übrige CSP restriktiv bleibt. Die Worker-Ausgabe ist explizit signed PCM-16. Ein vollständiger Chromium-Test prüft Wiedergabe und tatsächliche Audiodauer; die Überprüfung auf einem neuen echten GPU-Pod bleibt gesondert erforderlich.
+
 ## Abschließende Statusanzeige
 
 Nach den **gesamten** Installations- und Prüfschritten kontrolliert der Autostart nochmals die HTTP-Erreichbarkeit des Web-Studios. Anschließend ruft er `runpod/print-start-summary.sh` auf und schreibt eine große, eingerahmte Übersicht **ans Ende der privaten RunPod-Container-Logs**. Darin stehen:
