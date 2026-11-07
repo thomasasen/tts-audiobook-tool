@@ -609,7 +609,7 @@ export default function Studio() {
                   <div className="progress-head"><strong>Audioerzeugung</strong><span>{job.total > 0 ? Math.round(100 * job.done / job.total) : 0} %</span></div>
                   <progress max={Math.max(1,job.total)} value={job.done} aria-label="Fertiggestellte Audiosegmente"/>
                   <p>{job.done} von {job.total} Segmenten tatsächlich fertig · {Math.round(job.duration)} Sekunden Audio</p>
-                  {(job.status === 'exporting' || exportPending) && <p role="status">M4B-Export läuft. Fortschritt ist im Protokoll sichtbar; keine Schätzung der Restzeit.</p>
+                  {(job.status === 'exporting' || exportPending) && <p role="status">M4B-Export läuft. Fortschritt ist im Protokoll sichtbar; keine Schätzung der Restzeit.</p>}
                   <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
                     <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
                     <ol>{jobActivity?.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>) ?? <li>Noch keine Einträge vorhanden.</li>}</ol>
