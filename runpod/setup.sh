@@ -202,8 +202,8 @@ case "$MODELS" in
   qwen) install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0 ;;
   moss) install_model moss requirements-moss.txt requirements-moss.lock.txt 2.9.1 ;;
   both)
-    install_model qwen requirements-qwen3tts.txt 2.8.0
-    install_model moss requirements-moss.txt 2.9.1
+    install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0
+    install_model moss requirements-moss.txt requirements-moss.lock.txt 2.9.1
     ;;
 esac
 
