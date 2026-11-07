@@ -29,7 +29,7 @@ Diese Werte kannst du beim Erstellen eines **privaten Pod-Templates** direkt üb
 
 ### Docker Start Command – vollständig kopieren
 
-**Wichtig:** In das Feld **Docker Start Command** kommt der gesamte folgende Befehl, **nicht** nur `/start.sh` und **nicht** die Container-Image-Bezeichnung. Er lädt `master`, installiert selbstständig die Qwen-Basisumgebung und die deutsche Thorsten-CosyVoice3-Stimme, baut die React-Weboberfläche und startet das **Web-Studio auf Port 7860**. Die alte TUI läuft aus Kompatibilitätsgründen zusätzlich im Hintergrund, muss aber **nicht** verwendet werden. Der erste Einsatz ist ein GPU-Test, kein produktiver Betrieb.
+**Wichtig:** In das Feld **Docker Start Command** kommt der gesamte folgende Befehl, **nicht** nur `/start.sh` und **nicht** die Container-Image-Bezeichnung. Er lädt `master`, installiert selbstständig die Qwen-Basisumgebung und die deutsche Thorsten-CosyVoice3-Stimme, baut die React-Weboberfläche und startet das **Web-Studio auf Port 7860**. **Die ältere TUI wird standardmäßig nicht mehr gestartet**, damit sie keine GPU-Ressourcen für die Thorsten-Vertonung blockieren kann. Für den optionalen parallelen Konsolenbetrieb muss `RUNPOD_TTS_START_TUI=1` gesetzt werden. Der erste Einsatz ist ein GPU-Test, kein produktiver Betrieb.
 
 ```bash
 bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/master/runpod/autostart.sh -o /tmp/tts-autostart.sh; then RUNPOD_TTS_BRANCH=master RUNPOD_TTS_MODELS=qwen RUNPOD_TTS_AUTOSTART_MODEL=qwen bash /tmp/tts-autostart.sh || echo "Audiobook setup failed; inspect /workspace/audiobook-data/logs"; else echo "Audiobook startup download failed"; fi; wait "$pod_pid"'
@@ -66,6 +66,8 @@ Danach die Hörprobe in der Weboberfläche erneut erzeugen. Der vorher abgestür
 
 **Gemessener Speicher beim laufenden Test:** Auf einem wiederverwendeten 60-GB-Network-Volume mit alten Qwen-/MOSS-Installationen und Thorsten waren am 07.11.2026 **52 GB belegt, 8,3 GB frei**. Das ist **keine allgemeingültige Mindestgröße für eine frische Installation**; es zeigt jedoch, wie knapp 60 GB bei zusätzlichen Altlasten und Audioprojekten werden können. Keine bestehenden Modell- oder Projektdateien zur vermeintlichen Platzersparnis ohne Prüfung löschen.
 
+**GPU-Fehler 46 bei Thorsten-CosyVoice3 (07.11.2026):** Bei der ersten echten Hörprobe meldete ONNX Runtime `CUDA failure 46: CUDA-capable device(s) is/are busy or unavailable`. Der Upstream-CosyVoice3-Frontendcode initialisiert seinen **Sprachaudio-Tokenizer** unnötigerweise über ONNX CUDA, sobald PyTorch eine GPU erkennt. Bei der hier verwendeten **fest trainierten Thorsten-SFT-Stimme** wird dieser referenzaudiobasierte Tokenizer für die Erzeugung nicht gebraucht. Deshalb initialisiert der gekapselte Thorsten-Worker **nur `speech_tokenizer_v3.onnx` über `CPUExecutionProvider`**. Die eigentliche PyTorch-Sprachsynthese bleibt auf CUDA. Der Workaround verändert keine Modellgewichte und wird nur während der Modellinitialisierung aktiviert. Gleichzeitig startet RunPod die alte Qwen-TUI nicht mehr standardmäßig. **Ob die eigentliche CUDA-Sprachsynthese funktioniert, muss weiterhin mit einer echten Hörprobe getestet werden.** Bei erneutem CUDA-Fehler in PyTorch statt ONNX ist der GPU-Status im Pod zu prüfen (`nvidia-smi`); es darf dann nicht still auf CPU-Vertonung gewechselt werden.
+
 ### Environment Variables (optional)
 
 Für den ersten Test reichen die im Docker Start Command gesetzten Werte. Wenn das Template noch alte Variablen enthält, aktualisiere sie zusätzlich wie folgt. Das Startkommando hat für die drei genannten `RUNPOD_TTS_…`-Werte Vorrang:
@@ -74,7 +76,8 @@ Für den ersten Test reichen die im Docker Start Command gesetzten Werte. Wenn d
 | --- | --- | --- |
 | `RUNPOD_TTS_BRANCH` | `master` | Verhindert den Rückfall auf das alte `feature/runpod-p0` | 
 | `RUNPOD_TTS_MODELS` | `qwen` | Installiert die Qwen-Basisumgebung; **`both` installiert zusätzlich MOSS** und benötigt erheblich mehr Speicher |
-| `RUNPOD_TTS_AUTOSTART_MODEL` | `qwen` | TUI-Standardmodell; die **Web-Stimme bleibt separat Thorsten-CosyVoice3** |
+| `RUNPOD_TTS_AUTOSTART_MODEL` | `qwen` | Nur relevant, wenn die optionale TUI aktiviert wurde; die Web-Stimme ist Thorsten-CosyVoice3 |
+| `RUNPOD_TTS_START_TUI` | `0` | Standard: **nur Web-Studio starten**. `1` startet zusätzlich die alte TUI und kann GPU-Ressourcen beanspruchen |
 | `AUDIOBOOK_STUDIO_PORT` | `7860` | Muss zum exponierten HTTP-Port passen |
 | `AUDIOBOOK_STUDIO_TOKEN` | optional: privates Secret mit ≥32 Zeichen | Ohne Vorgabe wird ein zufälliger Zugangsschlüssel auf dem Network Volume erstellt |
 | `RUNPOD_WORKSPACE` | `/workspace` | Nur ändern, wenn gleichzeitig das Volume konsistent anders gemountet und das Setup angepasst wird; **hier nicht ändern** |
