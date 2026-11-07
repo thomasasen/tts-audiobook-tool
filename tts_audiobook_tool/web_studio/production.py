@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import difflib
+import logging
 import sys
 from array import array
 import json
@@ -33,6 +34,12 @@ _THREAD: threading.Thread | None = None
 _LOCK_FILE = None
 _MODEL_PROC = None
 _ASR_MODEL = None
+_PREVIEW_LOCK = threading.Lock()
+_PREVIEW_STATE: dict = {
+    "id": None, "status": "idle", "stage": "Noch keine Hörprobe gestartet.",
+    "events": [], "error": "",
+}
+_ACTIVITY_LOCK = threading.Lock()
 
 
 def _close_model() -> None:
@@ -72,11 +79,14 @@ def _model_message(proc, timeout: int) -> dict:
     return data
 
 
-def _generate_with_worker(text: str, output: Path, config: tuple[str, str]) -> None:
+def _generate_with_worker(text: str, output: Path, config: tuple[str, str],
+                          on_progress=None) -> None:
     """The only active worker lives inside the exclusive GPU critical section."""
     global _MODEL_PROC
     try:
         if _MODEL_PROC is None or _MODEL_PROC.poll() is not None:
+            if on_progress is not None:
+                on_progress("Thorsten-Modell wird in den GPU-Speicher geladen.")
             script = Path(__file__).with_name("thorsten_worker.py")
             if not script.is_file():
                 raise RuntimeError("Der Thorsten-Langzeitworker ist nicht installiert.")
@@ -102,6 +112,8 @@ def _generate_with_worker(text: str, output: Path, config: tuple[str, str]) -> N
                 raise RuntimeError("Thorsten-Modell konnte nicht geladen werden.")
         if _MODEL_PROC.stdin is None:
             raise RuntimeError("Thorsten-Worker ist nicht schreibbar.")
+        if on_progress is not None:
+            on_progress("Sprachsynthese läuft. Die GPU erzeugt die Hörprobe.")
         request_id = uuid.uuid4().hex
         _MODEL_PROC.stdin.write(json.dumps({
             "id": request_id, "text": text, "output": str(output)
@@ -314,7 +326,7 @@ def _audio_quality(path: Path, expected: str) -> dict:
         return result
 
 
-def _synthesize(text: str, path: Path) -> float:
+def _synthesize(text: str, path: Path, on_progress=None) -> float:
     config = _config()
     if config is None:
         raise RuntimeError("Thorsten-CosyVoice3 ist nicht installiert.")
@@ -324,7 +336,7 @@ def _synthesize(text: str, path: Path) -> float:
         # Official model's infer_thorsten.py CLI; avoid a shell and never
         # download or inject a user-provided voice reference.
         if os.environ.get("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "1") == "1":
-            _generate_with_worker(text, temp, config)
+            _generate_with_worker(text, temp, config, on_progress=on_progress)
         else:
             # Explicit fallback for debugging only; reloads the full model for
             # every segment and is unsuitable for long production jobs.
@@ -335,6 +347,8 @@ def _synthesize(text: str, path: Path) -> float:
             )
             if run.returncode != 0:
                 raise RuntimeError("TTS-Inferenz fehlgeschlagen.")
+        if on_progress is not None:
+            on_progress("Audiodatei wird geprüft und gespeichert.")
         duration = _valid_audio(temp)
         os.chmod(temp, 0o600)
         os.replace(temp, path)
@@ -343,7 +357,7 @@ def _synthesize(text: str, path: Path) -> float:
         temp.unlink(missing_ok=True)
 
 
-def make_sample() -> Path:
+def make_sample(on_progress=None) -> Path:
     if _model_identity() is None:
         raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig und geprüft installiert werden.")
     if not _GPU.acquire(blocking=False):
@@ -355,11 +369,96 @@ def make_sample() -> Path:
         if busy:
             raise ValueError("Es läuft bereits eine Hörbuchproduktion.")
         sample = data_dir() / "voice-samples" / "thorsten.wav"
-        _synthesize(SAMPLE_TEXT, sample)
+        _synthesize(SAMPLE_TEXT, sample, on_progress=on_progress)
         _voice_proof().unlink(missing_ok=True)  # changed audio requires fresh listening
         return sample
     finally:
         _GPU.release()
+
+
+def _preview_update(task_id: str, *, stage: str, status: str | None = None,
+                    error: str = "") -> None:
+    """Only fixed, privacy-safe operational messages enter the public activity log."""
+    with _PREVIEW_LOCK:
+        if _PREVIEW_STATE["id"] != task_id:
+            return
+        if status is not None:
+            _PREVIEW_STATE["status"] = status
+        _PREVIEW_STATE["stage"] = stage
+        _PREVIEW_STATE["error"] = error
+        _PREVIEW_STATE["events"].append({"at": _now(), "message": stage})
+        _PREVIEW_STATE["events"] = _PREVIEW_STATE["events"][-40:]
+
+
+def preview_status() -> dict:
+    with _PREVIEW_LOCK:
+        return {
+            "id": _PREVIEW_STATE["id"], "status": _PREVIEW_STATE["status"],
+            "stage": _PREVIEW_STATE["stage"], "error": _PREVIEW_STATE["error"],
+            "events": list(_PREVIEW_STATE["events"]),
+        }
+
+
+def _preview_error(exc: Exception) -> str:
+    # Never send private prompts, paths or third-party exception traces to
+    # browsers. Detailed tracebacks remain in the private server/worker log.
+    if isinstance(exc, RuntimeError) and str(exc).startswith("GPU nicht für CUDA-Ausführung"):
+        return "Die GPU kann keine CUDA-Operation ausführen. RunPod-GPU-Zuweisung prüfen."
+    if isinstance(exc, TimeoutError):
+        return "Die Hörprobe hat nicht rechtzeitig geantwortet. Privates Worker-Log prüfen."
+    if isinstance(exc, ValueError) and "GPU" in str(exc):
+        return "Die GPU ist derzeit durch einen anderen Auftrag belegt."
+    return "Die Hörprobe konnte nicht erzeugt werden. Details stehen im privaten Thorsten-Worker-Log."
+
+
+def _preview_background(task_id: str) -> None:
+    try:
+        _preview_update(task_id, stage="GPU und Sprecherinstallation werden geprüft.")
+        generated = make_sample(
+            on_progress=lambda message: _preview_update(task_id, stage=message)
+        )
+        # make_sample checks the audio file, but verify again just before
+        # publishing a ready state. Never publish an empty/truncated WAV.
+        _valid_audio(generated)
+        _preview_update(task_id, status="ready",
+                        stage="Hörprobe erstellt und Audiodatei geprüft. Bitte vollständig anhören.")
+    except Exception as exc:
+        logging.getLogger("german-audiobook-studio.engine").exception(
+            "Thorsten preview task failed"
+        )
+        message = _preview_error(exc)
+        _preview_update(task_id, status="failed", stage=message, error=message)
+
+
+def start_sample() -> dict:
+    if _model_identity() is None:
+        raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig installiert sein.")
+    with _PREVIEW_LOCK:
+        if _PREVIEW_STATE["status"] == "running":
+            raise ValueError("Es wird bereits eine Hörprobe erzeugt.")
+        task_id = uuid.uuid4().hex
+        _PREVIEW_STATE.update({
+            "id": task_id, "status": "running", "stage": "Hörprobe wird vorbereitet.",
+            "events": [{"at": _now(), "message": "Hörprobe angefordert."}],
+            "error": "",
+        })
+        thread = threading.Thread(
+            target=_preview_background, args=(task_id,),
+            daemon=True, name="studio-preview",
+        )
+        thread.start()
+    return preview_status()
+
+
+def sample_audio(task_id: str) -> Path:
+    with _PREVIEW_LOCK:
+        if not re.fullmatch(r"[a-f0-9]{32}", task_id):
+            raise ValueError("Ungültige Hörprobe.")
+        if _PREVIEW_STATE["id"] != task_id or _PREVIEW_STATE["status"] != "ready":
+            raise ValueError("Die Hörprobe ist noch nicht fertig.")
+    sample = _voice_proof().parent / "thorsten.wav"
+    _valid_audio(sample)
+    return sample
 
 
 def approve_sample() -> None:
