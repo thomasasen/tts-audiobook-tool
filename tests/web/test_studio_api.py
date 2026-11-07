@@ -49,6 +49,20 @@ def test_health_public_but_projects_private(client):
     assert client.get("/api/session", headers=authorized()).json()["language"] == "de"
 
 
+def test_voice_preview_runtime_failure_returns_safe_json(client, monkeypatch):
+    from tts_audiobook_tool.web_studio import production
+
+    def fail_preview():
+        raise RuntimeError("private worker exception: internal diagnostic only")
+
+    monkeypatch.setattr(production, "make_sample", fail_preview)
+    response = client.post("/api/voices/preview", headers=authorized())
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert "Thorsten-Hörprobe konnte nicht erzeugt" in response.json()["detail"]
+    assert "private worker exception" not in response.text
+
+
 def test_empty_library(client):
     assert client.get("/api/projects", headers=authorized()).json() == {"projects": []}
 
