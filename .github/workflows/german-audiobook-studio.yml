@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "tts_audiobook_tool/web_studio/**"
+      - "tts_audiobook_tool/text_ops/epub_extractor.py"
+      - "tests/text/test_epub_extractor.py"
       - "web/**"
       - "runpod/install-web.sh"
       - "runpod/start-web.sh"
@@ -38,6 +40,8 @@ jobs:
         run: python -m compileall -q tts_audiobook_tool/web_studio runpod/acceptance.py runpod/acceptance_epub.py
       - name: Web API tests
         run: python -m pytest tests/web -q --confcutdir=tests/web
+      - name: EPUB navigation and extraction regressions
+        run: python -m pytest tests/text/test_epub_extractor.py -q
 
   deployed-web-runtime:
     runs-on: ubuntu-24.04

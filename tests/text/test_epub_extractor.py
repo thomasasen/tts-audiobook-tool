@@ -893,6 +893,50 @@ class TestEpubExtractor(unittest.TestCase):
         self.assertEqual(target.href, "Text/chapter 02.xhtml#chapter start")
         self.assertIsNone(EpubExtractor.make_navigation_target("https://example.com/chapter", "External", 4))
 
+
+    def test_mixed_navigation_spine_keeps_prose_without_toc_links(self):
+        """Synthetic EPUB nav + prose document must not lose its foreword."""
+        html = """<html><body>
+          <h1>Inhaltsverzeichnis</h1>
+          <nav epub:type="toc"><ol>
+            <li><a href="one.xhtml">Kapitel eins</a></li>
+            <li><a href="two.xhtml">Kapitel zwei</a></li>
+            <li><a href="three.xhtml">Kapitel drei</a></li>
+          </ol></nav>
+          <p>Dieses Vorwort erklärt den Aufbau des Buches und die wichtigen
+          Grundlagen für die folgenden Kapitel im täglichen Arbeitsalltag.</p>
+          <p>Die Leser lernen hier, wie man gute Entscheidungen trifft
+          und technische Begriffe im Zusammenhang versteht.</p>
+        </body></html>"""
+        nav = StubEpubSpineItem("nav", "Navigation/nav.xhtml", html)
+        nav.properties = ["nav"]
+        book = StubEpubBookWithSpine([nav])
+        with patch("os.path.exists", return_value=True), \
+                patch("ebooklib.epub.read_epub", return_value=book), \
+                patch.object(EpubExtractor, "extract_navigation_targets", return_value=[]):
+            source, _, warnings, significant = EpubExtractor.load_source_chapters("test.epub")
+        self.assertEqual(len(source), 1, warnings)
+        self.assertTrue(source[0].contains_reading_text_outside_nav)
+        spoken = BeautifulSoupEpubChapterTextExtractor().extract_text(source[0]).text
+        self.assertIn("Dieses Vorwort erklärt", spoken)
+        self.assertIn("technische Begriffe", spoken)
+        self.assertNotIn("Kapitel eins", spoken)
+        self.assertTrue(any("readable prose outside" in warning for warning in significant))
+
+    def test_navigation_only_spine_remains_excluded(self):
+        nav = StubEpubSpineItem("nav", "Navigation/nav.xhtml",
+            '<html><body><h1>Inhaltsverzeichnis</h1>'
+            '<nav epub:type="toc"><ol><li><a href="one.xhtml">Kapitel eins</a></li>'
+            '<li><a href="two.xhtml">Kapitel zwei</a></li></ol></nav></body></html>')
+        nav.properties = ["nav"]
+        book = StubEpubBookWithSpine([nav])
+        with patch("os.path.exists", return_value=True), \
+                patch("ebooklib.epub.read_epub", return_value=book), \
+                patch.object(EpubExtractor, "extract_navigation_targets", return_value=[]):
+            source, _, warnings, _ = EpubExtractor.load_source_chapters("test.epub")
+        self.assertEqual(source, [])
+        self.assertTrue(any("navigation" in warning.lower() for warning in warnings))
+
     def test_load_source_chapters_prefers_toc_title_over_html_heading(self):
         book = StubEpubBookWithSpine(
             items=[

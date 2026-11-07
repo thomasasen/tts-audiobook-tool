@@ -44,6 +44,9 @@ class EpubSourceChapter:
     navigation_targets: list[EpubNavigationTarget] = field(default_factory=list)
     # The document's stylesheets, for display formatting; None when it has none
     css: EpubCssResolver | None = None
+    # Keep positional constructor compatibility for existing Project-V5 code.
+    # EPUB nav resources can also contain prose outside their <nav> elements.
+    contains_reading_text_outside_nav: bool = False
 
 
 @dataclass
@@ -945,6 +948,26 @@ class EpubExtractor:
         last_phrase.reason = Reason.SECTION_BREAK
 
     @staticmethod
+    def navigation_has_reading_prose(chapter: EpubSourceChapter) -> bool:
+        """Keep prose in EPUB nav resources; never count link-only TOCs as body text.
+
+        Reuses the production BeautifulSoup extractor, which already excludes
+        <nav>, so this is not a second XHTML text parser. A substantial prose
+        paragraph outside navigation is the conservative inclusion signal.
+        """
+        BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
+        soup = BeautifulSoup(chapter.html, "html.parser")
+        paragraphs = (
+            tag for tag in soup.find_all(("p", "blockquote"))
+            if tag.find_parent("nav") is None
+        )
+        if not any(len(re.findall(r"\w+", tag.get_text(" ", strip=True))) >= 8
+                   for tag in paragraphs):
+            return False
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        return bool(result.text.strip()) and app_text.is_vocalizable(result.text)
+
+    @staticmethod
     def load_source_chapters(epub_path: str) -> tuple[list[EpubSourceChapter], str, list[str], list[str]]:
         if not os.path.exists(epub_path):
             return [], "", [], [f"EPUB file does not exist: {epub_path}"]
@@ -1000,7 +1023,18 @@ class EpubExtractor:
                 if item_navigation_targets
                 else EpubExtractor.extract_title(html, href)
             )
-            if EpubSectionSkipDetector.is_navigation_document(str(item_id), href, item):
+            is_navigation = EpubSectionSkipDetector.is_navigation_document(
+                str(item_id), href, item)
+            navigation_chapter = EpubSourceChapter(
+                title=title, href=href, media_type=media_type, html=html,
+                navigation_targets=list(item_navigation_targets),
+                css=EpubExtractor.get_document_css(item, href, html, stylesheets),
+            )
+            preserve_nav_prose = (
+                is_navigation
+                and EpubExtractor.navigation_has_reading_prose(navigation_chapter)
+            )
+            if is_navigation and not preserve_nav_prose:
                 toc_skip_decision = EpubSectionSkipDetector.detect_table_of_contents_skip(
                     readable_spine_index=reading_spine_position,
                     readable_spine_count=max(1, reading_spine_position + 1),
@@ -1012,12 +1046,7 @@ class EpubExtractor:
                     EpubExtractor.append_skipped_section_warning(
                         warnings,
                         significant_warnings,
-                        EpubSourceChapter(
-                            title=title,
-                            href=href,
-                            media_type=media_type,
-                            html=html,
-                        ),
+                        navigation_chapter,
                         toc_skip_decision.reason,
                     )
                 else:
@@ -1025,14 +1054,15 @@ class EpubExtractor:
                     warnings.append(warning)
                 continue
 
-            source_chapter_candidates.append(EpubSourceChapter(
-                title=title,
-                href=href,
-                media_type=media_type,
-                html=html,
-                navigation_targets=list(item_navigation_targets),
-                css=EpubExtractor.get_document_css(item, href, html, stylesheets),
-            ))
+            if preserve_nav_prose:
+                navigation_chapter.contains_reading_text_outside_nav = True
+                warning = EpubExtractor.format_warning(
+                    "EPUB navigation document contains readable prose outside <nav>; retained:",
+                    href,
+                )
+                warnings.append(warning)
+                significant_warnings.append(warning)
+            source_chapter_candidates.append(navigation_chapter)
             if EpubSectionSkipDetector.is_text_bearing_spine_document(html):
                 reading_spine_position += 1
 
@@ -1087,7 +1117,7 @@ class EpubExtractor:
                 source_chapter.title,
                 source_chapter.html,
             )
-            if toc_skip_decision.should_skip:
+            if toc_skip_decision.should_skip and not source_chapter.contains_reading_text_outside_nav:
                 EpubExtractor.append_skipped_section_warning(
                     warnings,
                     significant_warnings,
