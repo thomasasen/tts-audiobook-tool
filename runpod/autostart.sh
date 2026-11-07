@@ -155,12 +155,34 @@ else
   fi
 fi
 
+# Unlike nvidia-smi and torch.cuda.is_available(), this checks a real GPU
+# memory allocation. On broken RunPod hosts it saves unnecessary large model
+# downloads and makes the cause visible in startup logs before voice setup.
+echo "Checking CUDA execution in the Qwen environment (actual allocation)."
+CUDA_QWEN_READY=0
+if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env qwen --json; then
+  CUDA_QWEN_READY=1
+  echo "CUDA execution preflight: QWEN OK."
+else
+  echo "WARNING: CUDA execution preflight failed in Qwen: the GPU may be unavailable despite nvidia-smi visibility."
+  echo "WARNING: On a new host, verify CUDA before attempting expensive model downloads."
+fi
+
 echo "Installing German voice (optional until GPU acceptance)."
 THORSTEN_INSTALL_OK=0
-if bash "$REPO_DIR/runpod/install-thorsten.sh"; then
+if (( ! CUDA_QWEN_READY )) && [[ ! -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
+  echo "WARNING: Skipping FIRST-TIME Thorsten weight download on a host with unusable CUDA."
+  echo "The Web Studio will remain available for EPUB preparation; select a working GPU host to continue."
+elif bash "$REPO_DIR/runpod/install-thorsten.sh"; then
   THORSTEN_INSTALL_OK=1
 else
   echo "WARNING: Thorsten installation failed. Web voice generation remains disabled."
+fi
+if (( THORSTEN_INSTALL_OK )); then
+  echo "Checking CUDA execution in the isolated Thorsten environment."
+  if ! python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
+    echo "WARNING: Thorsten model files are verified, but CUDA EXECUTION FAILED; GPU speech generation will fail."
+  fi
 fi
 if tmux has-session -t audiobook-web 2>/dev/null; then
   echo "Existing web studio session left running."
