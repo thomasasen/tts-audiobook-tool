@@ -42,7 +42,7 @@ class TestRunPodSupport(unittest.TestCase):
         pins = (ROOT / "runpod/model-pins.env").read_text(encoding="utf-8")
         self.assertIn('install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0', setup)
         self.assertIn('install_model moss requirements-moss.txt requirements-moss.lock.txt 2.9.1', setup)
-        self.assertIn('both)\\n    install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0', setup)
+        self.assertIn('both)\n    install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0', setup)
         self.assertIn('"$UV" pip sync --python "$env_dir/bin/python" "$lock_path"', setup)
         self.assertIn('model_runtime_freeze_hash', setup)
         self.assertIn('UV_VERSION="0.13.7"', pins)
