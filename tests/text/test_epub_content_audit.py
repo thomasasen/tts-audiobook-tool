@@ -21,6 +21,7 @@ def make_epub():
     opf = b'''<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><manifest>
       <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
       <item id="ch2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+      <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>
       <item id="cover" href="cover.jpg" media-type="image/jpeg"/>
     </manifest><spine><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>'''
     chapter1 = """<html><body>
@@ -31,6 +32,7 @@ def make_epub():
       <img src="logo.png" alt="Firmenlogo"/>
       <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi><mo>=</mo><mn>5</mn></math>
       <a role="doc-noteref" href="#fn1">1</a><aside role="doc-footnote" id="fn1">Eine wichtige Fußnote.</aside>
+      <a role="doc-noteref" href="notes.xhtml#fn2">2</a>
       <hr/><div class="scene-break">* * *</div>
     </body></html>"""
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -39,6 +41,7 @@ def make_epub():
         archive.writestr("OEBPS/content.opf", opf)
         archive.writestr("OEBPS/chapter1.xhtml", chapter1)
         archive.writestr("OEBPS/chapter2.xhtml", "<html><body><nav><p>Inhaltsverzeichnis</p></nav></body></html>")
+        archive.writestr("OEBPS/notes.xhtml", '<html><body><aside role="doc-footnote" id="fn2">Eine ausgelagerte Fußnote.</aside></body></html>')
         archive.writestr("OEBPS/cover.jpg", b"image")
     return buffer.getvalue()
 
@@ -75,12 +78,17 @@ def test_audit_reports_markup_features_skips_review_elements_and_exact_text_mapp
     assert report["summary"]["source_captions"] == 2
     assert report["summary"]["source_mathml"] == 1
     assert report["summary"]["source_footnotes"] == 1
-    assert report["summary"]["source_footnote_refs"] == 1
+    assert report["summary"]["source_footnote_refs"] == 2
+    assert report["summary"]["linked_non_spine_footnote_targets"] == 1
     assert report["summary"]["source_scene_breaks"] == 2
     assert report["summary"]["source_inline_formatting"] >= 1
     assert report["summary"]["mapping_coverage_percent"] == 100
     assert report["resources"][0]["preview"].startswith("Kapitel 1")
     assert any(item["href"] == "OEBPS/chapter2.xhtml" for item in report["skipped"])
+    external_note = next(item for item in report["skipped"] if item.get("href") == "OEBPS/notes.xhtml")
+    assert external_note["kind"] == "non-spine-footnote-target"
+    assert external_note["can_restore"] is False
+    assert "nicht automatisch" in external_note["reason"]
     elements = report["review_elements"]
     assert {item["element_key"] for item in elements} >= {"table:0", "figure:0", "math:0", "img:1"}
     assert next(item for item in elements if item["element_key"] == "figure:0")["preview"] == "Entwicklung"
