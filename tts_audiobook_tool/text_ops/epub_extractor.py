@@ -1147,6 +1147,29 @@ class EpubExtractor:
             if EpubExtractor.normalize_toc_href(href) and isinstance(values, dict)
         }
 
+        def resource_path_matches(candidate: str, href: str) -> bool:
+            candidate = EpubExtractor.normalize_toc_href(candidate)
+            href = EpubExtractor.normalize_toc_href(href)
+            return bool(candidate and href and (
+                candidate == href or candidate.endswith("/" + href) or href.endswith("/" + candidate)
+            ))
+
+        def is_manually_included(href: str) -> bool:
+            if EpubExtractor.normalize_toc_href(href) in include_paths:
+                return True
+            return sum(1 for candidate in include_paths if resource_path_matches(candidate, href)) == 1
+
+        def overrides_for_resource(href: str) -> dict[str, str]:
+            normalized = EpubExtractor.normalize_toc_href(href)
+            direct = overrides_by_path.get(normalized)
+            if direct is not None:
+                return direct
+            matches = [
+                values for candidate, values in overrides_by_path.items()
+                if resource_path_matches(candidate, normalized)
+            ]
+            return matches[0] if len(matches) == 1 else {}
+
         def record_source(href: str, title: str, kind: str, reason: str,
                           html: str = "", *, status: str = "skipped",
                           can_restore: bool = True, overridden: bool = False) -> None:
@@ -1226,12 +1249,12 @@ class EpubExtractor:
             is_navigation = EpubSectionSkipDetector.is_navigation_document(
                 str(item_id), href, item)
             normalized_href = EpubExtractor.normalize_toc_href(href)
-            forced_include = normalized_href in include_paths
+            forced_include = is_manually_included(href)
             navigation_chapter = EpubSourceChapter(
                 title=title, href=href, media_type=media_type, html=html,
                 navigation_targets=list(item_navigation_targets),
                 css=EpubExtractor.get_document_css(item, href, html, stylesheets),
-                speaker_overrides=overrides_by_path.get(normalized_href, {}),
+                speaker_overrides=overrides_for_resource(href),
                 included_by_user=forced_include,
             )
             has_nav_prose = (
@@ -1328,7 +1351,7 @@ class EpubExtractor:
                 source_chapter.title,
                 source_chapter.html,
             )
-            forced_include = EpubExtractor.normalize_toc_href(source_chapter.href) in include_paths
+            forced_include = is_manually_included(source_chapter.href)
             if publication_metadata_skip_decision.should_skip and not forced_include:
                 record_source(source_chapter.href, source_chapter.title, "publication-metadata",
                               publication_metadata_skip_decision.reason, source_chapter.html)

@@ -236,7 +236,6 @@ def audit_epub_content(
     warnings = list(warnings or [])
     skipped_sources = list(skipped_sources or [])
     speaker_overrides = speaker_overrides or {}
-    manual_include_paths = {_normal_path(href) for href in (included_source_hrefs or set())}
     mapping, chapter_coverage = _mapping_for_chapters(extracted_chapters)
     try:
         with zipfile.ZipFile(epub_path) as archive:
@@ -251,6 +250,12 @@ def audit_epub_content(
             )
             if not rootfile or rootfile not in names:
                 raise ValueError("OPF package document missing")
+            manual_include_paths = set()
+            for href in (included_source_hrefs or set()):
+                candidate = _normal_path(href)
+                if candidate not in names:
+                    candidate = _safe_archive_path(rootfile, href)
+                manual_include_paths.add(candidate)
             package = ET.fromstring(archive.read(rootfile))
             manifest: dict[str, dict] = {}
             for item in package.iter():
@@ -283,16 +288,23 @@ def audit_epub_content(
                     candidate = _safe_archive_path(rootfile, source_href)
                 mapped_by_path.setdefault(candidate, []).append(item)
 
-            skip_by_path = {
-                _normal_path(item.get("href") or ""): item
-                for item in skipped_sources
-                if item.get("href")
-            }
-            override_paths = {
-                _normal_path(href): values
-                for href, values in speaker_overrides.items()
-                if isinstance(values, dict)
-            }
+            skip_by_path: dict[str, dict] = {}
+            for item in skipped_sources:
+                href = item.get("href")
+                if not href:
+                    continue
+                candidate = _normal_path(href)
+                if candidate not in names:
+                    candidate = _safe_archive_path(rootfile, href)
+                skip_by_path[candidate] = item
+            override_paths: dict[str, dict[str, str]] = {}
+            for href, values in speaker_overrides.items():
+                if not isinstance(values, dict):
+                    continue
+                candidate = _normal_path(href)
+                if candidate not in names:
+                    candidate = _safe_archive_path(rootfile, href)
+                override_paths[candidate] = values
             resources = []
             skipped = []
             review_elements = []
@@ -402,11 +414,9 @@ def audit_epub_content(
             clean_warnings = [_plain(re.sub(r"\x1b\[[0-9;]*m", "", warning), 500) for warning in warnings[:100]]
             restorable = sorted(
                 {
-                    item["href"] for item in skipped_sources
-                    if item.get("href") and item.get("can_restore")
-                } | {
-                    href for href in (included_source_hrefs or set()) if href
-                }
+                    path for path, item in skip_by_path.items()
+                    if item.get("can_restore")
+                } | manual_include_paths
             )
             return {
                 "version": 2,
