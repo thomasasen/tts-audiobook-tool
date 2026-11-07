@@ -18,6 +18,8 @@ Die Offsets sind keine ZIP-Bytepositionen, UTF-8-Byteoffsets oder DOM-Node-Posit
 
 Die Abdeckungsquote zählt Nicht-Leerzeichen im finalen Kapiteltext, die einer erfolgreich aufgelösten Quellspanne zugeordnet sind. Trennzeichen zwischen Abschnitten werden nicht als Quellinhalt gezählt. Eine Quote von 100 Prozent belegt daher die Zuordnung des übernommenen Textes, nicht die semantische Vollständigkeit von Bildern, Tabellen, Formeln oder Fußnoten.
 
+Fußnotenverweise auf XHTML-Ressourcen außerhalb des EPUB-Spine werden im Audit als nicht automatisch übernommene Verweise gemeldet. Sie werden nicht stillschweigend als Vorlesetext behandelt und sind nicht über die Spine-Wiederaufnahme korrigierbar. Fußnoten innerhalb von Spine-Dokumenten werden inventarisiert und vom kanonischen Extraktor verarbeitet.
+
 ## Auslassungen
 
 Der Parser meldet übersprungene Spine-Ressourcen mit:

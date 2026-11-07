@@ -5,7 +5,7 @@ import posixpath
 import re
 import zipfile
 from html.parser import HTMLParser
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
 
 
@@ -46,6 +46,7 @@ class _MarkupAuditParser(HTMLParser):
         self.image_alt: list[str] = []
         self.footnotes = 0
         self.footnote_refs = 0
+        self.footnote_targets: list[str] = []
         self.scene_breaks = 0
         self.inline_formatting = 0
 
@@ -63,6 +64,9 @@ class _MarkupAuditParser(HTMLParser):
             self.footnotes += 1
         if "doc-noteref" in role or "noteref" in epub_type:
             self.footnote_refs += 1
+            target = str(values.get("href") or "").strip()
+            if target:
+                self.footnote_targets.append(target)
         if tag == "hr":
             self.scene_breaks += 1
         classes = str(values.get("class") or "").lower().replace("_", "-").split()
@@ -103,6 +107,7 @@ def _markup_stats(payload: bytes) -> dict:
         "mathml": counts.get("math", 0),
         "footnotes": parser.footnotes,
         "footnote_refs": parser.footnote_refs,
+        "footnote_targets": parser.footnote_targets,
         "footnote_markers": sum(
             1 for value in parser.text_parts
             if re.search(r"(?:\[\d+\]|\(\d+\)|\*{1,3})$", value)
@@ -277,6 +282,10 @@ def audit_epub_content(
                 for node in spine
                 if _local_name(node.tag) == "itemref"
             ]
+            spine_paths = {
+                manifest[item_id]["path"]
+                for item_id in spine_ids if item_id in manifest
+            }
 
             mapped_by_path: dict[str, list[dict]] = {}
             for item in mapping:
@@ -315,6 +324,7 @@ def audit_epub_content(
                 "source_images": 0, "source_captions": 0, "source_mathml": 0,
                 "source_footnotes": 0, "source_footnote_refs": 0,
                 "source_scene_breaks": 0, "source_inline_formatting": 0,
+                "linked_non_spine_footnote_targets": 0,
                 "mapped_output_non_whitespace_characters": 0,
                 "total_output_non_whitespace_characters": 0,
             }
@@ -404,6 +414,49 @@ def audit_epub_content(
                     aggregate_key = "source_" + key
                     if aggregate_key in aggregate:
                         aggregate[aggregate_key] += stats[key]
+                for raw_target in stats.get("footnote_targets", []):
+                    parsed_target = urlsplit(raw_target)
+                    if parsed_target.scheme or parsed_target.netloc:
+                        continue
+                    if not parsed_target.path:
+                        target_path = path
+                    else:
+                        target_path = posixpath.normpath(
+                            posixpath.join(posixpath.dirname(path), unquote(parsed_target.path))
+                        )
+                    if target_path.startswith("../") or target_path == ".." or target_path.startswith("/"):
+                        continue
+                    if target_path == path or target_path in spine_paths:
+                        continue
+                    if target_path in names:
+                        target_stats = _markup_stats(archive.read(target_path))
+                        reason = (
+                            "Fußnotenverweis zeigt auf eine XHTML-Ressource außerhalb des EPUB-Spine. "
+                            "Der kanonische Vorleseimport übernimmt diese Ressource nicht automatisch."
+                        )
+                        target_status = "linked-outside-spine"
+                        preview = target_stats["preview"]
+                    else:
+                        reason = "Fußnotenverweis zeigt auf eine nicht vorhandene EPUB-Ressource."
+                        target_status = "missing"
+                        preview = ""
+                    if any(
+                        item.get("href") == target_path
+                        and item.get("kind") == "non-spine-footnote-target"
+                        for item in skipped
+                    ):
+                        continue
+                    aggregate["linked_non_spine_footnote_targets"] += 1
+                    skipped.append({
+                        "index": len(spine_ids) + aggregate["linked_non_spine_footnote_targets"],
+                        "href": target_path,
+                        "status": target_status,
+                        "kind": "non-spine-footnote-target",
+                        "reason": reason,
+                        "preview": preview,
+                        "can_restore": False,
+                        "overridden": False,
+                    })
 
             total_output = aggregate["total_output_non_whitespace_characters"]
             mapped_output = aggregate["mapped_output_non_whitespace_characters"]
@@ -432,6 +485,7 @@ def audit_epub_content(
                 "review_notes": [
                     "Die Mapping-Abdeckung bezieht sich auf Nicht-Leerzeichen im normalisierten extrahierten Vorlesetext; Quell-Offsets sind keine EPUB-Bytepositionen.",
                     "Tabellen, Formeln und Abbildungen werden inventarisiert. Eine Sprecherfassung wird nur nach ausdrücklicher Eingabe und Speicherung durch den Nutzer eingesetzt.",
+                    "Fußnotenverweise auf XHTML außerhalb des EPUB-Spine werden gemeldet, aber nicht automatisch in den Vorlesetext übernommen.",
                     "Nicht zugeordnete Ressourcen können Navigation oder redaktionell entbehrliche Seiten sein. Vor einer Vertonung müssen sie geprüft werden.",
                 ],
             }
