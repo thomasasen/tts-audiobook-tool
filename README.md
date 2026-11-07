@@ -39,6 +39,21 @@ bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.co
 
 **Warum diese drei `RUNPOD_…`-Werte direkt im Startbefehl stehen:** Bereits angelegte Templates können noch `RUNPOD_TTS_BRANCH=feature/runpod-p0` und `RUNPOD_TTS_MODELS=both` enthalten. Der neue Startbefehl überschreibt diese beiden Altwerte **für den Autostart-Aufruf** verbindlich mit `master` und `qwen`, damit nicht erneut die falsche Version und unnötig MOSS installiert werden. Bereits vorhandene MOSS-Dateien im Network Volume werden nicht automatisch gelöscht.
 
+### Neue Pods mit falscher alter TUI-Startkonfiguration
+
+**Bekannter Fehlstart (07.11.2026):** Wenn die RunPod-Logs `Source commit: 68291fd`, `Created tmux session 'audiobook'` oder `=== Ready === Open a RunPod SSH/Web Terminal ... audiobook` zeigen, läuft noch **`feature/runpod-p0`**. Dieser alte Startpfad kennt weder das Web-Studio noch Port 7860 oder `gpu_preflight.py`. **Ein GitHub-Update auf `master` oder ein erfolgreicher CI-Lauf ändert den in RunPod gespeicherten Docker Start Command nicht.** Deshalb muss die Template-/Pod-Startkonfiguration ausdrücklich auf den **`master/runpod/autostart.sh`-Befehl von oben** geändert werden. `RUNPOD_TTS_MODELS=qwen` verhindert dabei die unnötige zusätzliche MOSS-Erstinstallation.
+
+Auf einem bereits gestarteten Pod kann der aktuelle Web-Start ohne Neustart und zunächst **ohne Thorsten-Gewichtedownload** wiederhergestellt werden:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/master/runpod/autostart.sh -o /tmp/tts-autostart.sh &&
+RUNPOD_TTS_BRANCH=master RUNPOD_TTS_MODELS=qwen RUNPOD_TTS_AUTOSTART_MODEL=qwen RUNPOD_TTS_START_TUI=0 RUNPOD_TTS_SKIP_VOICE_INSTALL=1 bash /tmp/tts-autostart.sh
+```
+
+Das setzt einen vorhandenen gemounteten `/workspace`-Speicher, eine unveränderte Git-Arbeitskopie und eine nutzbare Qwen-Basisinstallation voraus. **Der Wiederherstellungsmodus ist keine permanente RunPod-Template-Änderung:** Für künftige Pods muss der Startbefehl im Template korrigiert werden. Anschließend `curl -fsS http://127.0.0.1:7860/api/health` prüfen. Bei einem nicht erreichbaren Webserver zeigt der neue Autostart die letzten Zeilen des `audiobook-web`-Logs statt ihn nur wegen einer bestehenden `tmux`-Sitzung als bereit zu melden.
+
+**Network Volume kontrollieren:** Wenn ein neu erstellter Pod deutlich weniger belegten Speicher zeigt als der vorherige (im konkreten Test 22 GB statt 52 GB), die Zuordnung im RunPod-Storage-Bereich überprüfen, **bevor** Thorsten neu heruntergeladen wird. Die identische Größe von 60 GB beweist nicht, dass es dasselbe Volume ist.
+
 ### Bestehenden Pod auf die automatische Web-Version umstellen
 
 **Eine geänderte README oder Template-Vorlage aktualisiert keinen bereits laufenden Container.** Wenn dein bestehender Pod mit `feature/runpod-p0` gestartet wurde:
