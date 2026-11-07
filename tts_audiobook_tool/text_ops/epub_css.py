@@ -47,6 +47,7 @@ def parse_declarations(text: str) -> dict[str, str]:
     """
     Parses a declaration block into canonical keys: "font-style", "font-weight"
     and "text-decoration" (normalized to "underline", "none" or a global keyword).
+    A limited "float" property is retained for EPUB drop-cap extraction only.
     `!important` is ignored. Later declarations win.
     """
     result: dict[str, str] = {}
@@ -59,6 +60,8 @@ def parse_declarations(text: str) -> dict[str, str]:
         if not value:
             continue
         if prop in ("font-style", "font-weight"):
+            result[prop] = value
+        elif prop == "float" and value in ("left", "right", "none"):
             result[prop] = value
         elif prop in ("text-decoration", "text-decoration-line"):
             result["text-decoration"] = _normalize_decoration(value)
