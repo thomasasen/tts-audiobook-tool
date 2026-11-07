@@ -46,6 +46,7 @@ class TestRunPodSupport(unittest.TestCase):
         self.assertIn('"$UV" pip sync --python "$env_dir/bin/python" "$lock_path"', setup)
         self.assertIn('model_runtime_freeze_hash', setup)
         self.assertIn('UV_VERSION="0.13.7"', pins)
+        self.assertIn('--require-hashes -r "$SCRIPT_DIR/uv-bootstrap.lock.txt"', setup)
         self.assertIn('WEB_PYTHON_VERSION="3.12.16"', pins)
         self.assertIn('THORSTEN_PYTHON_VERSION="3.11.18"', pins)
 

@@ -111,7 +111,11 @@ UV_TOOL_DIR="$AUDIOBOOK_DATA_ROOT/tools/uv-bootstrap"
 UV="$UV_TOOL_DIR/bin/uv"
 if [[ ! -x "$UV" ]]; then
   python3 -m venv "$UV_TOOL_DIR"
-  "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
+  [[ -s "$SCRIPT_DIR/uv-bootstrap.lock.txt" ]] || {
+    echo "Pinned uv bootstrap lock is missing; refusing an unverified tool install." >&2
+    exit 1
+  }
+  "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes -r "$SCRIPT_DIR/uv-bootstrap.lock.txt"
 fi
 actual_uv_version="$("$UV" --version | awk '{print $2}')"
 if [[ "$actual_uv_version" != "$UV_VERSION" ]]; then
