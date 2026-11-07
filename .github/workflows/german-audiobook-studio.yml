@@ -9,6 +9,7 @@ on:
       - "runpod/start-web.sh"
       - "tests/web/**"
       - "runpod/acceptance*.py"
+      - "runpod/asr_cpu_smoke.py"
       - ".github/workflows/german-audiobook-studio.yml"
   push:
     branches:
@@ -73,6 +74,29 @@ jobs:
             sleep 1
           done
           if [ "$READY" -ne 1 ]; then cat "$RUNNER_TEMP/web.log"; exit 1; fi
+
+  asr-cpu-smoke:
+    # Real German speech recognition using eSpeak-NG-synthesized speech, not
+    # a mocked Whisper model or a downloaded private audiobook.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install open-source German synthetic speech and pinned CPU ASR
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends espeak-ng
+          python -m pip install faster-whisper==1.2.1 ctranslate2==4.7.1
+      - name: Cache public Whisper-tiny weights (no private artifacts)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: german-asr-whisper-tiny-v1
+      - name: Run real German CPU inference and negative file test
+        run: python -m runpod.asr_cpu_smoke
 
   frontend:
     runs-on: ubuntu-latest
