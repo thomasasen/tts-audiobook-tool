@@ -526,9 +526,9 @@ def select_chapters(project_id: str, selection: ChapterSelection):
             )
         catalogue = refreshed_catalogue
         chapters = catalogue["chapters"]
-        if not json.loads(row["excluded_json"]) and any(
-            not chapter["is_toc"] for chapter in chapters
-        ):
+        if any(not chapter["is_toc"] for chapter in chapters):
+            # Older releases always excluded TOC chapters at save time, even
+            # when excluded_json only stored the user's other exclusions.
             legacy_toc_defaults = {
                 chapter["index"] for chapter in chapters if chapter["is_toc"]
             }

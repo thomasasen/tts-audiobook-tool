@@ -1015,8 +1015,14 @@ class TestEpubExtractor(unittest.TestCase):
         self.assertEqual(source, [])
         self.assertTrue(any("navigation" in warning.lower() for warning in warnings))
         self.assertEqual(len(load_result.skipped_sections), 1)
-        self.assertEqual(load_result.skipped_sections[0].category, "navigation-document")
-        self.assertFalse(load_result.skipped_sections[0].recoverable)
+        skipped = load_result.skipped_sections[0]
+        self.assertEqual(skipped.category, "navigation-document")
+        self.assertTrue(skipped.recoverable)
+        restored = EpubExtractor.load_source_chapters(
+            "test.epub", include_skipped_ids={skipped.id}
+        )
+        self.assertEqual([chapter.href for chapter in restored.chapters], ["Navigation/nav.xhtml"])
+        self.assertTrue(restored.chapters[0].include_navigation_text)
 
     def test_load_source_chapters_prefers_toc_title_over_html_heading(self):
         book = StubEpubBookWithSpine(

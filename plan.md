@@ -135,7 +135,7 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 **Fundstellen:** tts_audiobook_tool/text_ops/epub_extractor.py, epub_section_skip_detector.py, tts_audiobook_tool/web_studio/app.py, tests/text/test_epub_*.py, tests/web/test_real_epub_e2e.py.
 
 - [x] EPUB-Spine, Navigationsanker, Unterabschnitte, Inline-Formatierung, Tabellen, Listen, Fußnoten, Bildunterschriften und literarische Trennelemente anhand eines selbst verfassten komplexen Test-EPUBs auditieren.
-- [x] Vom Parser automatisch ausgelassene Inhalts-/Metadatenabschnitte samt Grund und kleiner Vorschau sichtbar machen; falsche TOC-/Metadaten-Auslassungen vor der Kapitelwahl korrigierbar gestalten, ohne DRM oder Rechteprüfungen zu umgehen.
+- [x] Vom Parser automatisch ausgelassene Inhalts-/Metadatenabschnitte samt Grund und kleiner Vorschau sichtbar machen; falsche TOC-/Metadaten-/Navigations-Auslassungen vor der Kapitelwahl korrigierbar gestalten, ohne DRM oder Rechteprüfungen zu umgehen.
 - [x] Gemischte XHTML-Dokumente mit Navigation und Fließtext nicht komplett verwerfen. Kurze Prosa außerhalb von `<nav>` bleibt erhalten; ein TOC-Heading allein wird nicht als Lesetext gewertet.
 - [x] Für schwer vorlesbare Tabellen/Formeln/Abbildungen eine **optionale** Sprecherfassung mit menschlicher Vorschau spezifizieren; nichts ungefragt erfinden oder ändern.
 - [x] Quelltext-zu-Segment-Mapping mit Quelltextbereichen, Phrase-Group-Bereichen und verlustfreier Abdeckungsprüfung vorbereiten; Original-EPUB und Project V5 bleiben unverändert.

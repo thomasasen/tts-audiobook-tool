@@ -1412,17 +1412,24 @@ class EpubExtractor:
                     continue
 
                 reason = (
-                    "navigation document contains navigation metadata but no vocalizable prose outside <nav>"
+                    "Navigation document contains no vocalizable prose outside <nav>. "
+                    "Its link list remains metadata unless explicitly restored."
                 )
+                included = navigation_chapter.source_id in include_skipped_ids
                 skipped_sections.append(EpubExtractor.make_skipped_section(
                     navigation_chapter,
                     reason,
                     category="navigation-document",
-                    recoverable=False,
-                    included=False,
+                    recoverable=True,
+                    included=included,
                 ))
-                warning = EpubExtractor.format_warning("Skipped EPUB navigation document:", href)
-                warnings.append(warning)
+                known_recoverable_ids.add(navigation_chapter.source_id)
+                if not included:
+                    warning = EpubExtractor.format_warning("Skipped EPUB navigation document:", href)
+                    warnings.append(warning)
+                    continue
+                navigation_chapter.include_navigation_text = True
+                source_chapters.append(navigation_chapter)
                 continue
 
             if preserve_nav_prose:

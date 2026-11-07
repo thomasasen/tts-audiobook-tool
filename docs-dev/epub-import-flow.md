@@ -485,4 +485,4 @@ Phase 2b should build on the current importer boundaries where practical, especi
 
 ## Content Audit and Recovery
 
-The Web Studio import catalogue exposes structured skipped-section records and bounded previews. Recoverable TOC/publication-metadata resources can be explicitly restored before chapter selection. The source EPUB remains immutable; see [EPUB Content Audit and Recovery](epub-content-audit.md) for the API, coverage mapping, and optional human-reviewed speaker-version design.
+The Web Studio import catalogue exposes structured skipped-section records and bounded previews. Recoverable TOC, publication-metadata, and navigation-only resources can be explicitly restored before chapter selection. The source EPUB remains immutable; see [EPUB Content Audit and Recovery](epub-content-audit.md) for the API, coverage mapping, and optional human-reviewed speaker-version design.

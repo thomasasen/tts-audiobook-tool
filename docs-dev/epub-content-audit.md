@@ -30,7 +30,7 @@ Each `EpubSkippedSection` records:
 
 Current categories distinguish table-of-contents resources, publication metadata, navigation-only documents, missing resources, unreadable resources, empty navigation anchors, and extracted sections without vocalizable text.
 
-TOC and publication-metadata resources are recoverable. A navigation-only resource, missing item, unreadable document, or section with no vocalizable text is reported but is not offered as a restore action. The user cannot submit arbitrary filesystem paths: the API accepts only IDs already present in the project's import catalogue.
+TOC, publication-metadata, and navigation-only resources are recoverable. Missing items, unreadable documents, empty navigation anchors, and sections with no vocalizable text are reported but are not offered as restore actions. The user cannot submit arbitrary filesystem paths: the API accepts only IDs already present in the project's import catalogue.
 
 ### Web Studio flow
 
@@ -48,7 +48,7 @@ The EPUB spine remains authoritative for reading order. EPUB 3 navigation anchor
 
 A navigation resource that is also present in the spine is not automatically discarded in full. The importer requires at least one vocalizable paragraph or blockquote outside the `<nav>` subtree, but applies no minimum word count. A TOC heading by itself is not treated as reading prose. This avoids an arbitrary minimum-word threshold that could discard short publisher notes.
 
-Navigation-only resources remain metadata and are not read aloud. An unresolved navigation target is a separate warning and does not silently reorder the spine.
+Navigation-only resources remain metadata and are not read aloud by default; the user can explicitly restore a link list when it is intended to be spoken. An unresolved navigation target is a separate warning and does not silently reorder the spine.
 
 ## Structure handling and human review
 
@@ -101,7 +101,7 @@ This is a chapter-to-segment mapping, not yet a character-level alignment throug
 - spine order and a nested EPUB 3 navigation table;
 - fragment-defined subsections in a single XHTML document;
 - a mixed navigation document with a short prose paragraph;
-- a TOC and publication-metadata omission with preview and restoration;
+- TOC, publication-metadata, and navigation-only omissions with preview and restoration;
 - inline strong/emphasis, a table, ordered and nested unordered lists;
 - a footnote and noteref, a figure caption and alt text;
 - MathML and an explicit scene break; and
