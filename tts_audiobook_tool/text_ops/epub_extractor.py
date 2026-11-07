@@ -48,6 +48,7 @@ class EpubSourceChapter:
     # Keep positional constructor compatibility for existing Project-V5 code.
     # EPUB nav resources can also contain prose outside their <nav> elements.
     contains_reading_text_outside_nav: bool = False
+    include_navigation_text: bool = False
     source_id: str = ""
     spine_index: int = -1
 
@@ -179,7 +180,6 @@ class BeautifulSoupEpubChapterTextExtractor:
         "iframe",
         "img",
         "input",
-        "nav",
         "noscript",
         "object",
         "script",
@@ -263,6 +263,9 @@ class BeautifulSoupEpubChapterTextExtractor:
     def extract_text(self, chapter: EpubSourceChapter) -> EpubTextExtractionResult:
         BeautifulSoup = self.import_beautiful_soup()
         soup = BeautifulSoup(chapter.html, "html.parser")
+        if not chapter.include_navigation_text:
+            for nav in soup.find_all("nav"):
+                nav.decompose()
         stats = EpubTextExtractionStats()
         warnings: list[str] = []
         significant_warnings: list[str] = []
@@ -1380,10 +1383,29 @@ class EpubExtractor:
                     title=title,
                     html=html,
                 )
+                if toc_skip_decision.should_skip:
+                    included = navigation_chapter.source_id in include_skipped_ids
+                    skipped_sections.append(EpubExtractor.make_skipped_section(
+                        navigation_chapter,
+                        toc_skip_decision.reason,
+                        category="table-of-contents",
+                        recoverable=True,
+                        included=included,
+                    ))
+                    known_recoverable_ids.add(navigation_chapter.source_id)
+                    if not included:
+                        EpubExtractor.append_skipped_section_warning(
+                            warnings, significant_warnings, navigation_chapter,
+                            toc_skip_decision.reason,
+                        )
+                        continue
+                    # Explicit restoration may include the navigation list itself.
+                    navigation_chapter.include_navigation_text = True
+                    source_chapters.append(navigation_chapter)
+                    continue
+
                 reason = (
-                    toc_skip_decision.reason
-                    if toc_skip_decision.should_skip
-                    else "navigation document contains navigation metadata but no vocalizable prose outside <nav>"
+                    "navigation document contains navigation metadata but no vocalizable prose outside <nav>"
                 )
                 skipped_sections.append(EpubExtractor.make_skipped_section(
                     navigation_chapter,
@@ -1392,13 +1414,8 @@ class EpubExtractor:
                     recoverable=False,
                     included=False,
                 ))
-                if toc_skip_decision.should_skip:
-                    EpubExtractor.append_skipped_section_warning(
-                        warnings, significant_warnings, navigation_chapter, reason
-                    )
-                else:
-                    warning = EpubExtractor.format_warning("Skipped EPUB navigation document:", href)
-                    warnings.append(warning)
+                warning = EpubExtractor.format_warning("Skipped EPUB navigation document:", href)
+                warnings.append(warning)
                 continue
 
             if preserve_nav_prose:

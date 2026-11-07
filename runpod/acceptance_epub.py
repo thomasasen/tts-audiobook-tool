@@ -88,13 +88,13 @@ def build_complex_epub() -> bytes:
     docs = {
         "toc": (
             "Inhaltsverzeichnis",
-            '<h1>Inhaltsverzeichnis</h1><ol>'
+            '<h1>Inhaltsverzeichnis</h1><nav epub:type="toc"><ol>'
             '<li><a href="foreword.xhtml">Vorwort</a></li>'
             '<li><a href="chapter1.xhtml#part-a">Teil A</a></li>'
             '<li><a href="chapter1.xhtml#part-b">Teil B</a></li>'
             '<li><a href="chapter2.xhtml">Kapitel 2</a></li>'
             '<li><a href="chapter2.xhtml#formula">Formel</a></li>'
-            '</ol>',
+            '</ol></nav>',
         ),
         "nav": (
             "Navigation",

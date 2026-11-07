@@ -197,6 +197,19 @@ def test_complex_epub_audit_reports_skips_and_restores_selected_sections(client)
     )["included"] is False
     assert source_path.read_bytes() == epub
 
+    toc_restored = client.put(
+        f"/api/projects/{project_id}/skipped-sections",
+        headers=AUTH,
+        json={"included_ids": [toc["id"]]},
+    )
+    assert toc_restored.status_code == 200, toc_restored.text[:2000]
+    toc_project = toc_restored.json()
+    assert next(
+        item for item in toc_project["skipped_sections"] if item["id"] == toc["id"]
+    )["included"] is True
+    assert any("Kapitel 2" in chapter["preview"] for chapter in toc_project["chapters"])
+    assert source_path.read_bytes() == epub
+
 
 def test_protected_session_exposes_restart_nonce_but_public_health_does_not(client):
     assert "instance_id" not in client.get("/api/health").json()
