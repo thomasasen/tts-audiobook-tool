@@ -144,6 +144,44 @@ def test_job_queue_control_and_cross_project_isolation(env, monkeypatch):
     assert env.get(f"/api/projects/{identifier}/jobs/{job_id}/download", headers=HEADERS).status_code == 404
 
 
+def test_private_job_activity_progress_and_bounded_operational_log(env, monkeypatch):
+    project_id, foreign_project = uuid.uuid4().hex, uuid.uuid4().hex
+    prepare_project(project_id)
+    prepare_project(foreign_project)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job = production.create_job(project_id)
+    job_id = job["id"]
+    url = f"/api/projects/{project_id}/jobs/{job_id}/activity"
+    assert env.get(url).status_code == 401
+    assert env.get(
+        f"/api/projects/{foreign_project}/jobs/{job_id}/activity",
+        headers=HEADERS,
+    ).status_code == 404
+    initial = env.get(url, headers=HEADERS).json()
+    assert initial["status"] == "queued"
+    assert initial["done"] == 0
+    assert initial["total"] == 3
+    assert initial["percent"] == 0
+    assert "Warteschlange" in initial["events"][0]["message"]
+
+    with studio._db() as db:
+        db.execute(
+            "UPDATE studio_jobs SET status='running',done=2 WHERE id=?",
+            (job_id,),
+        )
+    for number in range(80):
+        production._job_event(job_id, f"Testschritt {number}.")
+    current = env.get(url, headers=HEADERS).json()
+    assert current["done"] == 2
+    assert current["percent"] == 67
+    assert len(current["events"]) == 60
+    assert current["events"][0]["message"] == "Testschritt 20."
+    assert current["events"][-1]["message"] == "Testschritt 79."
+    # The bounded history is persisted; it must not contain source book text.
+    raw = (production._jobs_dir(job_id) / "activity.json").read_text()
+    assert "Die Pipeline ist wichtig" not in raw
+
+
 def test_pcm_wav_health_check(tmp_path):
     path = tmp_path / "short.wav"
     sample_rate = 16000
