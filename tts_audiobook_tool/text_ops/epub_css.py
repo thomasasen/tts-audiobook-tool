@@ -43,7 +43,7 @@ _GLOBAL_VALUES = frozenset({"inherit", "initial", "unset", "revert"})
 # --- Declarations
 
 
-def parse_declarations(text: str) -> dict[str, str]:
+def parse_declarations(text: str, *, include_layout: bool = False) -> dict[str, str]:
     """
     Parses a declaration block into canonical keys: "font-style", "font-weight"
     and "text-decoration" (normalized to "underline", "none" or a global keyword).
@@ -59,6 +59,9 @@ def parse_declarations(text: str) -> dict[str, str]:
         if not value:
             continue
         if prop in ("font-style", "font-weight"):
+            result[prop] = value
+        elif include_layout and prop in ("font-size", "float"):
+            # Optional layout hints for conservatively identifying drop capitals.
             result[prop] = value
         elif prop in ("text-decoration", "text-decoration-line"):
             result["text-decoration"] = _normalize_decoration(value)
@@ -257,7 +260,7 @@ def parse_stylesheet(
             continue
         if block is None:
             continue
-        declarations = parse_declarations(block)
+        declarations = parse_declarations(block, include_layout=True)
         if not declarations:
             continue
         for selector_text in prelude.split(","):
