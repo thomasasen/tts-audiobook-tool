@@ -8,6 +8,7 @@ from tts_audiobook_tool.app_support import app_text
 from tts_audiobook_tool.constants import COL_DEFAULT, COL_DIM
 from tts_audiobook_tool.text_util import strip_ansi_codes
 from tts_audiobook_tool.text_ops.epub_extractor import BeautifulSoupEpubChapterTextExtractor, EpubExtractor, EpubNavigationTarget, EpubSourceChapter, EpubTextExtractionResult, EpubTextSlice
+from tts_audiobook_tool.text_ops.epub_css import EpubCssResolver, parse_stylesheet
 from tts_audiobook_tool.app_types.phrase import Phrase, PhraseGroup, Reason
 
 
@@ -1508,7 +1509,14 @@ class TestEpubExtractor(unittest.TestCase):
             with open(dest_path, "wb") as f:
                 f.write(b"saved epub bytes")
             linked_path = os.path.join(project_dir, "linked.epub")
-            os.symlink(dest_path, linked_path)
+            try:
+                os.symlink(dest_path, linked_path)
+            except OSError as exc:
+                # Windows can require Developer Mode or SeCreateSymbolicLinkPrivilege.
+                # The environment cannot exercise the symlink behavior in that case.
+                if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                    self.skipTest("Windows user lacks permission to create symbolic links")
+                raise
 
             err = EpubExtractor.copy_epub_to_project(linked_path, project_dir)
 
@@ -1690,6 +1698,156 @@ class TestEpubExtractor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_xhtml_contents_uses_unambiguous_german_titles(self):
+        links = "".join(
+            f'<p><a href="chapter{i}.xhtml#start">{i}. Deutscher Abschnitt {i}</a></p>'
+            for i in range(1, 10)
+        )
+        book = StubEpubBookWithSpine([
+            StubEpubSpineItem(
+                "contents", "contents.xhtml",
+                "<body><h1>Inhaltsverzeichnis</h1>" + links + "</body>",
+            ),
+        ])
+        targets = [make_navigation_target(str(i), f"chapter{i}.xhtml#start", i) for i in range(1, 10)]
+        resolved = EpubExtractor.apply_xhtml_contents_titles(book, targets)
+        self.assertEqual([item.title for item in resolved], [
+            f"{i}. Deutscher Abschnitt {i}" for i in range(1, 10)
+        ])
+        self.assertEqual([item.href for item in resolved], [item.href for item in targets])
+
+    def test_xhtml_contents_rejects_conflicting_labels(self):
+        links = "".join(
+            f'<a href="chapter{i}.xhtml">Kapitel {i}</a>'
+            for i in range(1, 10)
+        )
+        book = StubEpubBookWithSpine([
+            StubEpubSpineItem(
+                "contents", "contents.xhtml",
+                "<body><h1>Inhaltsverzeichnis</h1>" + links
+                + '<a href="chapter1.xhtml">Anderer Titel</a></body>',
+            ),
+        ])
+        targets = [make_navigation_target("1", "chapter1.xhtml", 0)]
+        self.assertEqual(
+            EpubExtractor.apply_xhtml_contents_titles(book, targets)[0].title, "1",
+        )
+
+    def test_drop_cap_reconstructs_split_initials_and_preserves_fragment(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><p class="block_29" id="start" style="font-size: 44pt">W</p>'
+            '<p class="block_6">ird heute geprüft.</p><p>Danach folgt ein Absatz.</p></body>',
+            navigation_targets=[make_navigation_target("Kapitel", "Text/chapter.xhtml#start", 0)],
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Wird heute geprüft.\\n\\nDanach folgt ein Absatz.")
+        self.assertEqual(result.significant_warnings, [])
+        self.assertEqual(len(result.slices), 1)
+
+    def test_drop_cap_repairs_float_wrapper_nested_inline_and_umlaut(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><div class="frame_" style="float: left"><p class="block_29"><em>W</em></p></div>'
+            '<p class="block_6">ährend der Sitzung wurde gesprochen.</p></body>',
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Während der Sitzung wurde gesprochen.")
+
+    def test_drop_cap_keeps_whitespace_between_full_words_and_removes_layout_indent(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><p style="font-size: 44pt">Eine</p><p class="block_6"> Woche später.</p>'
+            '<p style="font-size: 44pt">„L</p><p class="block_6">assen Sie uns starten.</p></body>',
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Eine Woche später.\\n\\n„Lassen Sie uns starten.")
+
+    def test_drop_cap_reads_author_stylesheet_without_hardcoded_class(self):
+        css = EpubCssResolver(parse_stylesheet(
+            ".large-first { font-size: 44pt } .normal { font-size: 12pt }"
+        ))
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><p class="large-first">Ä</p>'
+            '<p class="normal">nderungen bleiben nachvollziehbar.</p></body>',
+            css=css,
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Änderungen bleiben nachvollziehbar.")
+
+    def test_drop_cap_omits_stale_translated_initial_only_with_strong_layout_signal(self):
+        for initial, sentence in [
+            ("M", "Kleine Schritte helfen beim Lernen."),
+            ("D", "Die Grundlage steht fest."),
+            ("N", "Nachdem das Team begonnen hatte, ging es weiter."),
+            ("I", "In einer anderen Abteilung war es ähnlich."),
+        ]:
+            with self.subTest(initial=initial, sentence=sentence):
+                chapter = EpubSourceChapter(
+                    "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+                    '<body><div style="float: left" id="frame">'
+                    f'<p style="font-size: 44pt" id="initial"><em>{initial}</em></p></div>'
+                    f'<p id="prose">{sentence}</p></body>',
+                    navigation_targets=[
+                        make_navigation_target("Kapitel", "Text/chapter.xhtml#initial", 0),
+                    ],
+                )
+                result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+                self.assertEqual(result.text, sentence)
+                self.assertEqual(result.significant_warnings, [])
+                self.assertEqual(len(result.slices), 1)
+                self.assertEqual(result.slices[0].navigation_target.fragment, "initial")
+
+    def test_drop_cap_omitted_orphan_keeps_named_navigation_anchor(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><div style="float: left"><p style="font-size:44pt">'
+            '<a name="old-opening"></a>M</p></div>'
+            '<p>Im Deutschen ist der Anfang vollständig.</p></body>',
+            navigation_targets=[
+                make_navigation_target("Kapitel", "Text/chapter.xhtml#old-opening", 0),
+            ],
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Im Deutschen ist der Anfang vollständig.")
+        self.assertEqual(result.significant_warnings, [])
+        self.assertEqual(result.slices[0].navigation_target.fragment, "old-opening")
+
+    def test_drop_cap_keeps_unexpected_capital_without_large_float_pair(self):
+        for html in [
+            '<p style="font-size: 44pt">M</p><p>Kleine Schritte helfen.</p>',
+            '<div style="float: left"><p>M</p></div><p>Kleine Schritte helfen.</p>',
+            '<p>M</p><p>Kleine Schritte helfen.</p>',
+        ]:
+            with self.subTest(html=html):
+                chapter = EpubSourceChapter(
+                    "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+                    "<body>" + html + "</body>",
+                )
+                result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+                self.assertIn("M", result.text)
+                self.assertEqual(
+                    bool(result.significant_warnings),
+                    "font-size" in html or "float:" in html,
+                )
+
+    def test_drop_cap_does_not_join_unmarked_or_ambiguous_paragraphs(self):
+        for html, expected_warning in [
+            ('<p class="ordinary">A</p><p>lpha</p>', False),
+            ('<p class="block_29" style="font-size: 44pt">D</p><p class="block_6">Während der Sitzung.</p>', True),
+            ('<p class="block_29">A</p><p class="block_6">lpha</p>', False),
+        ]:
+            with self.subTest(html=html):
+                chapter = EpubSourceChapter(
+                    "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+                    "<body>" + html + "</body>",
+                )
+                result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+                self.assertIn("\\n\\n", result.text)
+                self.assertEqual(bool(result.significant_warnings), expected_warning)
+
 
 class TestEpubLogWarnings(unittest.TestCase):
 

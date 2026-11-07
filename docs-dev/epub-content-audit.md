@@ -71,3 +71,69 @@ Vor dem Abschluss von B01 muss mindestens ein komplexes, rechtmäßig nutzbares 
 6. Nach dem Speichern die Project-V5-Phrase-Groups mit der Projektvorschau vergleichen.
 
 Eine grüne CI oder eine 100-Prozent-Zeichenabdeckung ersetzt diese redaktionelle Abnahme nicht.
+
+
+## B01-Folgeprüfung: dekorative Initialen, XHTML-Inhaltsübersicht und Attribution
+
+Der kanonische BeautifulSoup-Extraktor setzt nachweisbar als Initialen markierte
+Absatzfragmente vor der Text-Extraktion wieder zusammen. Eine Reparatur benötigt
+einen konkreten Layout-Hinweis aus den bestehenden EPUB-CSS-Regeln (große
+Initialschrift oder links gefloateter Container). Bloße Klassennamen und kurze
+Einzelwörter genügen ausdrücklich **nicht**. Fragmente mit unerwarteten
+Wortanfängen bleiben unverändert und erzeugen eine signifikante Warnung zur
+redaktionellen Prüfung. Ausnahme: Wenn **eine** groß formatierte Initiale
+in einem gefloateten Rahmen vor einem **vollständig großgeschrieben beginnenden
+Wort** steht, behandelt der Import den Einzelbuchstaben als veraltetes
+Layoutartefakt einer Übersetzung und entfernt ihn aus dem Vorlesetext.
+Navigationanker werden auch dann zur folgenden Textposition übernommen.
+Bei unzureichenden Layoutsignalen bleibt die Warnung bestehen.
+Anker und Inline-Formatierung bleiben bei gewöhnlichen rekonstruierten
+Initialen an der neuen Textposition erhalten.
+
+Falls der EPUB-2-NCX nur Kapitelnummern oder englische Labels enthält, kann die
+mitgelieferte, als Inhaltsverzeichnis erkennbare XHTML-Übersicht eindeutig
+zuordenbare Titel liefern. Nur interne Links mit widerspruchsfreiem Ziel-/Label-
+Mapping dürfen Navigationsbezeichnungen überschreiben. Die Spine-Reihenfolge
+wird nicht geändert; doppelte oder widersprüchliche Zuordnungen bleiben beim
+ursprünglichen Navigationstitel.
+
+Kurze, ausdrücklich als technische Übersetzungs-Attribution erkennbare
+Zusatzseiten werden separat als `technical-attribution` im Skip-Audit
+gekennzeichnet. Die Nutzerin oder der Nutzer kann sie im Entwurfsstatus über
+dieselben bestehenden Include-Overrides wieder aufnehmen. Die Original-EPUB-Datei
+und etwaige rechtliche Hinweise darin bleiben unangetastet. Diese Erkennung
+ist keine allgemeine Erlaubnis, vorgeschriebene Attributionen zu entfernen.
+
+Ein Bild mit klaren Szenentrenner-Merkmalen (z. B. Dinkus in Alternativtext
+oder Dateibezeichnung) erscheint im Content-Audit als `Szenentrenner`.
+Sein Abstand im Quelltext bleibt erhalten; das dekorative Bild selbst wird
+nicht automatisch vertont. Gewöhnliche Logos bleiben als `Bild` klassifiziert.
+
+Das synthetische Test-EPUB enthält eine nicht in der Navigation referenzierte
+technische Attribution. Der CI-Test verwendet den **wirklichen** EPUB-Import
+und prüft Auslassung, Wiederaufnahme und deren Auswirkungen auf den
+Phrase-Group-Text. Das private fachliche EPUB wird nicht auf GitHub gespeichert
+oder in öffentliche CI-Jobs übertragen.
+
+**Private Referenzabnahme (08.11.2026):** Der kanonische Import eines
+komplexen, privaten deutschen EPUBs wurde unter Windows mit echten
+EbookLib-/BeautifulSoup-Abhängigkeiten ausgeführt. Die Kapitel- und
+Navigationsstruktur sowie die beabsichtigten Quellenauslassungen blieben
+nach der Initialen-Reparatur stabil. Die lokal ausgeführte Studio-API hat
+das Buch als Project V5 (book.v3) gespeichert und sämtliche 5.443
+Phrase-Groups mit identischen Titeln und Texten erneut geladen.
+Der Linux-exklusive GPU-Worker-Start wurde beim Windows-Test gezielt
+ausgeklammert und gehört zu den eigenen Laufzeit-Checks der CI.
+Vier grafische Fachinhalte wurden **ausschließlich privat** gesichtet
+und für eine separate redaktionelle EPUB-Kopie beschrieben; keine
+lizenzpflichtigen Buchinhalte, Ausgangsgrafiken oder Sprecherfassungen
+werden in öffentlichen GitHub-Tests gespeichert.
+
+`review-required` bleibt ein korrekter, nutzerseitig sichtbarer Status,
+solange komplexe Quellen/Sprecherfassungen redaktionell geprüft werden
+müssen. Die volle semantische Korrektheit einer privaten Übersetzung
+oder das reale Sprech-/Hörergebnis folgt **nicht** aus dem Mapping.
+Die überarbeitete private EPUB-Kopie wurde unabhängig vom Repo
+auf XML-/Anker-/Archivintegrität geprüft; ein erneuter produktiver
+Import exakt dieser Kopie sowie die Hörabnahme bleiben Teil
+der anschließenden Produktionsfreigabe.

@@ -4,7 +4,7 @@ import io
 import zipfile
 from types import SimpleNamespace
 
-from tts_audiobook_tool.text_ops.epub_content_audit import audit_epub_content
+from tts_audiobook_tool.text_ops.epub_content_audit import audit_epub_content, _markup_stats, _review_elements
 
 
 class Chapter:
@@ -115,3 +115,18 @@ def test_audit_handles_broken_container_without_failing_import(tmp_path):
     report = audit_epub_content(str(path), [])
     assert report["status"] == "audit-error"
     assert report["warnings"]
+
+
+def test_image_dinkus_is_structural_but_logo_is_not():
+    html = (
+        '<body><p>Vorher.</p><p><img alt="break-dinkus-three-stars" src="stars.png"/></p>'
+        '<p>Nachher.</p><img alt="Firmenlogo" src="logo.png"/></body>'
+    ).encode("utf-8")
+    stats = _markup_stats(html)
+    assert stats["scene_breaks"] == 1
+    elements = _review_elements(html, "test.xhtml", {}, retained=True)
+    assert [item["kind"] for item in elements] == ["Szenentrenner", "Bild"]
+    assert all(not item["approved"] for item in elements)
+    assert "nicht gesprochen" in elements[0]["handling"]
+
+

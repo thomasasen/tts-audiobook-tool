@@ -221,9 +221,10 @@ class BeautifulSoupEpubChapterTextExtractor:
         BeautifulSoup = self.import_beautiful_soup()
         soup = BeautifulSoup(chapter.html, "html.parser")
         self.apply_speaker_overrides(soup, chapter.speaker_overrides)
+        drop_cap_warnings = self.repair_split_initials(soup, chapter.href, chapter.css)
         stats = EpubTextExtractionStats()
-        warnings: list[str] = []
-        significant_warnings: list[str] = []
+        warnings: list[str] = list(drop_cap_warnings)
+        significant_warnings: list[str] = list(drop_cap_warnings)
         target_fragments = {
             target.fragment
             for target in chapter.navigation_targets
@@ -277,6 +278,130 @@ class BeautifulSoupEpubChapterTextExtractor:
             has_unresolved_navigation_target=has_unresolved_navigation_target,
             styled=self.make_styled_text(pieces, piece_styles) if piece_styles else None,
         )
+
+    @staticmethod
+    def repair_split_initials(soup: Any, source_href: str, css: EpubCssResolver | None = None) -> list[str]:
+        """Repair only visibly marked split initials without merging adjacent paragraphs.
+
+        Calibre-style EPUB exports sometimes place a large initial in a dedicated
+        paragraph (optionally in a floated frame), followed by the word remainder
+        in another paragraph. Preserve descendant anchors by moving the initial
+        into the following paragraph; uncertain translations are reported rather
+        than silently rewritten.
+        """
+        warnings: list[str] = []
+        for initial in list(soup.find_all("p")):
+            if initial.parent is None:
+                continue
+            # A one-word paragraph is not in itself evidence of a drop cap:
+            # relying on Calibre's numbered classes would destroy headings.
+            def declarations(node: Any) -> dict[str, str]:
+                values = css.declarations_for(
+                    node.name,
+                    frozenset(str(item) for item in node.get("class", [])),
+                    node.get("id"),
+                ).copy() if css is not None else {}
+                values.update(epub_css.parse_declarations(
+                    str(node.get("style", "")), include_layout=True,
+                ))
+                return values
+
+            layout = declarations(initial)
+            size = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(pt|px|em|rem|%)", layout.get("font-size", ""))
+            large = False
+            if size is not None:
+                amount = float(size.group(1))
+                large = amount >= {"pt": 20, "px": 27, "em": 2, "rem": 2, "%": 200}[size.group(2)]
+            parent = initial.parent
+            floated = (
+                getattr(parent, "name", None) == "div"
+                and declarations(parent).get("float") in {"left", "inline-start"}
+            )
+            if not (large or floated):
+                continue
+            prefix = initial.get_text("", strip=True)
+            if not prefix or len(prefix) > 14:
+                continue
+            is_single = bool(re.fullmatch(r"[„“«‹'\\\"]?[A-ZÄÖÜ]", prefix))
+            is_word = bool(re.fullmatch(r"[„“«‹'\\\"]?[A-ZÄÖÜ][a-zäöüß]{1,12}", prefix))
+            is_quote = prefix in {"„", "“", "«", "‹"}
+            if not (is_single or is_word or is_quote):
+                continue
+
+            container = initial
+            parent = initial.parent
+            if (
+                getattr(parent, "name", None) == "div"
+                and len(parent.find_all("p")) == 1
+                and not parent.get_text("", strip=True).replace(prefix, "", 1)
+            ):
+                container = parent
+            following = container.find_next_sibling()
+            while following is not None and not getattr(following, "name", None):
+                following = following.next_sibling
+            if following is None or following.name != "p":
+                continue
+            following_text = following.get_text("", strip=True)
+            if not following_text:
+                continue
+            # An isolated capital belongs to the next word only when the
+            # following fragment starts lowercase. For full words, preserve a
+            # space; an isolated opening quote binds directly to its word.
+            if is_single and not following_text[0].islower():
+                # An isolated source-language drop cap may survive translation,
+                # while the next paragraph already starts with a complete,
+                # capitalized target-language word. Only discard that stray
+                # glyph when *both* large-cap typography and a floated frame
+                # identify it as a decorative initial. A size hint alone is
+                # deliberately insufficient; uncertain cases still warn.
+                complete_word = re.match(r"[A-ZÄÖÜ][a-zäöüß]+", following_text)
+                if len(prefix) == 1 and large and floated and complete_word:
+                    # Keep navigation anchors even though the old glyph is not
+                    # spoken. Empty spans anchor the first audible word.
+                    anchor_nodes = [container, *container.descendants]
+                    anchors = []
+                    for node in anchor_nodes:
+                        if not getattr(node, "name", None):
+                            continue
+                        anchor_id = node.get("id")
+                        anchor_name = node.get("name") if node.name == "a" else None
+                        if anchor_id or anchor_name:
+                            anchor = soup.new_tag("a" if anchor_name else "span")
+                            if anchor_id:
+                                anchor["id"] = anchor_id
+                            if anchor_name:
+                                anchor["name"] = anchor_name
+                            anchors.append(anchor)
+                    for anchor in reversed(anchors):
+                        following.insert(0, anchor)
+                    container.decompose()
+                    continue
+                warnings.append(
+                    f"EPUB split initial requires manual review in {source_href}: "
+                    f"{prefix!r} before {following_text[:35]!r}"
+                )
+                continue
+            separator = " " if is_word else ""
+            fragment = soup.new_tag("span")
+            if initial.get("id"):
+                fragment["id"] = initial["id"]
+            if container is not initial and container.get("id") and not fragment.get("id"):
+                fragment["id"] = container["id"]
+            first_initial_string = initial.find(string=True)
+            if first_initial_string is not None:
+                first_initial_string.replace_with(str(first_initial_string).lstrip())
+            for child in list(initial.contents):
+                fragment.append(child.extract())
+            if separator:
+                fragment.append(separator)
+            if not separator:
+                # The next paragraph may start with layout indentation.
+                first_string = following.find(string=True)
+                if first_string is not None:
+                    first_string.replace_with(str(first_string).lstrip())
+            following.insert(0, fragment)
+            container.decompose()
+        return warnings
 
     @staticmethod
     def apply_speaker_overrides(soup: Any, overrides: dict[str, str]) -> None:
@@ -1344,6 +1469,22 @@ class EpubExtractor:
         reading_spine_count = sum(text_bearing_flags)
         reading_spine_position = 0
         for source_chapter, is_text_bearing in zip(source_chapter_candidates, text_bearing_flags):
+            technical_attribution = EpubSectionSkipDetector.detect_technical_translation_attribution_skip(
+                source_chapter.href, source_chapter.title, source_chapter.html,
+            )
+            forced_include = is_manually_included(source_chapter.href)
+            if technical_attribution.should_skip:
+                if not forced_include:
+                    record_source(source_chapter.href, source_chapter.title, "technical-attribution",
+                                  technical_attribution.reason, source_chapter.html)
+                    EpubExtractor.append_skipped_section_warning(
+                        warnings, significant_warnings, source_chapter, technical_attribution.reason,
+                    )
+                    continue
+                source_chapter.skip_override_reason = technical_attribution.reason
+                record_source(source_chapter.href, source_chapter.title, "technical-attribution",
+                              technical_attribution.reason, source_chapter.html,
+                              status="retained", can_restore=True, overridden=True)
             publication_metadata_skip_decision = EpubSectionSkipDetector.detect_publication_metadata_skip(
                 reading_spine_position,
                 reading_spine_count,
@@ -1512,10 +1653,79 @@ class EpubExtractor:
         return []
 
     @staticmethod
+    def extract_xhtml_contents_labels(book: Any) -> dict[str, str]:
+        """Read titles from explicitly marked HTML contents pages.
+
+        NCX may contain bare chapter numbers or English labels even if the
+        book's XHTML contents page has full German descriptions. Only uniquely
+        resolved internal links are eligible; duplicates with conflicting labels
+        intentionally have no override.
+        """
+        labels: dict[str, set[str]] = {}
+        for item in getattr(book, "items", []):
+            media_type = str(getattr(item, "media_type", "") or "")
+            if media_type not in {"application/xhtml+xml", "text/html"}:
+                continue
+            html = EpubExtractor.decode_item_content(item)
+            if not html or not any(token in html.lower() for token in ("inhaltsverzeichnis", "contents")):
+                continue
+            BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
+            soup = BeautifulSoup(html, "html.parser")
+            body = soup.body
+            if body is None:
+                continue
+            heading = body.find(["h1", "h2"])
+            if heading is None or BeautifulSoupEpubChapterTextExtractor.normalize_inline_text(
+                heading.get_text()
+            ).casefold() not in {"inhaltsverzeichnis", "table of contents", "contents"}:
+                continue
+            links = body.find_all("a", href=True)
+            if len(links) < 8:
+                continue
+            base = posixpath.dirname(str(getattr(item, "file_name", "") or ""))
+            for link in links:
+                title = BeautifulSoupEpubChapterTextExtractor.normalize_inline_text(link.get_text())
+                if not title:
+                    continue
+                target = EpubExtractor.make_navigation_target(link.get("href", ""), title, 0, base)
+                if target is None:
+                    continue
+                labels.setdefault(target.href, set()).add(title)
+        return {key: next(iter(values)) for key, values in labels.items() if len(values) == 1}
+
+    @staticmethod
+    def apply_xhtml_contents_titles(book: Any, targets: list[EpubNavigationTarget]) -> list[EpubNavigationTarget]:
+        labels = EpubExtractor.extract_xhtml_contents_labels(book)
+        if not labels:
+            return targets
+        # Path-only fallback is safe for documents that have exactly one target.
+        counts: dict[str, int] = {}
+        by_path: dict[str, str] = {}
+        conflicts: set[str] = set()
+        for href, title in labels.items():
+            path = href.split("#", 1)[0]
+            if path in by_path and by_path[path] != title:
+                conflicts.add(path)
+            by_path[path] = title
+        for target in targets:
+            counts[target.path] = counts.get(target.path, 0) + 1
+        return [
+            EpubNavigationTarget(
+                title=labels.get(target.href) or (
+                    by_path.get(target.path, "")
+                    if counts.get(target.path) == 1 and target.path not in conflicts else ""
+                ) or target.title,
+                path=target.path, fragment=target.fragment, href=target.href,
+                order=target.order, depth=target.depth,
+            )
+            for target in targets
+        ]
+
+    @staticmethod
     def extract_navigation_targets(book: Any) -> list[EpubNavigationTarget]:
         document_targets = EpubExtractor.extract_navigation_document_targets(book)
         if document_targets:
-            return document_targets
+            return EpubExtractor.apply_xhtml_contents_titles(book, document_targets)
 
         try:
             toc = getattr(book, "toc", [])
@@ -1529,7 +1739,7 @@ class EpubExtractor:
             navigation_targets,
             navigation_base_path,
         )
-        return navigation_targets
+        return EpubExtractor.apply_xhtml_contents_titles(book, navigation_targets)
 
     @staticmethod
     def collect_navigation_targets(
