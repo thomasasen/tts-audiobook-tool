@@ -10,7 +10,7 @@ import zipfile
 from xml.sax.saxutils import escape
 
 
-def build_epub(*, repeat: int = 1, include_audit_cases: bool = False) -> bytes:
+def build_epub(*, repeat: int = 1, include_audit_cases: bool = False, include_attribution_case: bool = False) -> bytes:
     if not 1 <= repeat <= 50:
         raise ValueError("repeat must be between 1 and 50")
     sections = [
@@ -26,6 +26,12 @@ def build_epub(*, repeat: int = 1, include_audit_cases: bool = False) -> bytes:
         sections.insert(1, (
             "copyright", "Copyright",
             "Copyright © 2025 Example Press. All rights reserved. ISBN 978-1-2345-6789-0.",
+        ))
+    if include_attribution_case:
+        # Deliberately absent from nav, like many translation-tool credit pages.
+        sections.append((
+            "technical-attribution", "Technische Attribution",
+            "Übersetzt mit einem lokalen Prüfwerkzeug. Projektadresse: example.invalid.",
         ))
     xml = '<?xml version="1.0" encoding="UTF-8"?>'
     # Exercise more than ordinary paragraphs: nested headings, structured
@@ -68,7 +74,7 @@ def build_epub(*, repeat: int = 1, include_audit_cases: bool = False) -> bytes:
             f'<body><h1>{escape(heading)}</h1>{paragraphs}</body></html>'))
     nav_items = "".join(
         f'<li><a href="{ident}.xhtml">{escape(heading)}</a></li>'
-        for ident, heading, _ in sections if ident != "toc"
+        for ident, heading, _ in sections if ident not in ("toc", "technical-attribution")
     )
     nav = (f'{xml}<html xmlns="http://www.w3.org/1999/xhtml" '
            'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Navigation</title></head>'
