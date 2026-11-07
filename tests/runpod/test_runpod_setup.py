@@ -49,6 +49,20 @@ class TestRunPodSupport(unittest.TestCase):
         self.assertIn('WEB_PYTHON_VERSION="3.12.16"', pins)
         self.assertIn('THORSTEN_PYTHON_VERSION="3.11.18"', pins)
 
+    def test_web_runtime_installer_uses_hash_locked_python_and_cpu_torch(self):
+        installer = (ROOT / "runpod/install-web.sh").read_text(encoding="utf-8")
+        pins = (ROOT / "runpod/model-pins.env").read_text(encoding="utf-8")
+        torch_input = (ROOT / "web/torch-cpu.in").read_text(encoding="utf-8")
+        build = (ROOT / "runpod/build-web.sh").read_text(encoding="utf-8")
+        self.assertIn('web/requirements-runtime.lock.txt', installer)
+        self.assertIn('web/torch-cpu.lock.txt', installer)
+        self.assertIn('--require-hashes --requirement "$LOCK"', installer)
+        self.assertIn('--no-deps --require-hashes --requirement "$TORCH_LOCK"', installer)
+        self.assertIn('runtime_freeze_hash', installer)
+        self.assertIn('UV_VERSION="0.13.7"', pins)
+        self.assertEqual(torch_input.strip(), "torch==2.8.0")
+        self.assertIn("npm ci", build)
+
     def test_environment_uses_volume_and_keeps_paths_out_of_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
