@@ -50,13 +50,17 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --no-deps --require-hashes --requirement web/torch-cpu.lock.txt
           uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" pytest==8.4.2
       - name: Compile Python adapter
-        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m compileall -q tts_audiobook_tool/web_studio runpod/acceptance.py runpod/acceptance_epub.py
+        run: |
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m compileall -q tts_audiobook_tool/web_studio runpod/acceptance.py runpod/acceptance_epub.py
       - name: Web API tests
-        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/web -q --confcutdir=tests/web
+        run: |
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/web -q --confcutdir=tests/web
       - name: EPUB navigation and extraction regressions
-        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_epub_extractor.py -q
+        run: |
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_epub_extractor.py -q
       - name: German TTS pronunciation and checkpoint regressions
-        run: "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_german_speech_normalizer.py -q
+        run: |
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest tests/text/test_german_speech_normalizer.py -q
 
   deployed-web-runtime:
     runs-on: ubuntu-24.04
@@ -155,6 +159,7 @@ jobs:
       - name: Build the actual production UI from npm lock
         run: cd web && npm ci --no-audit --no-fund && npm run build
       - name: Headless Chromium authenticated end-to-end
-        run: "$RUNNER_TEMP/audiobook-venv/bin/python" tests/web/browser_smoke.py
+        run: |
+          "$RUNNER_TEMP/audiobook-venv/bin/python" tests/web/browser_smoke.py
         env:
           PYTHONPATH: .
