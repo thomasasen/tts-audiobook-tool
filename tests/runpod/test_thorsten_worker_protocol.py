@@ -142,6 +142,7 @@ class TestThorstenProtocol(TestCase):
         self.assertEqual(messages[1]["id"], "bad")
         self.assertFalse(messages[1]["ok"])
         self.assertEqual(messages[1]["error"], "TTS-Inferenz fehlgeschlagen.")
+        self.assertIn("Thorsten worker failure: ValueError (inference)", errors)
         self.assertNotIn(private_text, str(messages) + errors)
 
 
