@@ -77,8 +77,8 @@ fi
 echo "Prefetching CosyVoice3 base model (max $RUNPOD_TTS_DOWNLOAD_WORKERS parallel files)."
 hf_download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR"
 echo "Overlaying Thorsten fine-tuning AFTER the base download completes."
-hf_download Thorsten-Voice/CosyVoice3 --local-dir "$MODEL_DIR" \
-  --include llm.pt flow.pt spk2info.pt infer_thorsten.py
+hf_download Thorsten-Voice/CosyVoice3 llm.pt flow.pt spk2info.pt infer_thorsten.py \
+  --local-dir "$MODEL_DIR"
 
 # The base and fine-tune snapshots overlap filenames. Capture the FINAL
 # overlaid bytes to prevent the installer from re-downloading base and
