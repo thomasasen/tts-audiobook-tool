@@ -81,8 +81,14 @@ einen konkreten Layout-Hinweis aus den bestehenden EPUB-CSS-Regeln (große
 Initialschrift oder links gefloateter Container). Bloße Klassennamen und kurze
 Einzelwörter genügen ausdrücklich **nicht**. Fragmente mit unerwarteten
 Wortanfängen bleiben unverändert und erzeugen eine signifikante Warnung zur
-redaktionellen Prüfung. Anker und Inline-Formatierung bleiben an der neuen
-Textposition erhalten.
+redaktionellen Prüfung. Ausnahme: Wenn **eine** groß formatierte Initiale
+in einem gefloateten Rahmen vor einem **vollständig großgeschrieben beginnenden
+Wort** steht, behandelt der Import den Einzelbuchstaben als veraltetes
+Layoutartefakt einer Übersetzung und entfernt ihn aus dem Vorlesetext.
+Navigationanker werden auch dann zur folgenden Textposition übernommen.
+Bei unzureichenden Layoutsignalen bleibt die Warnung bestehen.
+Anker und Inline-Formatierung bleiben bei gewöhnlichen rekonstruierten
+Initialen an der neuen Textposition erhalten.
 
 Falls der EPUB-2-NCX nur Kapitelnummern oder englische Labels enthält, kann die
 mitgelieferte, als Inhaltsverzeichnis erkennbare XHTML-Übersicht eindeutig
