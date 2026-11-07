@@ -115,8 +115,25 @@ und prüft Auslassung, Wiederaufnahme und deren Auswirkungen auf den
 Phrase-Group-Text. Das private fachliche EPUB wird nicht auf GitHub gespeichert
 oder in öffentliche CI-Jobs übertragen.
 
-**Abnahmegrenze:** Ohne Ausführung des kanonischen Importers mit dem privaten
-EPUB bleibt dessen tatsächliche Project-V5-Verarbeitung ungeprüft. Ein
-erfolgreicher ZIP-/OPF-/XHTML-Preflight oder synthetische CI-Regressionen
-ersetzen weder diesen Nachweis noch die redaktionelle Prüfung inhaltlich
-wichtiger Grafiken.
+**Private Referenzabnahme (08.11.2026):** Der kanonische Import eines
+komplexen, privaten deutschen EPUBs wurde unter Windows mit echten
+EbookLib-/BeautifulSoup-Abhängigkeiten ausgeführt. Die Kapitel- und
+Navigationsstruktur sowie die beabsichtigten Quellenauslassungen blieben
+nach der Initialen-Reparatur stabil. Die lokal ausgeführte Studio-API hat
+das Buch als Project V5 (book.v3) gespeichert und sämtliche 5.443
+Phrase-Groups mit identischen Titeln und Texten erneut geladen.
+Der Linux-exklusive GPU-Worker-Start wurde beim Windows-Test gezielt
+ausgeklammert und gehört zu den eigenen Laufzeit-Checks der CI.
+Vier grafische Fachinhalte wurden **ausschließlich privat** gesichtet
+und für eine separate redaktionelle EPUB-Kopie beschrieben; keine
+lizenzpflichtigen Buchinhalte, Ausgangsgrafiken oder Sprecherfassungen
+werden in öffentlichen GitHub-Tests gespeichert.
+
+`review-required` bleibt ein korrekter, nutzerseitig sichtbarer Status,
+solange komplexe Quellen/Sprecherfassungen redaktionell geprüft werden
+müssen. Die volle semantische Korrektheit einer privaten Übersetzung
+oder das reale Sprech-/Hörergebnis folgt **nicht** aus dem Mapping.
+Die überarbeitete private EPUB-Kopie wurde unabhängig vom Repo
+auf XML-/Anker-/Archivintegrität geprüft; ein erneuter produktiver
+Import exakt dieser Kopie sowie die Hörabnahme bleiben Teil
+der anschließenden Produktionsfreigabe.
