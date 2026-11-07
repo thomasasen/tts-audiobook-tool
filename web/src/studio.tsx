@@ -742,7 +742,7 @@ export default function Studio() {
                     {['generated','completed'].includes(job.status) && <button className="primary-btn" disabled={busy} onClick={() => productionAction('export')}><FileAudio size={17}/> M4B erstellen</button>}
                     {job.status === 'completed' && <p className="helper">Das komplette M4B wird zum Speicherziel gestreamt. Für einzelne Hörproben den Segmentplayer unten verwenden.</p>}
                     {job.status === 'completed' && <button className="primary-btn" disabled={busy || downloadPending} onClick={() => {void startM4bDownload()}}><FileAudio size={17}/> {downloadPending ? 'M4B wird übertragen …' : 'M4B herunterladen'}</button>}
-                    {downloadPending && <button className="outline-btn" onClick={() => downloadAbort.current?.abort()}><StopCircle size={17}/> Download abbrechen</button>
+                    {downloadPending && <button className="outline-btn" onClick={() => downloadAbort.current?.abort()}><StopCircle size={17}/> Download abbrechen</button>}
                   </div>
                   {job.done > 0 && <div className="segment-preview">
                     <label htmlFor="segment-index">Segment zum Anhören (0–{job.done-1})</label>
