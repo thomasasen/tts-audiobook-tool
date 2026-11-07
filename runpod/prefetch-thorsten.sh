@@ -57,12 +57,37 @@ hf_download() {
 }
 
 mkdir -p "$MODEL_DIR"
+PREFETCH_VERSION="CosyVoice-ace7c47-Thorsten-CosyVoice3-2026-11-v1"
+PREFETCH_SUMS="$MODEL_ROOT/.prefetch-sha256.txt"
+PREFETCH_READY="$MODEL_ROOT/.prefetch-complete"
+if [[ -f "$PREFETCH_READY" &&
+      "$(cat "$PREFETCH_READY")" == "$PREFETCH_VERSION" &&
+      -s "$PREFETCH_SUMS" ]] &&
+   (cd "$MODEL_DIR" && sha256sum --check --status "$PREFETCH_SUMS"); then
+  echo "Previously prefetched model files pass SHA-256 integrity; no download."
+  exit 0
+fi
+# A previous marker with invalid checksums is a genuine integrity problem,
+# not permission to silently rebaseline potentially corrupted weights.
+if [[ -e "$PREFETCH_READY" ]]; then
+  echo "Existing Thorsten prefetch integrity failed. Refusing silent rebaseline." >&2
+  exit 1
+fi
+
 echo "Prefetching CosyVoice3 base model (max $RUNPOD_TTS_DOWNLOAD_WORKERS parallel files)."
 hf_download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR"
 echo "Overlaying Thorsten fine-tuning AFTER the base download completes."
 hf_download Thorsten-Voice/CosyVoice3 --local-dir "$MODEL_DIR" \
   --include llm.pt flow.pt spk2info.pt infer_thorsten.py
 
-# The installer still checks each file, imports the native runtime, calculates
-# SHA256 checksums and writes .studio-ready. A failed prefetch is retriable.
-echo "Thorsten weights prefetched; waiting for the installer integrity check."
+# The base and fine-tune snapshots overlap filenames. Capture the FINAL
+# overlaid bytes to prevent the installer from re-downloading base and
+# Thorsten weights, which otherwise doubles disk/network writes.
+for name in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py; do
+  [[ -s "$MODEL_DIR/$name" ]] || { echo "Missing prefetched file: $name" >&2; exit 1; }
+done
+(cd "$MODEL_DIR" && sha256sum llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py) > "$PREFETCH_SUMS.tmp"
+mv -f "$PREFETCH_SUMS.tmp" "$PREFETCH_SUMS"
+printf '%s\n' "$PREFETCH_VERSION" > "$PREFETCH_READY.tmp"
+mv -f "$PREFETCH_READY.tmp" "$PREFETCH_READY"
+echo "Thorsten weights prefetched and verified; final installer still required."
