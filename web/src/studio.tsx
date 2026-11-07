@@ -591,7 +591,7 @@ export default function Studio() {
                   <ol>{previewTask.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>)}</ol>
                 </details>
               </section>}
-              {previewAudioError && <div className="message error" role="alert"><AlertCircle size={18}/><span>{previewAudioError}</span></div>}
+              {previewAudioError && <div className="message error" role="alert"><AlertCircle size={18}/><span>{previewAudioError}{audioUrl && <> <a href={audioUrl} download="thorsten-hoerprobe.wav">WAV zur Prüfung herunterladen</a></>}</span></div>}
               {audioUrl && previewTask?.status === 'ready' && !previewAudioError && <div className="panel audio-preview">
                 <h3>Hörprobe</h3>
                 <audio src={audioUrl} controls preload="metadata" onLoadedMetadata={event => {
@@ -603,10 +603,15 @@ export default function Studio() {
                     setPreviewPlayed(false)
                     setPreviewAudioError('Die Hörprobe enthält keine abspielbare Audiodauer. Bitte das Thorsten-Worker-Log prüfen.')
                   }
-                }} onError={() => {
+                }} onError={event => {
                   setPreviewAudioValid(false)
                   setPreviewPlayed(false)
-                  setPreviewAudioError('Der Browser kann die Hörprobe nicht abspielen. Die WAV-Datei ist möglicherweise beschädigt oder inkompatibel.')
+                  const code = event.currentTarget.error?.code
+                  const detail = code === 4 ? 'Die Audioquelle oder Kodierung wird nicht unterstützt.'
+                    : code === 3 ? 'Der Browser konnte die Audiodaten nicht decodieren.'
+                    : code === 2 ? 'Der Browser konnte die Audiodaten nicht laden.'
+                    : 'Die WAV-Hörprobe konnte nicht abgespielt werden.'
+                  setPreviewAudioError(`Hörprobe nicht abspielbar (Medienfehler ${code ?? 'unbekannt'}): ${detail}`)
                 }} onEnded={() => { if (previewAudioValid) setPreviewPlayed(true) }}/>
                 <p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p>
               </div>}
