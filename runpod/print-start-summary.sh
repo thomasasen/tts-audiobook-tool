@@ -21,7 +21,7 @@ case "$RUNPOD_SUMMARY_CUDA_SYSTEM" in passed|failed|unknown) ;; *) echo "Invalid
 case "$RUNPOD_SUMMARY_CUDA_THORSTEN" in passed|failed|not-tested) ;; *) echo "Invalid Thorsten CUDA status" >&2; exit 2 ;; esac
 
 line() { printf '  %-19s : %s\n' "$1" "$2"; }
-rule() { printf '%s\n' '+============================================================================+'; }
+rule() { printf '%s\n' '+====================================================================================================+'; }
 
 if [[ "$RUNPOD_SUMMARY_WEB" != ready ]]; then
   status="START FEHLGESCHLAGEN: WEB-SERVER NICHT ERREICHBAR"
@@ -46,8 +46,8 @@ fi
 
 printf '\n\n'
 rule
-printf '| %-74s |\n' 'GERMAN AUDIOBOOK STUDIO'
-printf '| %-74s |\n' "$status"
+printf '| %-98s |\n' 'GERMAN AUDIOBOOK STUDIO'
+printf '| %-98s |\n' "$status"
 rule
 line "Weboberflaeche" "RunPod > Connect > HTTP $RUNPOD_SUMMARY_PORT"
 line "Web-API" "$([[ "$RUNPOD_SUMMARY_WEB" == ready ]] && echo 'BEREIT' || echo 'NICHT ERREICHBAR') (Port $RUNPOD_SUMMARY_PORT)"
