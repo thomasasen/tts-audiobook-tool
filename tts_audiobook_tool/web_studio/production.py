@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tts_audiobook_tool.web_studio import asr_quality
+from tts_audiobook_tool.text_ops.german_speech_normalizer import VERSION as DE_NORMALIZER_VERSION, normalize_german_speech
 
 VOICE_ID = "thorsten-cosyvoice3"
 SAMPLE_TEXT = "Guten Tag. Dieses Fachbuch erklärt, wie gute Entscheidungen im Vertrieb entstehen."
@@ -572,6 +573,11 @@ def save_glossary(project_id: str, entries: dict[str, str]) -> None:
 
 
 def _normalize_de(text: str, glossary: dict[str, str]) -> str:
+    """Versioned v2 German prompt normalization; never changes Project V5 text."""
+    return normalize_german_speech(text, glossary)
+
+
+def _normalize_de_legacy(text: str, glossary: dict[str, str]) -> str:
     """Prompt-only normalization; source and chapter preview remain unchanged."""
     from tts_audiobook_tool.text_ops.prompt_normalizer import PromptNormalizer
     text = PromptNormalizer.apply_prompt_word_substitutions(text, glossary, "de")
@@ -790,7 +796,8 @@ def create_job(project_id: str) -> dict:
     plan = {
         "version": 2, "project_id": project_id, "voice": VOICE_ID,
         "model_identity": _model_identity() or "",
-        "segments": segments, "glossary": glossary, "created_at": _now(),
+        "segments": segments, "glossary": glossary,
+        "normalizer_version": DE_NORMALIZER_VERSION, "created_at": _now(),
     }
     # Serialize the active-job check with job creation across API requests.
     # Without BEGIN IMMEDIATE, simultaneous requests can create duplicate jobs.
@@ -902,10 +909,18 @@ def _run(job_id: str):
             if _STOP.is_set() or _job(job_id)["status"] != "running":
                 return
             path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
-            fingerprint = hashlib.sha256(
-                (segment["text"] + "\0" + json.dumps(plan["glossary"], sort_keys=True)
-                 + "\0" + VOICE_ID + "\0" + plan.get("model_identity", "")).encode()
-            ).hexdigest()
+            normalizer_version = plan.get("normalizer_version")
+            if normalizer_version not in (None, DE_NORMALIZER_VERSION):
+                raise ValueError("Unbekannte Normalisierungsversion im gespeicherten Auftrag.")
+            # Legacy plans retain the *exact* original fingerprint and prompt
+            # behavior, so valid partial WAV checkpoints survive an upgrade.
+            fingerprint_source = (
+                segment["text"] + "\0" + json.dumps(plan["glossary"], sort_keys=True)
+                + "\0" + VOICE_ID + "\0" + plan.get("model_identity", "")
+            )
+            if normalizer_version:
+                fingerprint_source += "\0" + normalizer_version
+            fingerprint = hashlib.sha256(fingerprint_source.encode()).hexdigest()
             meta = path.with_suffix(".json")
             seconds = 0.0
             if path.exists() and meta.exists():
@@ -919,7 +934,8 @@ def _run(job_id: str):
                     _job_event(job_id, f"Sprachsynthese: Segment {i + 1} von {len(segments)} läuft.")
                 path.unlink(missing_ok=True)
                 meta.unlink(missing_ok=True)
-                prompt = _normalize_de(segment["text"], plan["glossary"])
+                normalizer = _normalize_de if normalizer_version else _normalize_de_legacy
+                prompt = normalizer(segment["text"], plan["glossary"])
                 if not prompt:
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
                 infer_started = time.perf_counter()
