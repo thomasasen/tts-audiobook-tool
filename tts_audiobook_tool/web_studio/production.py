@@ -266,6 +266,20 @@ def _valid_audio(path: Path) -> float:
         return frames / audio.getframerate()
 
 
+def _valid_browser_preview(path: Path) -> float:
+    """Only expose signed integer PCM-16 WAV as a browser-ready preview.
+
+    The normal audio validator accepts PCM 24/32 for internal workflows.
+    A preview must meet the stricter broadly supported 16-bit requirement
+    before the API claims the audio can be played in browsers.
+    """
+    duration = _valid_audio(path)
+    with wave.open(str(path), "rb") as audio:
+        if audio.getsampwidth() != 2:
+            raise ValueError("Hörprobe hat kein browserkompatibles 16-Bit-PCM-Format.")
+    return duration
+
+
 def _audio_quality(path: Path, expected: str) -> dict:
     """Conservative QC flags. ASR discrepancies require human review.
 
@@ -419,7 +433,7 @@ def _preview_background(task_id: str) -> None:
         )
         # make_sample checks the audio file, but verify again just before
         # publishing a ready state. Never publish an empty/truncated WAV.
-        _valid_audio(generated)
+        _valid_browser_preview(generated)
         _preview_update(task_id, status="ready",
                         stage="Hörprobe erstellt und Audiodatei geprüft. Bitte vollständig anhören.")
     except Exception as exc:
@@ -457,7 +471,7 @@ def sample_audio(task_id: str) -> Path:
         if _PREVIEW_STATE["id"] != task_id or _PREVIEW_STATE["status"] != "ready":
             raise ValueError("Die Hörprobe ist noch nicht fertig.")
     sample = _voice_proof().parent / "thorsten.wav"
-    _valid_audio(sample)
+    _valid_browser_preview(sample)
     return sample
 
 
