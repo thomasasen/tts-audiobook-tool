@@ -119,6 +119,16 @@ h1, h2, h3, p { margin-top: 0; }
 .spinning { animation: studio-spinner 1s linear infinite; }
 @keyframes studio-spinner { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinning { animation: none; } }
+.voice-sample-settings { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; max-width: 260px; }
+.voice-sample-settings label { font-weight: 650; font-size: 12px; color: var(--text); }
+.voice-sample-settings select { min-height: 42px; border-radius: 10px; border: 1px solid var(--line); background: var(--input); color: var(--text); padding: 8px 12px; width: 100%; }
+.voice-sample-settings .helper { font-size: 11px; margin: 0; line-height: 1.5; }
+.production-time-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+.production-time-metrics > div { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.production-time-metrics span { font-size: 12px; color: var(--muted); }
+.production-time-metrics strong { font-size: clamp(15px, 2vw, 20px); font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.production-time-metrics small { line-height: 1.5; color: var(--muted); font-size: 11px; }
+@media (max-width: 540px) { .production-time-metrics { grid-template-columns: 1fr; } }
 .voice-notice { display: flex; gap: 18px; padding: 22px 24px; margin-bottom: 32px; }
 .voice-notice > svg { color: var(--accent); flex-shrink: 0; }
 .voice-notice strong { font-size: 14px; }
