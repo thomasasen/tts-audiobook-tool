@@ -120,8 +120,8 @@ if [[ -f "$PREFETCH_VERSION" ]]; then
   fi
   echo "Using completed, SHA-256 checked Thorsten prefetch: skipping both model downloads."
 else
-  # No prior prefetch: the regular installer is still valid standalone.
-  # Base THEN fine-tune is mandatory; both snapshot repos contain llm.pt etc.
+  # No prior prefetch: the regular installer remains valid standalone.
+  # The downloader fetches selected base assets first, then overlays Thorsten fine-tune files.
   : "${RUNPOD_TTS_DOWNLOAD_WORKERS:=4}"
   if [[ ! "$RUNPOD_TTS_DOWNLOAD_WORKERS" =~ ^[1-8]$ ]]; then
     echo "RUNPOD_TTS_DOWNLOAD_WORKERS must be 1..8." >&2

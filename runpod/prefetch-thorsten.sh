@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pre-fetch official and Thorsten fine-tuned weights while Qwen is installing.
-# This stage NEVER creates .studio-ready or a checksum manifest: only the
-# subsequent install-thorsten.sh may validate and trust a completed model.
+# Pre-fetch only runtime-required official and Thorsten fine-tuned assets while Qwen installs.
+# The upstream-verified SHA-256 manifest is a local checkpoint; only install-thorsten.sh
+# may create .studio-ready after the native runtime import check.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
