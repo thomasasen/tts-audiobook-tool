@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
-from . import production
+from . import production, asr_quality
 
 MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
@@ -508,6 +508,7 @@ def capabilities():
         "voice_installed": installed,
         "voice_approved": approved,
         "voice_preview_available": installed,
+        "asr": asr_quality.capabilities(),
         "reason": reason,
     }
 
