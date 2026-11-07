@@ -39,11 +39,10 @@ done
   --index-url https://download.pytorch.org/whl/cpu --python "$WEB_PYTHON_VERSION" \
   --python-version 3.12 --output-file "$OUTPUT_DIR/web/torch-cpu.lock.txt" \
   "$REPO_DIR/web/torch-cpu.in"
-if [[ -s "$REPO_DIR/runpod/locks/thorsten/uv.lock" ]]; then
-  "$UV" lock --locked --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
-else
-  "$UV" lock --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
-fi
+# uv lock reuses existing resolutions by default but updates the lock
+# when pyproject.toml changes. --locked would make intentional dependency
+# changes impossible to compile into a new release lock.
+"$UV" lock --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
 mkdir -p "$OUTPUT_DIR/runpod/locks/thorsten"
 cp "$REPO_DIR/runpod/locks/thorsten/uv.lock" "$OUTPUT_DIR/runpod/locks/thorsten/uv.lock"
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \

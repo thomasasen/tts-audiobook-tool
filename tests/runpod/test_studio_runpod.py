@@ -29,10 +29,13 @@ class TestGermanStudioRunPod(unittest.TestCase):
         pins = (ROOT / "runpod/model-pins.env").read_text(encoding="utf-8")
         self.assertIn("CosyVoice.git", pins)
         self.assertIn("ace7c47f41bbd303aa6bf1ea80e6f9fbd595cd40", pins)
+        self.assertIn('BASE_MODEL_ID="FunAudioLLM/Fun-CosyVoice3-0.5B-2512"', pins)
+        self.assertIn('BASE_MODEL_REVISION="29e01c4e8d000f4bcd70751be16fa94bf3d85a18"', pins)
         self.assertIn("Thorsten-Voice/CosyVoice3", pins)
         self.assertIn('source "$SCRIPT_DIR/model-source.sh"', source)
-        self.assertIn('"$BASE_MODEL_ID" --revision "$BASE_MODEL_REVISION"', source)
-        self.assertIn('--revision "$THORSTEN_MODEL_REVISION"', source)
+        self.assertIn('"$VENV/bin/python" "$SCRIPT_DIR/download-hf-models.py"', source)
+        self.assertIn('--base-model-id "$BASE_MODEL_ID" --base-revision "$BASE_MODEL_REVISION"', source)
+        self.assertIn('--thorsten-model-id "$THORSTEN_MODEL_ID" --thorsten-revision "$THORSTEN_MODEL_REVISION"', source)
         self.assertIn('"$AUDIOBOOK_DATA_ROOT/models', source)
         self.assertIn("spk2info.pt", source)
         self.assertIn("3.11", source)
@@ -77,7 +80,12 @@ class TestGermanStudioRunPod(unittest.TestCase):
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
                     pins[key] = value.strip('"')
-            (model / ".studio-ready").write_text(pins["MODEL_RELEASE_ID"] + "\n", encoding="utf-8")
+            lock_sha = hashlib.sha256((ROOT / "runpod/locks/thorsten/uv.lock").read_bytes()).hexdigest()
+            release_version = (
+                f"{pins['MODEL_RELEASE_ID']}-deps-{lock_sha}"
+                f"-py-{pins['THORSTEN_PYTHON_VERSION']}-uv-{pins['UV_VERSION']}"
+            )
+            (model / ".studio-ready").write_text(release_version + "\n", encoding="utf-8")
             checksums = root / "models/thorsten-model-sha256.txt"
             checksums.write_text("".join(
                 f"{hashlib.sha256((weights / name).read_bytes()).hexdigest()}  {name}\n"

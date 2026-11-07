@@ -34,7 +34,7 @@ class TestReleaseTransaction(unittest.TestCase):
         (self.repo / "web" / "dist" / "index.html").write_text("old-ui", encoding="utf-8")
 
         self.uv = self.data / "tools" / "uv-bootstrap" / "bin" / "uv"
-        self.uv.parent.mkdir(parents=True)
+        self.uv.parent.mkdir(parents=True, exist_ok=True)
         self.uv.write_text(
             "#!/usr/bin/env bash\n"
             'if [[ "$1" == "pip" && "$2" == "freeze" ]]; then printf "fake-package==1.0\\n"; fi\n',
@@ -91,6 +91,7 @@ class TestReleaseTransaction(unittest.TestCase):
         )
         for name in ("thorsten", "web", "qwen"):
             self._create_env(name, marker=None, manifest=None)
+        self.uv.parent.mkdir(parents=True, exist_ok=True)
         (self.uv.parent / "uv").write_text(
             "#!/usr/bin/env bash\n"
             'if [[ "$1" == "pip" && "$2" == "freeze" ]]; then printf "fake-package==1.0\\n"; fi\n',
