@@ -2,12 +2,13 @@
 # Generate immutable Python and Node dependency locks for the RunPod release.
 # Run from any directory; output is placed in the supplied directory.
 set -Eeuo pipefail
-SCRIPT_DIR="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/model-pins.env"
-OUTPUT_DIR="\${1:-$REPO_DIR/build/release-locks}"
-UV="\${UV:-uv}"
-command -v "$UV" >/dev/null 2>&1 || { echo "uv is required to compile release locks." >&2; exit 1; }
+OUTPUT_DIR="$REPO_DIR/build/release-locks"
+if [[ "$#" -gt 0 ]]; then OUTPUT_DIR="$1"; fi
+UV="$(command -v uv || true)"
+[[ -n "$UV" ]] || { echo "uv is required to compile release locks." >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to create the frontend lock." >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
 
