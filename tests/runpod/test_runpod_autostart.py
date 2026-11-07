@@ -72,7 +72,7 @@ class TestRunPodAutostart(unittest.TestCase):
         self.assertIn("60 GB Network Volume", readme)
         self.assertIn("Abgrenzung: deutsches Web-Studio und ursprüngliche Konsolenanwendung", readme)
         self.assertIn("Ursprüngliche TUI (Konsole)", readme)
-        self.assertIn("keine Benutzer-Stimmklone oder Referenzaufnahme", readme)
+        self.assertIn("Keine Benutzer-Stimmklone oder Referenzaufnahme", readme)
         self.assertLess(readme.index("RunPod-Template vollständig einrichten"), readme.index("# Table of contents"))
 
     def test_generated_web_token_only_reaches_live_pod_stdout_after_health(self):
