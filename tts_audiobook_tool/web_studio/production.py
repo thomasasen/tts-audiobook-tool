@@ -7,7 +7,6 @@ disabled unless an operator has installed and auditioned a curated voice.
 from __future__ import annotations
 
 import hashlib
-import difflib
 import logging
 import sys
 from array import array
@@ -22,6 +21,8 @@ import uuid
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
+
+from tts_audiobook_tool.web_studio import asr_quality
 
 VOICE_ID = "thorsten-cosyvoice3"
 SAMPLE_TEXT = "Guten Tag. Dieses Fachbuch erklärt, wie gute Entscheidungen im Vertrieb entstehen."
@@ -326,35 +327,12 @@ def _audio_quality(path: Path, expected: str) -> dict:
                 warnings.append("Mindestens drei Sekunden fast vollständige Stille.")
             if seen and clipped / seen >= 0.01:
                 warnings.append("Mögliche Übersteuerung / Clipping.")
-    result = {"status": "not_checked", "warnings": warnings, "asr_similarity": None}
-    name = os.environ.get("AUDIOBOOK_STUDIO_ASR_MODEL", "")
-    if not name:
-        result["reason"] = "ASR nicht aktiviert."
-        return result
-    if name not in ("tiny", "base", "small", "medium"):
-        result["reason"] = "Ungültige Whisper-Modellkonfiguration."
-        return result
-    global _ASR_MODEL
-    try:
-        if _ASR_MODEL is None:
-            from faster_whisper import WhisperModel
-            _ASR_MODEL = WhisperModel(name, device="cpu", compute_type="int8")
-        transcript_segments, _ = _ASR_MODEL.transcribe(str(path), language="de", beam_size=3)
-        transcript = " ".join(s.text.strip() for s in transcript_segments).strip()
-        expected_words = re.findall(r"\w+", expected.casefold(), flags=re.UNICODE)
-        actual_words = re.findall(r"\w+", transcript.casefold(), flags=re.UNICODE)
-        similarity = difflib.SequenceMatcher(a=expected_words, b=actual_words, autojunk=False).ratio()
-        result["status"] = "review" if similarity < 0.75 else "passed"
-        result["asr_similarity"] = round(similarity, 3)
-        result["transcript"] = transcript[:12000]
-        if similarity < 0.75:
-            warnings.append("ASR und erwarteter Text weichen deutlich voneinander ab.")
-        # This is a heuristic token similarity, not an accuracy/word-error-rate claim.
-        return result
-    except Exception:
-        result["status"] = "unavailable"
-        result["reason"] = "Whisper-Prüfung nicht verfügbar. Manuelle Hörkontrolle nötig."
-        return result
+    # CPU ASR is optional, but its absence must never count as a checked
+    # segment. The helper reports real runtime state and keeps private
+    # transcriptions out of persisted metadata.
+    result = asr_quality.evaluate(path, expected)
+    result["warnings"] = warnings + result["warnings"]
+    return result
 
 
 def _synthesize(text: str, path: Path, on_progress=None) -> float:
@@ -1004,23 +982,38 @@ def quality_report(project_id: str, job_id: str) -> dict:
     for index in range(job["total"]):
         meta = _jobs_dir(job_id) / "audio" / f"{index:07d}.json"
         if not meta.is_file():
+            # Missing segment metadata must not claim that the (possibly
+            # unavailable) ASR step has taken place.
+            issues.append({"index": index, "status": "not_checked",
+                           "reason": "Kein Segmentprüfbericht vorhanden.",
+                           "warnings": [], "asr_similarity": None})
             continue
         try:
             info = json.loads(meta.read_text(encoding="utf-8"))
             quality = info.get("quality", {})
-            if quality.get("status") in ("passed", "review"):
+            if not isinstance(quality, dict):
+                raise ValueError("Invalid quality metadata")
+            status = quality.get("status", "not_checked")
+            if status in ("passed", "review"):
                 checked += 1
-            if quality.get("status") in ("review", "unavailable") or quality.get("warnings"):
+            if status != "passed" or quality.get("warnings"):
                 issues.append({
                     "index": index,
-                    "status": quality.get("status", "not_checked"),
+                    "status": status,
+                    "reason": quality.get("reason") or (
+                        "ASR-Prüfung nicht durchgeführt." if status == "not_checked" else ""),
                     "warnings": quality.get("warnings", []),
                     "asr_similarity": quality.get("asr_similarity"),
+                    "asr_wer": quality.get("asr_wer"),
+                    "asr_cer": quality.get("asr_cer"),
+                    "asr_number_mismatch": quality.get("asr_number_mismatch", False),
                 })
         except (OSError, ValueError, TypeError):
-            issues.append({"index": index, "status": "unavailable",
-                           "warnings": ["Segmentprüfbericht beschädigt."]})
-    return {"checked": checked, "total": job["total"], "issues": issues}
+            issues.append({"index": index, "status": "not_checked",
+                           "reason": "Segmentprüfbericht beschädigt.",
+                           "warnings": [], "asr_similarity": None})
+    return {"checked": checked, "unchecked": job["total"] - checked,
+            "total": job["total"], "issues": issues}
 
 
 def retry_segment(project_id: str, job_id: str, index: int) -> dict:

@@ -60,7 +60,7 @@ Eine Zeile ist ein eigenständig prüfbares PR-Arbeitspaket; nur nachgewiesene A
 
 | Erledigt | Paket | Priorität | Voraussetzungen | Umfang | Ziel |
 |---|---|---|---|---|---|
-| [ ] | A01 | P0 | keine | S | ASR-Installation und ehrliche Betriebsanzeige |
+| [x] | A01 | P0 | keine | S | ASR-Installation und ehrliche Betriebsanzeige |
 | [ ] | A02 | P0 | keine | S | Kapitel-IDs statt Titel für M4B-Marker |
 | [ ] | A03 | P1 | keine | M | Reproduzierbare Releases, Abhängigkeiten und Modelle |
 | [ ] | A04 | P2 | keine | M | Speicherfreundliche, authentifizierte Downloads |
@@ -295,7 +295,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 
 | Paket | Status | PR / Commit | Gezielt ausgeführte Tests und Ergebnis | Offene Risiken / Freigabe |
 |---|---|---|---|---|
-| A01 | OFFEN | — | — | — |
+| A01 | FERTIG (PR offen; nicht in master) | [PR #15](https://github.com/thomasasen/tts-audiobook-tool/pull/15), [validierter Code-Commit 1cd6f6e](https://github.com/thomasasen/tts-audiobook-tool/commit/1cd6f6e9ddc23b5b408b36549407c6b1e53d168c) | [Studio CI #42371205695](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371205695): backend, frontend, Browser, isolierte Web-Runtime und echte CPU-ASR grün; [RunPod static #42371205700](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371205700) grün. Zusätzliche plan-only Head-CI nach Commit erneut prüfen. | CPU-tiny-Smoke ist keine Hörabnahme, keine RunPod-/GPU-Inferenz; produktiver Release weiter gesperrt |
 | A02 | OFFEN | — | — | — |
 | A03 | OFFEN | — | — | — |
 | A04 | OFFEN | — | — | — |
@@ -313,6 +313,15 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | E03 | OFFEN / GPU- UND HÖRABNAHME VORAUSGESETZT | — | — | — |
 
 Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄLLT (fachliche Begründung). Abhaken nur bei FERTIG; einmalige Statushinweise ändern die Checkbox nicht.
+
+### A01 – technische Umsetzung im offenen PR #15 (07.11.2026)
+
+**Geprüfter Ausgangsstand:** `master` bei `6e59661d52728b09c7f4d5f3b76e1d5686364782`. PR #6 und #1 sind unabhängig offen; PR #14 ist gemergt. Der Web-Venv deklarierte ASR nicht, während `start-web.sh` `small` anforderte.
+
+**Änderungen auf `fix/a01-asr-quality-readiness`:**
+`tts_audiobook_tool/web_studio/asr_quality.py` (Laufzeitstatus, CPU-Inferenz, Metriken), `production.py` (Sicherheits- und Prüfbericht-Integration), `app.py` (authentifizierte Capabilities), `web/requirements-runtime.txt`, `runpod/install-web.sh`, `runpod/start-web.sh`, `web/src/studio.tsx`, `tests/web/test_asr_quality.py`, `tests/web/test_studio_production.py`, `tests/web/browser_smoke.py`, `runpod/asr_cpu_smoke.py`, `.github/workflows/german-audiobook-studio.yml` und `docs-dev/asr-quality-checks.md`.
+
+**Vertrag/Risiken:** Keine Änderung am Project-V5-Schema oder Originaltext. ASR bleibt nur Verdachtsprüfung, bei Fehler `not_checked`. Bereits gespeicherte Beta-Segmentprüfungen sind abwärtskompatibel lesbar; frühere private Transkripte werden nicht migriert. `small` wird erst beim echten Einsatz geladen. **Nachweis:** Auf Code-Head `1cd6f6e9ddc23b5b408b36549407c6b1e53d168c` bestanden: Python-Webtests, Browser-Chromium, Frontend-Build, echte isolierte Web-Venv-Installation, RunPod-Static und realer deutscher CPU-`tiny`-Whisper-Smoke mit Negativfall (Actions-IDs in der Tabelle). Der abschließende plan-only Head muss in CI ebenfalls grün sein; vor einem Merge bitte exakt den finalen PR-Head prüfen. CPU-`small` auf RunPod, GPU und menschliches Anhören bleiben separate **Release-Gates**, keine A01-Behauptung.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 

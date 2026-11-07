@@ -21,6 +21,10 @@ verify_web_runtime() {
 import torch
 assert torch.__version__.split("+")[0] == "2.8.0", torch.__version__
 # Never initialize CUDA from the web process. Thorsten owns the GPU runtime.
+from importlib.metadata import version
+assert version("faster-whisper") == "1.2.1"
+assert version("ctranslate2") == "4.7.1"
+from faster_whisper import WhisperModel  # Must import in the isolated web venv
 from fastapi import FastAPI
 import av, soundfile, numpy
 from tts_audiobook_tool.web_studio.app import app

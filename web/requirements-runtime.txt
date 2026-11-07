@@ -3,6 +3,9 @@
 # Torch 2.8.0 CPU-only is installed separately from the official PyTorch CPU index.
 -r requirements.txt
 httpx==0.28.1
+# CPU-only German ASR checks; same compatible versions as the Qwen environment.
+faster-whisper==1.2.1
+ctranslate2==4.7.1
 av==18.1.0
 soundfile==0.13.1
 numpy>=1.26,<3

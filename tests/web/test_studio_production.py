@@ -542,3 +542,43 @@ def test_previously_planned_job_cannot_mix_changed_voice_weights(env, monkeypatc
         db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job["id"],))
     with pytest.raises(ValueError, match="Modellgewichte"):
         production._run(job["id"])
+
+
+def test_quality_report_counts_disabled_and_missing_as_unchecked(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job = production.create_job(project_id)
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='generated',done=3 WHERE id=?", (job["id"],))
+
+    audio_dir = production._jobs_dir(job["id"]) / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    (audio_dir / "0000000.json").write_text(
+        json.dumps({"quality": {"status": "passed", "warnings": [],
+                                "asr_wer": 0.0, "asr_cer": 0.0}}),
+        encoding="utf-8",
+    )
+    (audio_dir / "0000001.json").write_text(
+        json.dumps({"quality": {"status": "not_checked", "asr_state": "missing",
+                                "reason": "ASR ist in dieser Web-Runtime nicht installiert.",
+                                "warnings": []}}),
+        encoding="utf-8",
+    )
+    endpoint = f"/api/projects/{project_id}/jobs/{job['id']}/quality"
+    assert env.get(endpoint).status_code == 401
+    report = env.get(endpoint, headers=HEADERS).json()
+    assert report["checked"] == 1
+    assert report["unchecked"] == 2
+    assert report["total"] == 3
+    assert [issue["index"] for issue in report["issues"]] == [1, 2]
+    assert report["issues"][0]["status"] == "not_checked"
+    assert report["issues"][1]["reason"] == "Kein Segmentprüfbericht vorhanden."
+
+
+def test_asr_capabilities_are_authenticated_and_explicit(env, monkeypatch):
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_ASR_MODEL", "off")
+    assert env.get("/api/capabilities").status_code == 401
+    result = env.get("/api/capabilities", headers=HEADERS).json()
+    assert result["asr"]["state"] == "disabled"
+    assert result["asr"]["enabled"] is False

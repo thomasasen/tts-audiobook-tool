@@ -49,8 +49,8 @@ type Job = {
 type ActivityEvent = {at: string; message: string}
 type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string; duration_seconds?: number}
 type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null; eta_sample_count?: number; calculated_at?: string}
-type QualityIssue = {index: number; status: string; warnings: string[]; asr_similarity?: number | null}
-type QualityReport = {checked: number; total: number; issues: QualityIssue[]}
+type QualityIssue = {index: number; status: string; reason?: string; warnings: string[]; asr_similarity?: number | null; asr_wer?: number | null; asr_cer?: number | null; asr_number_mismatch?: boolean}
+type QualityReport = {checked: number; unchecked?: number; total: number; issues: QualityIssue[]}
 const STATUS_LABELS: Record<string, string> = {
   queued: 'Warteschlange', running: 'Wird vertont', paused: 'Pausiert',
   failed: 'Fehlgeschlagen', generated: 'Audio erzeugt',
@@ -66,6 +66,7 @@ type Capabilities = {
   voice_installed: boolean
   voice_approved: boolean
   reason: string
+  asr?: {state: string; message: string; enabled: boolean; model: string | null}
 }
 
 async function apiResponseError(response: Response, path: string): Promise<Error> {
@@ -655,6 +656,7 @@ export default function Studio() {
             {view === 'export' && active && <>
               <div className="page-heading"><div><p className="eyebrow">PRODUKTION UND EXPORT</p><h1>Hörbuch erstellen</h1><p>{active.title}</p></div></div>
               <div className="panel production-panel">
+                {capabilities?.asr && <p className="helper" role="status">ASR-Qualitätskontrolle: {capabilities.asr.message}</p>}
                 {!job ? <>
                   <h2>Vertonung vorbereiten</h2>
                   <p>{capabilities?.reason ?? 'Prüfe die installierten Stimmen.'}</p>
@@ -718,9 +720,10 @@ export default function Studio() {
                   </div>}
                   {quality && <section className="quality-check" aria-label="Qualitätskontrolle">
                     <h3>Qualitätskontrolle</h3>
-                    <p>{quality.checked} von {quality.total} Segmenten per ASR geprüft. Automatische Hinweise erfordern menschliche Kontrolle.</p>
+                    <p>{quality.checked} von {quality.total} Segmenten per ASR geprüft. {quality.total - quality.checked} nicht per ASR geprüft. Automatische Hinweise erfordern menschliche Kontrolle.</p>
                     {quality.issues.length === 0 ? <p>Keine gemeldeten Auffälligkeiten. Eine vollständige Hörabnahme ersetzt dies nicht.</p> : <ul>{quality.issues.map(issue =>
-                      <li key={issue.index}><strong>Segment {issue.index + 1}</strong> · {issue.warnings.join(' ') || 'Spracherkennung nicht verfügbar.'}
+                      <li key={issue.index}><strong>Segment {issue.index + 1}</strong> · {issue.warnings.join(' ') || issue.reason || 'ASR-Prüfung nicht durchgeführt.'}
+                        {issue.asr_wer != null && <small> ASR-Verdacht: WER {Math.round(issue.asr_wer * 100)} %, CER {Math.round((issue.asr_cer ?? 0) * 100)} %; kein Beweis für einen Sprachfehler.</small>}
                         <div className="job-actions">
                           <button className="outline-btn" disabled={busy} onClick={() => loadAudio('/api/projects/' + active.id + '/jobs/' + job.id + '/segments/' + issue.index)}><PlayCircle size={17}/> Anhören</button>
                           <button className="outline-btn" disabled={busy || !['generated','completed'].includes(job.status)} onClick={() => retrySegment(issue.index)}><RotateCcw size={17}/> Neu erzeugen</button>
