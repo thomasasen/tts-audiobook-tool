@@ -119,13 +119,18 @@ im privaten Docker Start Command. Für ein Rollback wird entsprechend der
 zuvor tatsächlich getestete Commit eingesetzt. Die Projekt-/Buch-/Audiobestände
 auf `/workspace/audiobook-data` werden dabei nicht zurückgesetzt.
 
-**Release-Grenze:** Diese Funktion fixiert bisher **nur den
-Repository-Quellcode**. Der Thorsten-Installer lädt weiterhin nicht vollständig
-gepinntes Hugging-Face-Modellmaterial und einige transitive Python-/Node-
-Abhängigkeiten können sich ändern. Deshalb ist dies noch kein vollständig
-reproduzierbares Modell-Release. A03 bleibt bis zu verifizierten Upstream-
-Revisionspins, Dependency-Locks und echten Cache-/Rollback-Tests **IN ARBEIT**.
-Bei einem fehlenden/veränderten Modell-Cache darf keine neue Hörfreigabe
-behauptet werden. Kein Container wurde mit diesem Branch gestartet oder
-abgenommen.
+**Modellrevisionen (A03, Teil 2):** Die Installation verwendet nun die in
+`runpod/model-pins.env` festgeschriebenen vollständigen Revisionen für
+CosyVoice, das Matcha-TTS-Submodul, das CosyVoice-Basismodell und das deutsche
+Thorsten-Finetuning. Installer und Vorabdownload verwenden dieselbe Release-ID.
+Die Checkout-Prüfung verifiziert Remote, vollständigen Git-Commit und den
+exakten Submodul-Commit. Ein vorhandener Ready-Marker mit abweichender Release-ID,
+veränderte Gewichte oder unmarkierte Teil-Downloads werden nicht stillschweigend
+übernommen oder neu gehasht. Eine neue Modellrevision erfordert einen bewusst
+geänderten Pin-Satz und eine neue Modellinstallation.
+
+**Noch offen:** Die vollständigen Python-/Node-Lockfiles, deren hashbasierte
+Installation sowie echte Cache-, Pod-Neustart- und Rollback-Prüfungen. A03 bleibt
+bis dahin **IN ARBEIT**. Die in der Pin-Datei dokumentierten Upstream-SHAs sind
+keine GPU- oder Hörabnahme. Es wurde kein RunPod-Container gestartet.
 

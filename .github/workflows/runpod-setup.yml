@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify shell scripts
         run: |
-          bash -n runpod/env.sh runpod/setup.sh runpod/start.sh runpod/autostart.sh runpod/install-thorsten.sh runpod/start-web.sh
+          bash -n runpod/env.sh runpod/model-source.sh runpod/setup.sh runpod/start.sh runpod/autostart.sh runpod/install-thorsten.sh runpod/prefetch-thorsten.sh runpod/install-web.sh runpod/build-web.sh runpod/upgrade-release.sh runpod/rollback-release.sh runpod/generate-release-locks.sh runpod/start-web.sh
           bash runpod/setup.sh --help
           bash runpod/start.sh --help
       - name: Run dependency-free RunPod tests

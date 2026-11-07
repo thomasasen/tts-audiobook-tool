@@ -36,7 +36,7 @@ mkdir -p "$npm_config_cache"
 echo "Building German Audiobook Studio frontend."
 (
   cd "$REPO_DIR/web"
-  npm install --no-audit --no-fund --prefer-offline
+  npm ci --no-audit --no-fund --prefer-offline
   npm run build
 )
 test -s "$DIST" || { echo "Frontend build produced no dist/index.html." >&2; exit 1; }

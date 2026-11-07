@@ -21,7 +21,8 @@ torch==2.8.0
 torchaudio==2.8.0
 
 # PyAV and soundfile must come from wheels that bundle FFmpeg / libsndfile.
---only-binary=av,soundfile
+--only-binary=av
+--only-binary=soundfile
 audiotsm==0.1.2
 av==18.1.0
 chardet==5.2.0
@@ -53,4 +54,5 @@ xxhash==3.5.0
 
 # dev
 pillow==12.1.0
+setuptools==80.9.0
 
