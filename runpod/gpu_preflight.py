@@ -38,7 +38,9 @@ raise SystemExit(0 if result["cuda_operational"] else 1)
 
 
 def check_runtime(name: str, root: Path, *, timeout: int = 50) -> dict:
-    executable = root / "venvs" / name / "bin" / "python"
+    # Use the official PyTorch Pod image's system Python for a cheap CUDA
+    # execution gate BEFORE any giant model dependency or weight download.
+    executable = Path(sys.executable) if name == "system" else root / "venvs" / name / "bin" / "python"
     if not executable.is_file():
         return {"name": name, "cuda_operational": False, "reason": "runtime not installed"}
     try:
@@ -91,7 +93,7 @@ def inspect(root: Path, names: tuple[str, ...]) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", choices=("qwen", "thorsten", "both"), default="both")
+    parser.add_argument("--env", choices=("system", "qwen", "thorsten", "both"), default="both")
     parser.add_argument("--json", action="store_true", help="print concise JSON diagnostic")
     args = parser.parse_args()
     root = Path(os.environ.get("AUDIOBOOK_DATA_ROOT",
