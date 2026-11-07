@@ -295,9 +295,9 @@ class BeautifulSoupEpubChapterTextExtractor:
                 continue
             classes = [str(value).lower() for value in initial.get("class", [])]
             marked = any(
-                re.search(r"(?:drop[-_]?cap|initial|^block_\\d+$)", value)
+                re.search(r"(?:drop[-_]?cap|initial|^block_\d+$)", value)
                 for value in classes
-            ) or "float:left" in re.sub(r"\\s+", "", str(initial.get("style", "")).lower())
+            ) or "float:left" in re.sub(r"\s+", "", str(initial.get("style", "")).lower())
             if not marked:
                 continue
             prefix = initial.get_text("", strip=True)
