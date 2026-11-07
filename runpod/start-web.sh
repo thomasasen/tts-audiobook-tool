@@ -35,7 +35,9 @@ if (( ${#AUDIOBOOK_STUDIO_TOKEN} < 32 )); then
 fi
 export AUDIOBOOK_STUDIO_TOKEN
 export AUDIOBOOK_STUDIO_DATA_DIR="$AUDIOBOOK_DATA_ROOT"
-# Optional on-device Whisper ASR checks. False positives are review flags, not errors.
+# Optional on-device CPU Whisper ASR checks. Installed/verified by install-web.sh.
+# The first quality check downloads the chosen model onto the private pod.
+# Set AUDIOBOOK_STUDIO_ASR_MODEL=off to disable it; skipped checks are visible.
 if [[ ! -v AUDIOBOOK_STUDIO_ASR_MODEL ]]; then
   export AUDIOBOOK_STUDIO_ASR_MODEL=small
 fi
