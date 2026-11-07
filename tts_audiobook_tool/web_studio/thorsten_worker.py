@@ -50,9 +50,40 @@ def _cpu_speech_tokenizer_frontend():
         onnxruntime.InferenceSession = original_session
 
 
+def _cuda_preflight(torch) -> bool:
+    """Require an actual CUDA allocation before loading the speech model.
+
+    Some RunPod hosts report an idle device with nvidia-smi and
+    torch.cuda.is_available(), but cudaSetDevice fails with CUDA error 46.
+    """
+    try:
+        if not torch.cuda.is_available():
+            raise RuntimeError("Keine CUDA-fähige GPU für PyTorch verfügbar.")
+        test_tensor = torch.ones(16, device="cuda:0")
+        torch.cuda.synchronize()
+        del test_tensor
+        return True
+    except Exception as exc:
+        # Errors may include internal driver details; never echo user text.
+        summary = str(exc).splitlines()[0][:240]
+        print(
+            f"Thorsten CUDA preflight FAILED: {type(exc).__name__}: {summary}. "
+            "Check GPU host allocation and run runpod/gpu_preflight.py.",
+            file=sys.stderr,
+        )
+        return False
+
+
 def main() -> None:
+    # Keep all import output off the JSON protocol pipe.
     with redirect_stdout(sys.stderr):
         import torch
+        cuda_ready = _cuda_preflight(torch)
+    if not cuda_ready:
+        print(json.dumps({"ready": False, "error_code": "CUDA_UNAVAILABLE"}), flush=True)
+        return
+
+    with redirect_stdout(sys.stderr):
         import torchaudio
         from cosyvoice.cli.cosyvoice import CosyVoice3
 
