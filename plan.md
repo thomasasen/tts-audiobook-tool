@@ -446,3 +446,24 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 6. Nächstes **freies** Paket oder ausdrücklich erforderliche manuelle Abnahme.
 
 **Startauftrag für neue Chats:** Dieses plan.md und AGENTS.md lesen, aktuellen master / PRs verifizieren und die erste noch offene, nicht blockierte Aufgabe in der Reihenfolge aus Abschnitt 3 tatsächlich implementieren. Keine bloße Neuplanung; keine erfundenen Tests; keine ungenehmigten Merges.
+
+### B01 – Offline-Nachprüfung und gezielte Import-Reparaturen (PR #29, 07.11.2026)
+
+**Arbeitsstand:** Der Feature-Branch `fix/b01-private-epub-offline-acceptance`
+enthält gezielte Korrekturen für CSS-bestätigte Drop-Caps,
+XHTML-Inhaltsverzeichnis-Titel, getrennte technische
+Übersetzungs-Attributionen und bildbasierte Szenentrenner. Synthetische
+Unit-/Negativ- und Importtests ergänzen den bisherigen Testbestand;
+der Fokus-CI-Workflow wurde auf Audit, Skip-Detektor und CSS ausgedehnt.
+
+**Abnahmegrenze:** Die CRC-/Manifest-/Spine-/NCX-Prüfung der privaten Datei
+erfolgte ausschließlich in der privaten Arbeitsumgebung. Ohne
+EbookLib/Python-Laufzeit des vollständigen Projekts kann der kanonische
+`EpubExtractor` mit genau dieser privaten Datei hier noch nicht ausgeführt
+werden. Die echte Project-V5-Persistenz dieses privaten Buches ist deshalb
+nicht nachgewiesen. Die Redaktionsfreigabe der Fachgrafiken steht ebenso aus.
+Synthetische CI-Tests und strukturelle Preflights ersetzen dies nicht.
+
+**Status:** B01 bleibt **offen**; PR #29 darf erst nach erfolgreicher CI und
+geschlossenem Qualitätsgate gemergt werden. Bei fehlender vollständiger
+Offline-Abnahme ist ein Merge gemäß Auftrag ausdrücklich zurückzuhalten.
