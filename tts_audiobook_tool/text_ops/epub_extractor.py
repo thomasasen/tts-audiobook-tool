@@ -1416,6 +1416,22 @@ class EpubExtractor:
         reading_spine_count = sum(text_bearing_flags)
         reading_spine_position = 0
         for source_chapter, is_text_bearing in zip(source_chapter_candidates, text_bearing_flags):
+            technical_attribution = EpubSectionSkipDetector.detect_technical_translation_attribution_skip(
+                source_chapter.href, source_chapter.title, source_chapter.html,
+            )
+            forced_include = is_manually_included(source_chapter.href)
+            if technical_attribution.should_skip:
+                if not forced_include:
+                    record_source(source_chapter.href, source_chapter.title, "technical-attribution",
+                                  technical_attribution.reason, source_chapter.html)
+                    EpubExtractor.append_skipped_section_warning(
+                        warnings, significant_warnings, source_chapter, technical_attribution.reason,
+                    )
+                    continue
+                source_chapter.skip_override_reason = technical_attribution.reason
+                record_source(source_chapter.href, source_chapter.title, "technical-attribution",
+                              technical_attribution.reason, source_chapter.html,
+                              status="retained", can_restore=True, overridden=True)
             publication_metadata_skip_decision = EpubSectionSkipDetector.detect_publication_metadata_skip(
                 reading_spine_position,
                 reading_spine_count,
