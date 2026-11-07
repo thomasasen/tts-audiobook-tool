@@ -13,6 +13,15 @@ type Chapter = {
   characters: number
   is_toc: boolean
 }
+type ContentAudit = {
+  version: number
+  status: string
+  summary: Record<string, number>
+  resources: Array<{index: number; href: string; status: string; characters?: number; preview?: string}>
+  skipped: Array<{index: number; href?: string; status: string; reason: string; preview?: string}>
+  warnings: string[]
+  review_notes: string[]
+}
 type BookProject = {
   id: string
   title: string
@@ -25,6 +34,7 @@ type BookProject = {
   chapters?: Chapter[]
   suggested_start?: number
   warnings?: string[]
+  content_audit?: ContentAudit
 }
 type VoiceCandidate = {
   id: string
@@ -593,6 +603,24 @@ export default function Studio() {
             </>}
             {view === 'chapters' && active && <>
               <div className="page-heading"><div><button className="back-link" onClick={() => setView('library')}><ArrowLeft size={16}/> Bibliothek</button><p className="eyebrow">KAPITEL VORBEREITEN</p><h1>{active.title}</h1><p>Lege fest, welcher Abschnitt als Erstes vorgelesen werden soll.</p></div></div>
+              {active.content_audit && <section className="panel audit-panel" aria-labelledby="content-audit-title">
+                <div className="panel-head"><h2 id="content-audit-title">EPUB-Inhaltsprüfung</h2><span className={`audit-status ${active.content_audit.status === 'inventory-only' ? 'ok' : 'review'}`}>{active.content_audit.status === 'inventory-only' ? 'Inventur vollständig' : active.content_audit.status === 'audit-error' ? 'Prüfung fehlgeschlagen' : 'Prüfung erforderlich'}</span></div>
+                <p className="helper">Quellinventur des EPUB-Spine im Vergleich zu den übernommenen Vorleseabschnitten. Die Prüfung ändert keine Inhalte und ersetzt keine redaktionelle Freigabe.</p>
+                <div className="audit-grid">
+                  <div><strong>{active.content_audit.summary.spine_items ?? 0}</strong><small>Spine-Einträge</small></div>
+                  <div><strong>{active.content_audit.summary.retained_spine_items ?? 0}</strong><small>zugeordnet</small></div>
+                  <div><strong>{active.content_audit.summary.skipped_spine_items ?? 0}</strong><small>nicht zugeordnet</small></div>
+                  <div><strong>{(active.content_audit.summary.source_tables ?? 0) + (active.content_audit.summary.source_lists ?? 0)}</strong><small>Tabellen und Listen</small></div>
+                  <div><strong>{active.content_audit.summary.source_images ?? 0}</strong><small>Abbildungen</small></div>
+                  <div><strong>{active.content_audit.summary.source_mathml ?? 0}</strong><small>MathML-Elemente</small></div>
+                </div>
+                {active.content_audit.skipped.length > 0 && <details className="audit-skipped" open>
+                  <summary>{active.content_audit.skipped.length} Quellressourcen ohne eindeutige Kapitelzuordnung</summary>
+                  <ul>{active.content_audit.skipped.map((item, i) => <li key={`${item.href ?? item.index}-${i}`}><strong>{item.href ?? `Spine-Eintrag ${item.index + 1}`}</strong><span>{item.reason}</span>{item.preview && <small>{item.preview}</small>}</li>)}</ul>
+                </details>}
+                {active.content_audit.review_notes.map((note, i) => <p className="audit-note" key={i}>{note}</p>)}
+                {active.content_audit.warnings.length > 0 && <details className="warning-details"><summary><AlertCircle size={16}/> {active.content_audit.warnings.length} Audit-Hinweise</summary><ul>{active.content_audit.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
+              </section>}
               {active.warnings && active.warnings.length > 0 && <details className="warning-details"><summary><AlertCircle size={17}/> {active.warnings.length} Hinweise zur EPUB-Struktur</summary><ul>{active.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
               <div className="chapter-layout">
                 <section className="panel chapter-panel"><div className="panel-head"><h2>Kapitelübersicht</h2><span className="count">{allChapters.length} Abschnitte</span></div>

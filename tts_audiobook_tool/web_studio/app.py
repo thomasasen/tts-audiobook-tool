@@ -147,6 +147,11 @@ def _extract(path: Path):
         raise ValueError("Das EPUB enthält keine auslesbaren Kapitel.")
     if len(result.chapters) > MAX_CHAPTERS:
         raise ValueError("Das EPUB enthält zu viele Kapitel.")
+    # The audit is read-only and supplements, never replaces, the canonical parser.
+    from tts_audiobook_tool.text_ops.epub_content_audit import audit_epub_content
+    result.content_audit = audit_epub_content(
+        str(path), result.chapters, result.significant_warnings or result.warnings
+    )
     return result
 
 
@@ -171,6 +176,12 @@ def _catalogue(result) -> dict:
         "chapters": chapters,
         "suggested_start": start,
         "warnings": (result.significant_warnings or result.warnings)[:50],
+        "content_audit": getattr(result, "content_audit", {
+            "version": 1, "status": "unavailable", "summary": {},
+            "resources": [], "skipped": [],
+            "warnings": ["EPUB-Content-Audit nicht verfügbar."],
+            "review_notes": ["Importinhalt manuell kontrollieren."],
+        }),
     }
 
 

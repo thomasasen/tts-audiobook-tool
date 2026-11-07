@@ -38,6 +38,14 @@ def test_real_epub_import_foreword_selection_project_v5_and_queue(client, monkey
     assert response.status_code == 201, response.text[:1500]
     project = response.json()
     chapters = project["chapters"]
+    audit = project["content_audit"]
+    assert audit["version"] == 1
+    assert audit["status"] in {"review-required", "inventory-only"}
+    assert audit["summary"]["spine_items"] >= len(chapters)
+    assert "source_tables" in audit["summary"]
+    assert isinstance(audit["resources"], list)
+    assert isinstance(audit["skipped"], list)
+    assert audit["review_notes"], "Audit must explain that source inventory is not editorial approval"
     titles = [c["title"] for c in chapters]
     assert "Vorwort" in titles, titles
     assert "Kapitel 1" in titles, titles
