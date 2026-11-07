@@ -17,6 +17,14 @@ actual_uv_version="$("$UV" --version | awk '{print $2}')"
 command -v npm >/dev/null 2>&1 || { echo "npm is required to create the frontend lock." >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
 OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
+# Reuse committed lock files as constraints so routine verification does not
+# silently upgrade transitive packages merely because a new version appeared.
+for lock in requirements-qwen3tts.lock.txt requirements-moss.lock.txt web/requirements-runtime.lock.txt web/torch-cpu.lock.txt; do
+  if [[ -s "$REPO_DIR/$lock" ]]; then
+    mkdir -p "$OUTPUT_DIR/$(dirname "$lock")"
+    cp "$REPO_DIR/$lock" "$OUTPUT_DIR/$lock"
+  fi
+done
 "$UV" python install "$WEB_PYTHON_VERSION" "$THORSTEN_PYTHON_VERSION"
 
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
@@ -26,7 +34,11 @@ OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
   --index-url https://download.pytorch.org/whl/cpu --python "$WEB_PYTHON_VERSION" \
   --python-version 3.12 --output-file "$OUTPUT_DIR/web/torch-cpu.lock.txt" \
   "$REPO_DIR/web/torch-cpu.in"
-"$UV" lock --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
+if [[ -s "$REPO_DIR/runpod/locks/thorsten/uv.lock" ]]; then
+  "$UV" lock --locked --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
+else
+  "$UV" lock --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
+fi
 mkdir -p "$OUTPUT_DIR/runpod/locks/thorsten"
 cp "$REPO_DIR/runpod/locks/thorsten/uv.lock" "$OUTPUT_DIR/runpod/locks/thorsten/uv.lock"
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
