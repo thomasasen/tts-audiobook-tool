@@ -38,6 +38,9 @@ class TestFirstStart(unittest.TestCase):
         (fake / "apt-get").write_text("#!/bin/sh\nexit 0\n")
         (fake / "apt-get").chmod(0o755)
         uv.write_text("""#!/bin/sh
+# The installer also asks uv for managed Python 3.11; it must not be
+# misclassified as an unexpected model download.
+if [ "$*" = "python install 3.11" ]; then exit 0; fi
 printf '%s\n' "$*" >> "$FAKE_DOWNLOAD_AUDIT"
 case "$*" in
   *FunAudioLLM/Fun-CosyVoice3-0.5B-2512*)
