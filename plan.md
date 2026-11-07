@@ -295,12 +295,12 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 
 | Paket | Status | PR / Commit | Gezielt ausgeführte Tests und Ergebnis | Offene Risiken / Freigabe |
 |---|---|---|---|---|
-| A01 | IN MASTER (technisch abgeschlossen) | [PR #15](https://github.com/thomasasen/tts-audiobook-tool/pull/15), [validierter Code-Commit 1cd6f6e](https://github.com/thomasasen/tts-audiobook-tool/commit/1cd6f6e9ddc23b5b408b36549407c6b1e53d168c) | [Studio CI #42371205695](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371205695): backend, frontend, Browser, isolierte Web-Runtime und echte CPU-ASR grün; [RunPod static #42371205700](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371205700) grün. Zusätzliche plan-only Head-CI nach Commit erneut prüfen. | CPU-tiny-Smoke ist keine Hörabnahme, keine RunPod-/GPU-Inferenz; produktiver Release weiter gesperrt |
-| A02 | FERTIG (Integrations-PR offen) | [PR #16](https://github.com/thomasasen/tts-audiobook-tool/pull/16), [Code-Commit 3a0a731](https://github.com/thomasasen/tts-audiobook-tool/commit/3a0a7310ea2214fbc063cf0f21dcc1e866cc0286) | [Studio CI #42371605004](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371605004): Backend inkl. echtem AAC/M4B-Decode, Browser, Frontend, isolierte Runtime grün auf Code-Head; plan-only Head separat nachprüfen | Keine echte GPU/Hörabnahme; vor Merge A01-PR #15/plan.md koordinieren |
-| A03 | IN ARBEIT (nur Quellcode-Pinning) | [integration of Draft PR #17](https://github.com/thomasasen/tts-audiobook-tool/pull/17) | Shell- und Offline-Konfigurationstests ergänzt; CI auf aktuellem SHA noch zu prüfen | Ungepinntes Hugging-Face-Modellmaterial/transitive Abhängigkeiten; echter Pod-/Rollback-Test ausstehend. Nicht releasefähig. |
-| A04 | FERTIG (INTEGRATION GEPRÜFT) | [PR #18](https://github.com/thomasasen/tts-audiobook-tool/pull/18), [Code-Commit 53bb76e](https://github.com/thomasasen/tts-audiobook-tool/commit/53bb76e2e42042a906913b2c3f686666194527ec) | [Studio CI #42372700653](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42372700653): Backend, Frontend, Browser (direktes Streamen und >96-MB-Fallback), isolierte Runtime grün | Native File System Access API nur in unterstützten Desktop-Browsern; echte große RunPod-Datei und Nutzerfreigabe noch offen |
-| B01 | IN ARBEIT (navigationsbedingter Textverlust behoben) | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22) | Zwei synthetische EPUB-Navigationsfixture-Regressionen; finale CI ausstehend | Vollständige Spine-/Fußnoten-/Tabellen-/Formelprüfung, verlustfreie Abdeckung und private EPUB-Hörprüfung noch offen |
-| B02 | IN ARBEIT (deterministische v2-Regeln integriert) | PR folgt | Deutsche Zahlen-/Euro-/Prozent-Goldens, Glossar- und Legacy-Fingerprinttests eingecheckt; CI ausstehend | Noch keine Modell-/Hörabnahme; mehrdeutige Datums-/Zeit-/ID-Ausdrücke bewusst unverändert; Preview-Parität B04 ausstehend |
+| A01 | IN MASTER · technische Abnahme bestanden | [PR #15](https://github.com/thomasasen/tts-audiobook-tool/pull/15) | Sechs CI-Checks einschließlich echter deutscher CPU-ASR auf finalem Commit erfolgreich | Keine GPU-/Hörabnahme; Produktrelease offen |
+| A02 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #19](https://github.com/thomasasen/tts-audiobook-tool/pull/19) (ersetzt #16) | Fünf CI-Checks auf kombiniertem A01/A02-Stand grün, einschließlich echtem M4B-Decode | Keine menschliche Hörabnahme |
+| A03 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [Integrations-PR #21](https://github.com/thomasasen/tts-audiobook-tool/pull/21) (ersetzt #17) | Sechs CI-Checks grün, Quellcode-Commit-Pinning optional | Modellrevisionen, transitive Abhängigkeiten, echter Pod-Rollback und GPU-Abnahme fehlen |
+| A04 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #20](https://github.com/thomasasen/tts-audiobook-tool/pull/20) (ersetzt #18) | Fünf CI-Checks inklusive Browser-Streaming, 96-MB-Fallback und Range-206 grün | Große echte RunPod-M4B noch nicht heruntergeladen |
+| B01 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22) | Fünf CI-Checks grün, EPUB-Navigationsverlustfall mit synthetischen Fixtures behoben | Vollständige Spine-/Tabellen-/Fußnoten-/Auslassungsprüfung und private EPUB-Abnahme fehlen |
+| B02 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #23](https://github.com/thomasasen/tts-audiobook-tool/pull/23) | Fünf CI-Checks grün; Golden Cases und rückwärtskompatible Versionierung des Cache-Fingerprints | Umfangreiche Spezialfalltests, Vorschauparität B04 und Hörabnahme fehlen |
 | B03 | OFFEN | — | — | — |
 | B04 | OFFEN | — | — | — |
 | C01 | OFFEN | — | — | — |
@@ -367,6 +367,14 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 **Evidenz:** `tests/text/test_german_speech_normalizer.py` mit Zahlen, Glossar, Schutzfällen, Alt-/Neu-Hash und Legacy-Pfad; GitHub Actions backend um diese Tests ergänzt. CPU-/Browser-/RunPod-CI des finalen Commits noch prüfen.
 
 **Offen:** Erweiterte kontextabhängige Sprache (Eigennamen, komplexe Abkürzungen, schwierige Tabellen), Quelle→Prompt-Protokoll und Produktions-Hörprobe-Parität aus B04. Noch keine reale Modell-Hörkontrolle. Daher **B02 IN ARBEIT**, keine endgültige Audioqualitätsabnahme.
+
+### Integrationsstand auf `master` vom 07.11.2026
+
+**Verifizierter Repository-Stand:** `c21d557fe91c846f04f744c2b4ce0c69b2861ef1` nach Integration von A01, A02, A03 Teil 1, A04, B01 Teil 1 und B02 Teil 1. Der Standardbranch des Repositories heißt `master`, nicht `main`; es wurde kein zusätzlicher Hauptbranch eingerichtet. Zugehörige Pull Requests und aktuelle technische Evidenz stehen in der Fortschrittstabelle.
+
+**Wichtig:** A01, A02 und A04 haben ihren offline prüfbaren technischen Umfang abgeschlossen. A03, B01 und B02 sind **nur teilweise umgesetzt**. B03, B04, C01, C02, D01, D02, D03, E01, E02 und E03 bleiben offen; bei D02/E03 fehlen echte GPU- und menschliche Hörbewertungen. Keine finale Releasefreigabe, keine Behauptung einer echten End-to-End-RunPod-Hörbuchproduktion.
+
+**Nächster technischer Arbeitsschritt:** A03 HF-Modellrevisionen und Lockfile/Checkout-Recovery fertigstellen, B01 Auslassungsreport und komplexe synthetische EPUB-Regressionen, B02 kontext- und modellabhängige Aussprache ergänzen; danach B03 NarrationPlan und B04 Buchvorschau als Basis für C-/D-Pakete.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
