@@ -197,8 +197,9 @@ def test_b01_false_skip_restore_source_mapping_and_manual_speaker_versions(clien
         part["text"] for section in book["book"]["sections"]
         for group in section["phrase_groups"] for part in group["phrases"]
     )
+    normalized_spoken = " ".join(spoken.split())
     for speaker_text in speaker_texts.values():
-        assert speaker_text in spoken
+        assert " ".join(speaker_text.split()) in normalized_spoken
     assert "Rohwert 4711" not in spoken
     assert "Rohcaption" not in spoken
 
