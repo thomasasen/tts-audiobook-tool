@@ -23,7 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tts_audiobook_tool.web_studio import asr_quality
-from tts_audiobook_tool.text_ops.german_speech_normalizer import VERSION as DE_NORMALIZER_VERSION, normalize_german_speech
+# Keep the module load lightweight for offline RunPod protocol tests.
+DE_NORMALIZER_VERSION = "de-narration-v2"
 
 VOICE_ID = "thorsten-cosyvoice3"
 SAMPLE_TEXT = "Guten Tag. Dieses Fachbuch erklärt, wie gute Entscheidungen im Vertrieb entstehen."
@@ -574,6 +575,9 @@ def save_glossary(project_id: str, entries: dict[str, str]) -> None:
 
 def _normalize_de(text: str, glossary: dict[str, str]) -> str:
     """Versioned v2 German prompt normalization; never changes Project V5 text."""
+    from tts_audiobook_tool.text_ops.german_speech_normalizer import VERSION, normalize_german_speech
+    if VERSION != DE_NORMALIZER_VERSION:
+        raise RuntimeError("Versionskonflikt in der deutschen Sprachnormalisierung.")
     return normalize_german_speech(text, glossary)
 
 
