@@ -75,6 +75,7 @@ exit 0
         apt.chmod(0o755)
 
         uv.write_text("""#!/bin/sh
+if [ "$1" = "--version" ]; then echo "uv 0.13.7"; exit 0; fi
 if [ "$*" = "python install 3.11.18" ]; then exit 0; fi
 printf '%s\n' "$*" >> "$FAKE_DOWNLOAD_AUDIT"
 case "$*" in
