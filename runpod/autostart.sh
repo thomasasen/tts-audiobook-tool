@@ -176,7 +176,7 @@ else
     echo "WARNING: Stale audiobook-web tmux session has no healthy server. Restarting."
     tmux kill-session -t audiobook-web
   fi
-  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\\$?; echo Web server stopped: \\$rc; exec bash"
+  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\$?; echo Web server stopped: \$rc; exec bash"
   echo "Started the Web Studio session (port ${AUDIOBOOK_STUDIO_PORT:-7860})."
 fi
 
