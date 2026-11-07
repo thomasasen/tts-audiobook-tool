@@ -254,20 +254,6 @@ if (( THORSTEN_INSTALL_OK )); then
     echo "WARNING: Thorsten model files are verified, but CUDA EXECUTION FAILED; GPU speech generation will fail."
   fi
 fi
-# Running tmux alone does not prove that uvicorn is alive: an earlier
-# crash leaves an interactive bash shell in the session. Only HTTP health
-# determines readiness. Replace dead sessions; never create duplicates.
-if curl -fsS --max-time 2 "http://127.0.0.1:${AUDIOBOOK_STUDIO_PORT:-7860}/api/health" >/dev/null 2>&1; then
-  echo "Existing Web Studio is already responding."
-else
-  if tmux has-session -t audiobook-web 2>/dev/null; then
-    echo "WARNING: Stale audiobook-web tmux session has no healthy server. Restarting."
-    tmux kill-session -t audiobook-web
-  fi
-  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\\$?; echo Web server stopped: \\$rc; exec bash"
-  echo "Started the Web Studio session (port ${AUDIOBOOK_STUDIO_PORT:-7860})."
-fi
-
 exec 3>&-
 
 if (( THORSTEN_INSTALL_OK )); then
