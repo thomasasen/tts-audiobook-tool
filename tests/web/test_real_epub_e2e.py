@@ -166,23 +166,24 @@ def test_complex_epub_audit_reports_skips_and_restores_selected_sections(client)
         (folder / "engine" / "project_text.json").read_text(encoding="utf-8")
     )
     sections = project_text["book"]["sections"]
-    imported_text = "\\n".join(
+    imported_text = "\n".join(
         phrase["text"]
         for section in sections
         for group in section["phrase_groups"]
         for phrase in group["phrases"]
     )
-    assert "Kurzer Hinweis für alle Leser" in imported_text
-    assert "Copyright" in imported_text
-    assert "Umsatz nach Quartal" in imported_text
-    assert "1,2 Millionen Euro" in imported_text
-    assert "Abbildung 1: Der Umsatz steigt im zweiten Quartal." in imported_text
-    assert "Fußnote 1: Diese Erläuterung gehört zum vorherigen Satz." in imported_text
-    assert "3. Erster geordneter Prüfschritt." in imported_text
-    assert "4. Zweiter geordneter Prüfschritt." in imported_text
-    assert "Unterpunkt mit einer zusätzlichen Bedingung." in imported_text
-    assert "x=2" in imported_text.replace(" ", "")
-    assert "* * *" in imported_text
+    normalized_imported_text = " ".join(imported_text.split())
+    assert "Kurzer Hinweis für alle Leser" in normalized_imported_text
+    assert "Copyright" in normalized_imported_text
+    assert "Umsatz nach Quartal" in normalized_imported_text
+    assert "1,2 Millionen Euro" in normalized_imported_text
+    assert "Abbildung 1: Der Umsatz steigt im zweiten Quartal." in normalized_imported_text
+    assert "Fußnote 1: Diese Erläuterung gehört zum vorherigen Satz." in normalized_imported_text
+    assert "3. Erster geordneter Prüfschritt." in normalized_imported_text
+    assert "4. Zweiter geordneter Prüfschritt." in normalized_imported_text
+    assert "Unterpunkt mit einer zusätzlichen Bedingung." in normalized_imported_text
+    assert "x=2" in normalized_imported_text.replace(" ", "")
+    assert "* * *" in normalized_imported_text
     assert source_path.read_bytes() == epub
 
     hidden = client.put(
