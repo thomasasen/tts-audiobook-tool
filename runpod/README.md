@@ -25,13 +25,15 @@ Der vollständige Pod-Autostart übernimmt alle Schritte und bewahrt daneben den
 
 ## Zugang / Betrieb
 
-Nach dem ersten Start über den privaten RunPod-Terminalzugang den Token holen:
+**Standard (ohne selbst vergebenes Secret):** Nach einem erfolgreichen Web-Healthcheck zeigt der RunPod-Autostart den automatisch erzeugten Schlüssel in den **privaten RunPod-Container-Logs** unter `GERMAN AUDIOBOOK STUDIO: ZUGANGSSCHLÜSSEL` an. Die Ausgabe erfolgt direkt auf Container-stdout, **nicht** in der persistenten Datei `/workspace/audiobook-data/logs/autostart-*.log`. RunPod selbst kann Container-Logs aufbewahren. **Logzugang und Screenshots vertraulich behandeln.**
+
+Alternativ lässt sich der generierte Schlüssel weiterhin über den privaten RunPod-Terminalzugang auslesen:
 
 ```bash
 cat /workspace/audiobook-data/studio-access-token
 ```
 
-Alternativ im RunPod-Pod vor dem Start ein privates `AUDIOBOOK_STUDIO_TOKEN` mit mindestens 32 Zeichen als Secret konfigurieren. Die Webanwendung ist unter der RunPod-HTTPS-Proxyadresse des HTTP-Ports **7860** erreichbar. Die App schützt sämtliche privaten API-Endpunkte über Bearer-Token; Netzwerkzugang zusätzlich einschränken. Keine öffentlichen EPUBs, Tokens oder Hörbücher in Git.
+Wenn du vor dem Start einen eigenen `AUDIOBOOK_STUDIO_TOKEN` mit mindestens 32 Zeichen als Secret konfigurierst, wird **dieser Secret-Wert nicht in den Logs angezeigt**. Die Webanwendung ist unter der RunPod-HTTPS-Proxyadresse des HTTP-Ports **7860** erreichbar. Die App schützt sämtliche privaten API-Endpunkte über Bearer-Token; Netzwerkzugang zusätzlich einschränken. Keine öffentlichen EPUBs, Tokens oder Hörbücher in Git.
 
 Das Sprachmodell ist bewusst als *bereit* gesperrt, bis ein Admin eine echte Hörprobe generiert, abgehört und freigegeben hat. Sollte der Thorsten-Installer scheitern, läuft die geschützte Kapitelvorbereitung ohne TTS weiter. Es gibt keine generische amerikanische Ersatzstimme.
 
