@@ -247,6 +247,19 @@ def main() -> None:
                         print("PCM16 PREVIEW DEBUG: progress=", page.locator(".generation-progress").all_inner_texts())
                         print("PCM16 PREVIEW DEBUG: errors=", page.locator(".message.error").all_inner_texts())
                         print("PCM16 PREVIEW DEBUG: audio-count=", page.locator("audio").count())
+                        print("PCM16 PREVIEW DEBUG: error-link=", page.locator('a[download="thorsten-hoerprobe.wav"]').all_inner_texts())
+                        diagnostic = page.evaluate("""async () => {
+                            const link = document.querySelector('a[download="thorsten-hoerprobe.wav"]');
+                            if (!link) return {link: null};
+                            const response = await fetch(link.href);
+                            const bytes = new Uint8Array(await response.arrayBuffer());
+                            return {
+                                size: bytes.length,
+                                first64: Array.from(bytes.slice(0, 64)),
+                                src: link.href.substring(0, 45),
+                            };
+                        }""")
+                        print("PCM16 PREVIEW DEBUG: blob=", diagnostic)
                         raise
                     page.wait_for_function(
                         "() => { const audio = document.querySelector('.audio-preview audio');"
