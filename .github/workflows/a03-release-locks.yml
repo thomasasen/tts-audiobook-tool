@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "runpod/model-pins.env"
-      - "runpod/requirements-thorsten.in"
+      - "runpod/locks/thorsten/pyproject.toml"
       - "runpod/generate-release-locks.sh"
       - "requirements-qwen3tts.txt"
       - "requirements-moss.txt"

@@ -21,9 +21,9 @@ mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
   --output-file "$OUTPUT_DIR/web/requirements-runtime.lock.txt" \
   "$REPO_DIR/web/requirements-runtime.txt"
-"$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$THORSTEN_PYTHON_VERSION" --python-version 3.11 \
-  --output-file "$OUTPUT_DIR/runpod/requirements-thorsten.lock.txt" \
-  "$REPO_DIR/runpod/requirements-thorsten.in"
+"$UV" lock --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
+mkdir -p "$OUTPUT_DIR/runpod/locks/thorsten"
+cp "$REPO_DIR/runpod/locks/thorsten/uv.lock" "$OUTPUT_DIR/runpod/locks/thorsten/uv.lock"
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
   --output-file "$OUTPUT_DIR/requirements-qwen3tts.lock.txt" \
   "$REPO_DIR/requirements-qwen3tts.txt"

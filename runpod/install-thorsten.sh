@@ -9,7 +9,13 @@ MODEL_ROOT="$AUDIOBOOK_DATA_ROOT/models/CosyVoice"
 MODEL_DIR="$MODEL_ROOT/pretrained_models/CosyVoice3-0.5B"
 VENV="$AUDIOBOOK_VENV_DIR/thorsten"
 UV="$AUDIOBOOK_DATA_ROOT/tools/uv-bootstrap/bin/uv"
-VERSION="$MODEL_RELEASE_ID"
+LOCK_PROJECT="$SCRIPT_DIR/locks/thorsten"
+if [[ ! -s "$LOCK_PROJECT/uv.lock" ]]; then
+  echo "Thorsten runtime lock is missing. Refusing an unpinned install." >&2
+  exit 1
+fi
+LOCK_SHA256="$(sha256sum "$LOCK_PROJECT/uv.lock" | awk '{print $1}')"
+VERSION="${MODEL_RELEASE_ID}-deps-${LOCK_SHA256}-py-${THORSTEN_PYTHON_VERSION}-uv-${UV_VERSION}"
 CHECKSUMS="$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models" "$AUDIOBOOK_VENV_DIR"
 if [[ ! -x "$UV" ]]; then
