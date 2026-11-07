@@ -1,0 +1,155 @@
+"""Offline first-start integration: no network, no GPU, no real model weights.
+
+Validates the real prefetch shell script's sequential base/fine-tune overlay,
+SHA256 ready marker, repeatability and the normal installer's cache handoff.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PREFETCH = ROOT / "runpod/prefetch-thorsten.sh"
+INSTALL = ROOT / "runpod/install-thorsten.sh"
+
+
+class TestFirstStart(unittest.TestCase):
+    def fixture(self, root: Path):
+        data = root / "audiobook-data"
+        model = data / "models/CosyVoice"
+        weights = model / "pretrained_models/CosyVoice3-0.5B"
+        weights.mkdir(parents=True)
+        (model / ".git").mkdir()
+        (model / "requirements.txt").write_text("torch>=2\\nopenai-whisper\\n")
+        uv = data / "tools/uv-bootstrap/bin/uv"
+        uv.parent.mkdir(parents=True)
+        venv = data / "venvs/thorsten/bin"
+        venv.mkdir(parents=True)
+        fake = root / "bin"
+        fake.mkdir()
+        (fake / "git").write_text("#!/bin/sh\\nexit 0\\n")
+        (fake / "git").chmod(0o755)
+        (fake / "apt-get").write_text("#!/bin/sh\\nexit 0\\n")
+        (fake / "apt-get").chmod(0o755)
+        uv.write_text("""#!/bin/sh
+printf '%s\\n' "$*" >> "$FAKE_DOWNLOAD_AUDIT"
+case "$*" in
+  *FunAudioLLM/Fun-CosyVoice3-0.5B-2512*)
+    for n in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py; do
+      printf 'base:%s\\n' "$n" > "$FAKE_MODEL_DIR/$n"
+    done ;;
+  *Thorsten-Voice/CosyVoice3*)
+    for n in llm.pt flow.pt spk2info.pt infer_thorsten.py; do
+      printf 'thorsten:%s\\n' "$n" > "$FAKE_MODEL_DIR/$n"
+    done ;;
+  *) exit 90 ;;
+esac
+""")
+        uv.chmod(0o755)
+        py = venv / "python"
+        py.write_text("#!/bin/sh\\nexit 0\\n")
+        py.chmod(0o755)
+        hf = venv / "hf"
+        hf.write_text("#!/bin/sh\\nprintf '%s\\n' 'UNEXPECTED DOWNLOAD' >> \"$FAKE_DOWNLOAD_AUDIT\"; exit 78\\n")
+        hf.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": str(fake) + os.pathsep + os.environ["PATH"],
+            "RUNPOD_WORKSPACE": str(root),
+            "AUDIOBOOK_DATA_ROOT": str(data),
+            "RUNPOD_TTS_DOWNLOAD_WORKERS": "4",
+            "FAKE_DOWNLOAD_AUDIT": str(root / "downloads.log"),
+            "FAKE_MODEL_DIR": str(weights),
+        }
+        return env, data, model, weights
+
+    def run_shell(self, path: Path, env: dict):
+        return subprocess.run(
+            ["bash", str(path)], env=env, capture_output=True, text=True,
+            check=False, timeout=20,
+        )
+
+    def test_prefetch_is_ordered_integrity_checked_and_reused_by_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, data, model, weights = self.fixture(Path(directory))
+            first = self.run_shell(PREFETCH, env)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            audit = Path(env["FAKE_DOWNLOAD_AUDIT"])
+            entries = audit.read_text().splitlines()
+            self.assertEqual(len(entries), 2)
+            self.assertIn("FunAudioLLM/Fun-CosyVoice3-0.5B-2512", entries[0])
+            self.assertIn("Thorsten-Voice/CosyVoice3", entries[1])
+            self.assertTrue(all("--max-workers 4" in line for line in entries))
+            self.assertEqual((weights / "llm.pt").read_text().strip(), "thorsten:llm.pt")
+            self.assertEqual((weights / "hift.pt").read_text().strip(), "base:hift.pt")
+            self.assertTrue((model / ".prefetch-complete").is_file())
+            self.assertTrue((model / ".prefetch-sha256.txt").is_file())
+
+            second = self.run_shell(PREFETCH, env)
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertIn("no download", second.stdout)
+            self.assertEqual(len(audit.read_text().splitlines()), 2)
+
+            installed = self.run_shell(INSTALL, env)
+            self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+            self.assertIn("skipping both model downloads", installed.stdout)
+            self.assertEqual(len(audit.read_text().splitlines()), 2)
+            self.assertTrue((model / ".studio-ready").is_file())
+            manifest = data / "models/thorsten-model-sha256.txt"
+            self.assertTrue(manifest.is_file())
+            for row in manifest.read_text().splitlines():
+                expected, filename = row.split(maxsplit=1)
+                self.assertEqual(hashlib.sha256((weights / filename).read_bytes()).hexdigest(), expected)
+
+    def test_corrupted_completed_prefetch_is_not_silently_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, data, model, weights = self.fixture(Path(directory))
+            first = self.run_shell(PREFETCH, env)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            (weights / "llm.pt").write_text("unexpected bytes")
+            failed = self.run_shell(INSTALL, env)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("checksum/version invalid", failed.stderr)
+            self.assertFalse((model / ".studio-ready").exists())
+            self.assertEqual(len(Path(env["FAKE_DOWNLOAD_AUDIT"]).read_text().splitlines()), 2)
+
+    def test_readme_docker_start_command_is_copyable_and_targets_master(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        match = re.search(
+            r"### Docker Start Command[^\\n]*\\n.*?\\n```bash\\n([^\\n]+)\\n```",
+            text, flags=re.S,
+        )
+        self.assertIsNotNone(match, "A single-line command must appear in README")
+        command = match.group(1)
+        syntax = subprocess.run(["bash", "-n", "-c", command],
+                                capture_output=True, text=True)
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        self.assertIn("master/runpod/autostart.sh", command)
+        self.assertIn("RUNPOD_TTS_BRANCH=master", command)
+        self.assertIn("RUNPOD_TTS_MODELS=none", command)
+        self.assertIn("RUNPOD_TTS_START_TUI=0", command)
+        self.assertIn("RUNPOD_TTS_DOWNLOAD_WORKERS=4", command)
+        self.assertIn('wait "$pod_pid"', command)
+        self.assertNotIn("feature/runpod-p0", command)
+
+    def test_every_relevant_shell_script_syntax_compiles(self):
+        for name in (
+            "setup.sh", "install-web.sh", "start-web.sh", "build-web.sh",
+            "prefetch-thorsten.sh", "install-thorsten.sh", "autostart.sh",
+        ):
+            with self.subTest(name=name):
+                run = subprocess.run(
+                    ["bash", "-n", str(ROOT / "runpod" / name)],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(run.returncode, 0, run.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
