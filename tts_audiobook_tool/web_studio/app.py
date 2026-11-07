@@ -612,7 +612,8 @@ def download_export(project_id: str, job_id: str):
         path = production._jobs_dir(job_id) / "audiobook.m4b"
         if job["status"] != "completed" or not path.is_file():
             raise ValueError("Noch kein fertiges Hörbuch vorhanden.")
-        return FileResponse(path, media_type="audio/mp4", filename="audiobook.m4b")
+        return FileResponse(path, media_type="audio/mp4", filename="audiobook.m4b",
+                            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
 
