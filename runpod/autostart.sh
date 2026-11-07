@@ -13,6 +13,7 @@ Environment variables:
   RUNPOD_TTS_BRANCH           Git branch to deploy (default: master)
   RUNPOD_TTS_MODELS           qwen | moss | both (default: qwen)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
+  RUNPOD_TTS_START_TUI       0 (web only) | 1 (also launch legacy TUI); default: 0
 
 This script does NOT run the standard RunPod /start.sh service. In the Pod
 Docker Command, start /start.sh in the background before invoking it.
@@ -33,6 +34,7 @@ done
 : "${RUNPOD_TTS_BRANCH:=master}"
 : "${RUNPOD_TTS_MODELS:=qwen}"
 : "${RUNPOD_TTS_AUTOSTART_MODEL:=qwen}"
+: "${RUNPOD_TTS_START_TUI:=0}"
 case "$RUNPOD_WORKSPACE" in
   /*) ;;
   *) printf 'RUNPOD_WORKSPACE must be absolute\n' >&2; exit 2 ;;
@@ -40,6 +42,10 @@ esac
 case "$RUNPOD_TTS_MODELS" in
   qwen|moss|both) ;;
   *) printf 'Invalid RUNPOD_TTS_MODELS: %s\n' "$RUNPOD_TTS_MODELS" >&2; exit 2 ;;
+esac
+case "$RUNPOD_TTS_START_TUI" in
+  0|1) ;;
+  *) printf 'Invalid RUNPOD_TTS_START_TUI: %s\n' "$RUNPOD_TTS_START_TUI" >&2; exit 2 ;;
 esac
 case "$RUNPOD_TTS_AUTOSTART_MODEL" in
   qwen|moss|menu) ;;
@@ -130,17 +136,23 @@ if ! command -v tmux >/dev/null 2>&1; then
   echo "ERROR: tmux missing after setup." >&2
   exit 1
 fi
-if tmux has-session -t audiobook 2>/dev/null; then
-  echo "Existing audiobook tmux session found; leaving it running."
-else
-  session_command="bash runpod/start.sh"
-  if [[ "$RUNPOD_TTS_AUTOSTART_MODEL" != menu ]]; then
-    session_command+=" --model $RUNPOD_TTS_AUTOSTART_MODEL"
+if [[ "$RUNPOD_TTS_START_TUI" == 1 ]]; then
+  if tmux has-session -t audiobook 2>/dev/null; then
+    echo "Existing legacy audiobook TUI session found; leaving it running."
+  else
+    session_command="bash runpod/start.sh"
+    if [[ "$RUNPOD_TTS_AUTOSTART_MODEL" != menu ]]; then
+      session_command+=" --model $RUNPOD_TTS_AUTOSTART_MODEL"
+    fi
+    session_command+='; rc=$?; echo "Audiobook app exited (code $rc)."; exec bash'
+    tmux new-session -d -s audiobook -c "$REPO_DIR" "$session_command"
+    echo "Created optional legacy TUI session 'audiobook'."
   fi
-  # Keep the tmux session open after a TUI error, to expose logs/messages.
-  session_command+='; rc=$?; echo "Audiobook app exited (code $rc)."; exec bash'
-  tmux new-session -d -s audiobook -c "$REPO_DIR" "$session_command"
-  echo "Created tmux session 'audiobook'."
+else
+  echo "Web-only mode: no legacy TUI started; GPU reserved for Thorsten voice preview and books."
+  if tmux has-session -t audiobook 2>/dev/null; then
+    echo "WARNING: An older TUI session is still running; inspect it for GPU resource conflicts."
+  fi
 fi
 
 echo "Installing German voice (optional until GPU acceptance)."
@@ -207,6 +219,6 @@ if (( THORSTEN_INSTALL_OK )); then
 else
   echo "=== Web studio launch requested; THORSTEN NOT READY, narration disabled ==="
 fi
-echo "TUI: tmux attach -t audiobook | Web log: tmux attach -t audiobook-web"
+echo "Web log: tmux attach -t audiobook-web | Optional TUI (if enabled): tmux attach -t audiobook"
 echo "Optional: bash $REPO_DIR/runpod/start.sh --doctor"
 echo "Models, settings, reference voices and projects remain under $DATA_ROOT"
