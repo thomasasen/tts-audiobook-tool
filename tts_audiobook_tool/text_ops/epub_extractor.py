@@ -1633,15 +1633,15 @@ class EpubExtractor:
         resolved internal links are eligible; duplicates with conflicting labels
         intentionally have no override.
         """
-        BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
         labels: dict[str, set[str]] = {}
         for item in getattr(book, "items", []):
             media_type = str(getattr(item, "media_type", "") or "")
             if media_type not in {"application/xhtml+xml", "text/html"}:
                 continue
             html = EpubExtractor.decode_item_content(item)
-            if not html:
+            if not html or not re.search(r"(?:inhaltsverzeichnis|table\\s+of\\s+contents|contents)", html, re.IGNORECASE):
                 continue
+            BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
             soup = BeautifulSoup(html, "html.parser")
             body = soup.body
             if body is None:
