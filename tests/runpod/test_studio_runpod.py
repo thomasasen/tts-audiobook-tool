@@ -56,11 +56,11 @@ class TestGermanStudioRunPod(unittest.TestCase):
                 (weights / name).write_bytes(b"verified fixture for " + name.encode())
             (model / "infer_thorsten.py").write_text("# fixture\\n")
             (model / ".studio-ready").write_text(
-                "CosyVoice-ace7c47-Thorsten-CosyVoice3-2026-11-v1\\n"
+                "CosyVoice-ace7c47-Thorsten-CosyVoice3-2026-11-v1\n"
             )
             checksums = root / "models/thorsten-model-sha256.txt"
             checksums.write_text("".join(
-                f"{hashlib.sha256((weights / name).read_bytes()).hexdigest()}  {name}\\n"
+                f"{hashlib.sha256((weights / name).read_bytes()).hexdigest()}  {name}\n"
                 for name in ("llm.pt", "flow.pt", "spk2info.pt", "hift.pt")
             ))
             uv = root / "tools/uv-bootstrap/bin/uv"
@@ -116,7 +116,7 @@ exit 99
         self.assertIn('"setuptools==80.9.0"', script)
         self.assertNotIn("--upgrade setuptools", script)
         self.assertLess(
-            script.index("ensure_thorsten_pkg_resources\\n"),
+            script.index("ensure_thorsten_pkg_resources\n"),
             script.index('if [[ -f "$MODEL_ROOT/.studio-ready"'),
         )
 
