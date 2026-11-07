@@ -45,6 +45,20 @@ def sample_epub(*, traverse: bool = False, bad_mime: bool = False) -> bytes:
     return data.getvalue()
 
 
+def test_csp_allows_local_blob_audio_but_blocks_external_sources(client):
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    csp = response.headers["content-security-policy"]
+    assert "media-src 'self' blob:" in csp
+    assert "connect-src 'self' blob:" in csp
+    assert "script-src 'self'" in csp
+    assert "object-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "unsafe-inline" not in csp
+    assert "https:" not in csp
+    assert "data:" not in csp.split("media-src", 1)[1].split(";", 1)[0]
+
+
 def test_health_public_but_projects_private(client):
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/projects").status_code == 401
