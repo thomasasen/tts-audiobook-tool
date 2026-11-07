@@ -91,6 +91,23 @@ curl -fsS http://127.0.0.1:7860/api/health
 tmux ls
 ```
 
+### Hörprobe und Hörbuchproduktion: Live-Fortschritt und Protokolle
+
+Bei **Sprecher → Echte Hörprobe erzeugen** läuft die Modellinitialisierung und GPU-Synthese als **Hintergrundauftrag**, nicht mehr als blockierende Browseranfrage. Die Oberfläche aktualisiert den Status etwa alle 1,5 Sekunden und zeigt die realen Phasen (GPU-Prüfung, Modellladen, Sprachsynthese, WAV-Prüfung) sowie ein aufklappbares **Protokoll der Hörprobe**. Da CosyVoice3 bei einer einzelnen Hörprobe keine verlässlichen Prozentwerte oder Restzeit liefert, ist die Fortschrittsanzeige dort bewusst **unbestimmt**, bis das fertige WAV tatsächlich geprüft wurde.
+
+Der Player erscheint erst bei erfolgreicher Erzeugung und nach Prüfung der WAV-Datei. Wenn die Datei leer ist, vom Browser nicht decodiert werden kann oder eine Audiodauer von `0:00` meldet, erscheint eine sichtbare Fehlermeldung statt eines scheinbar fertigen Players. Die Sprecherfreigabe bleibt bis zum **vollständigen tatsächlichen Anhören** gesperrt. Ein installierter Thorsten-Runtime allein garantiert **keine** funktionsfähige Sprachausgabe.
+
+Unter **Hörbuch und Export** zeigt der Fortschrittsbalken die **wirklich fertiggestellten Audiosegmente** und deren Anteil am Gesamtauftrag. Über **Auftragsprotokoll** lassen sich Start, laufende Segmente, Pausen, Abbrüche, Fehler und M4B-Export nachverfolgen. Beim M4B-Export werden verarbeitete Segmente gemeldet, jedoch keine künstlichen Restzeiten. Das Log liegt als begrenzte Liste von maximal 60 Ereignissen je Auftrag unter `studio-jobs/<job-id>/activity.json`; es enthält **keinen Buchtext**. Die Hörproben-Historie wird auf 40 Ereignisse begrenzt und bleibt während des laufenden Webserver-Prozesses verfügbar.
+
+**Wenn eine Hörprobe dennoch scheitert:** Im Protokoll wird der Schritt und ein bewusst bereinigter Fehler angezeigt. Zusätzlich lassen sich die **privaten** Diagnoselogs im RunPod-Terminal prüfen:
+
+```bash
+tail -n 100 /workspace/audiobook-data/logs/thorsten-worker.log
+tmux capture-pane -pt audiobook-web -S -100 2>&1 | tail -100
+```
+
+In den Worker-Logs erscheinen nur ausgewählte Fehlerkategorien wie GPU/CUDA, fehlende Sprecherzuordnung oder WAV-Encoder, keine vollständigen Buchtexte. **Ein erfolgreich installierter Runtime und bestandener CUDA-Test sind noch kein Nachweis einer erfolgreich generierten Hörprobe.**
+
 **Echte CUDA-Funktionsprüfung vor der Hörprobe:**
 
 ```bash
