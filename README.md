@@ -44,6 +44,35 @@ Ein Pod bleibt bei einem Fehler möglicherweise als laufend markiert und verursa
 4. **Modell finalisieren:** Der Installer wartet auf den Vorabdownload, installiert die isolierte Python-3.11-CosyVoice-Laufzeit, kontrolliert Prüfsummen und Imports und führt einen eigenen CUDA-Speichertest aus. Eine fertige Installation wird beim nächsten Start erkannt und wiederverwendet.
 5. **Freigabe:** Eine reale Hörprobe muss erzeugt, angehört und ausdrücklich freigegeben werden, bevor das Hörbuch erstellt werden kann. Es gibt keine automatische Stimmfreigabe und keinen stillen CPU-Ersatz für ausgefallene GPU-Inferenz.
 
+### Auffällige Abschlussmeldung im RunPod-Log
+
+**Neu:** Sobald die Startschritte einschließlich Thorsten-Installation und anschließendem HTTP-Healthcheck beendet sind, wird ganz am **Ende der privaten RunPod-Container-Logs** ein breiter, eingerahmter Block mit dem Titel `GERMAN AUDIOBOOK STUDIO` ausgegeben. Dort stehen Webzugriff, Anmeldung, die tatsächlich erkannten CUDA-Ergebnisse, Sprecherstatus, GPU, Git-Version, Network-Volume-Pfad und der nächste Bedienungsschritt.
+
+Beispiel (Zugangsschlüssel absichtlich nicht echt):
+
+```text
++====================================================================================================+
+| GERMAN AUDIOBOOK STUDIO                                                                            |
+| START ABGESCHLOSSEN: WEB + THORSTEN INSTALLIERT                                                     |
++====================================================================================================+
+  Weboberflaeche      : RunPod > Connect > HTTP 7860
+  Web-API             : BEREIT (Port 7860)
+  Deutsche Stimme     : Installiert; CUDA-Tensor-Test bestanden (Hoerprobe noch offen)
+  GPU                 : NVIDIA RTX 5000 Ada Generation
+  CUDA (Basis)        : passed
+  CUDA (Thorsten)     : passed
+  Git-Version         : <aktuelle Commit-ID> (master)
+  Network Volume      : /workspace (freier Platz)
+  Daten/Projekte      : /workspace/audiobook-data
+  ZUGANGSSCHLUESSEL   : <nur in privaten RunPod-Container-Logs>
+  Naechster Schritt   : Sprecher > Echte Hoerprobe erzeugen, anhoeren und freigeben
++====================================================================================================+
+```
+
+Die Statuswerte werden dynamisch ermittelt. Wenn Thorsten oder CUDA nicht bereit sind, lautet die Überschrift `WEB BEREIT (MIT WARNUNGEN)`, und die Stimme wird **nicht** fälschlich als einsatzbereit gemeldet. Ist der Webserver beim abschließenden Healthcheck nicht erreichbar, zeigt die Meldung einen Fehlerstatus; der Autostart endet mit einem Fehlercode. Auch ein bestandener CUDA-Test ist **noch keine erfolgreich angehörte Hörprobe**.
+
+Der automatisch erzeugte Zugangsschlüssel erscheint **einmal früh nach dem erfolgreichen Webstart und erneut in der Abschlussmeldung**. Beide Ausgaben gehen ausschließlich in die *privaten RunPod-Container-Logs*, **nicht** in `/workspace/audiobook-data/logs/autostart-*.log`. Wenn `AUDIOBOOK_STUDIO_TOKEN` selbst als Secret gesetzt wurde, wird sein Wert auch am Ende **nicht** ausgegeben. Keine ungeschwärzten Container-Logs teilen.
+
 **Warum nicht alles gleichzeitig heruntergeladen wird:** Das CosyVoice-Basismodell und Thorstens Finetuning besitzen gleichnamige Dateien. Sie werden daher **nacheinander in denselben Modellordner** geladen, damit das Finetuning nicht überschrieben wird. Innerhalb jedes Hugging-Face-Downloads laufen bis zu vier Dateiübertragungen parallel. Ein erfolgreicher Vorabdownload erhält eine eigene SHA-256-Prüfung und wird vom Installer **nicht noch einmal heruntergeladen**. Fehlgeschlagene oder unvollständige Downloads werden nicht als fertig markiert.
 
 **Speicherschutz:** Neue Thorsten-Downloads beginnen nur bei mindestens 25 GiB freiem Platz und einem bestandenen **echten CUDA-Tensor-Test** im Basisimage. Wenn dies nicht erfüllt ist, soll die Weboberfläche trotzdem starten. Ein bereits installiertes Modell wird separat auf Unversehrtheit kontrolliert. Die 25-GiB-Schwelle begrenzt das Risiko, garantiert aber nicht, dass jeder Download oder jedes Hörbuch in den verfügbaren Speicher passt.
@@ -52,7 +81,7 @@ Ein Pod bleibt bei einem Fehler möglicherweise als laufend markiert und verursa
 
 Öffne nach der Meldung `Web studio health check OK` in RunPod **Connect → HTTP Service 7860**. Der Link wird von RunPod für deinen Pod erstellt.
 
-Ohne selbst gesetztes `AUDIOBOOK_STUDIO_TOKEN` legt die Anwendung einen zufälligen Schlüssel unter `/workspace/audiobook-data/studio-access-token` ab. Der Autostart zeigt ihn nach erfolgreichem Healthcheck ausschließlich in den **privaten Container-Logs** unter `GERMAN AUDIOBOOK STUDIO: ZUGANGSSCHLÜSSEL`. In den persistenten Dateien `autostart-*.log` wird der generierte Schlüssel nicht protokolliert. Wer Zugriff auf deine Container-Logs hat, kann den dort angezeigten Schlüssel möglicherweise lesen. Mit einem selbst gesetzten Secret wird der Schlüssel **nicht ausgegeben**.
+Ohne selbst gesetztes `AUDIOBOOK_STUDIO_TOKEN` legt die Anwendung einen zufälligen Schlüssel unter `/workspace/audiobook-data/studio-access-token` ab. Der Autostart zeigt ihn nach erfolgreichem Healthcheck und **erneut am Ende im eingerahmten Abschlussblock** ausschließlich in den **privaten Container-Logs**. In den persistenten Dateien `autostart-*.log` wird der generierte Schlüssel nicht protokolliert. Wer Zugriff auf deine Container-Logs hat, kann den dort angezeigten Schlüssel möglicherweise lesen. Mit einem selbst gesetzten Secret wird der Schlüssel **nicht ausgegeben**.
 
 **Prüfen, ob das Studio antwortet (RunPod-Terminal):**
 
