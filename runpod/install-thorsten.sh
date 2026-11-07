@@ -102,9 +102,8 @@ else
   fi
   "$VENV/bin/hf" download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR" \
     --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
-  "$VENV/bin/hf" download Thorsten-Voice/CosyVoice3 --local-dir "$MODEL_DIR" \
-    --include llm.pt flow.pt spk2info.pt infer_thorsten.py \
-    --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
+  "$VENV/bin/hf" download Thorsten-Voice/CosyVoice3 llm.pt flow.pt spk2info.pt infer_thorsten.py \
+    --local-dir "$MODEL_DIR" --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
 fi
 cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
 for artifact in llm.pt flow.pt spk2info.pt hift.pt; do
