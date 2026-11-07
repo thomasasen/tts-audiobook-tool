@@ -1,4 +1,4 @@
-# RunPod: German Audiobook Studio (integrierter Entwicklungsbranch)
+# RunPod: German Audiobook Studio (automatischer Webbetrieb)
 
 **Status:** Der für `master` freigegebene Integrationsstand aus PR #14 ergänzt EPUB-/Browser-/Recovery-Prüfungen. **GPU und echte deutsche Sprachausgabe sind weiterhin nicht abgenommen.** Die maßgebliche RunPod-Template-Konfiguration, die aktuelle Speicherempfehlung (15 GB Container Disk und 60 GB Network Volume) und der kopierbare Docker-Startbefehl stehen **ausschließlich am Anfang der [Haupt-README](../README.md)**. Diese Datei beschreibt die technische Umsetzung und Fehlerfälle; die originale TUI hat davon getrennte Funktionen und kann Referenzstimmen nutzen.
 
@@ -9,8 +9,9 @@
 - `/workspace/audiobook-data/venvs/qwen`: Python 3.12, bestehende Projektlaufzeit und TUI.
 - `/workspace/audiobook-data/venvs/thorsten`: isolierte Python-3.11-CosyVoice3-Umgebung.
 - `/workspace/audiobook-data/models/CosyVoice`: offizielles FunAudioLLM/CosyVoice, Commit `ace7c47`, Thorsten-Fine-Tuning, `spk2info.pt`.
-- `tmux attach -t audiobook`: vorhandene TUI (Qwen; MOSS optional mit `RUNPOD_TTS_MODELS=both`).
+- Die alte TUI wird **nicht automatisch gestartet** (`RUNPOD_TTS_START_TUI=0`, Standard). Nur wenn ausdrücklich `RUNPOD_TTS_START_TUI=1` gesetzt wird, läuft zusätzlich `tmux attach -t audiobook`; ein bestehender TUI-Prozess auf einem laufenden Pod wird nicht ungefragt beendet.
 - `tmux attach -t audiobook-web`: FastAPI und die bereits vorhandene React-Weboberfläche, Port `7860`.
+- Im Thorsten-Worker wird **nur** der für Referenzaudio bestimmte ONNX-Tokenizer `speech_tokenizer_v3.onnx` auf CPU initialisiert. PyTorch und die eigentliche Thorsten-SFT-Sprachsynthese verwenden weiterhin CUDA. Das vermeidet den bei der RTX 5000 Ada beobachteten ONNX-CUDA-Initialisierungsfehler 46, sofern CUDA für PyTorch verfügbar bleibt.
 
 ## Setup / Dienste
 
@@ -49,10 +50,10 @@ Das Sprachmodell ist bewusst als *bereit* gesperrt, bis ein Admin eine echte Hö
 - `/workspace/audiobook-data/models`: installierte offene Modellgewichte.
 - `/workspace/audiobook-data/cache`: Hugging-Face- und Python-Caches.
 
-**Anmerkung zur Sicherheit:** Das Quell-Repository muss vor dem Deployment vertraut und geprüft sein. Für einen reproduzierbaren Release später Commit-SHA statt Branch-HEAD pinnen und Modellgewichte ebenfalls auf geprüfte Revisionen fixieren. Hier werden Entwicklungsbranches verwendet.
+**Anmerkung zur Sicherheit:** Das Quell-Repository muss vor dem Deployment vertraut und geprüft sein. Für einen reproduzierbaren Release später Commit-SHA statt Branch-HEAD pinnen und Modellgewichte ebenfalls auf geprüfte Revisionen fixieren. Der automatische Teststart verwendet derzeit `master`, kein unveränderliches Produktionsimage.
 
 ## Qualitätssicherung und bekannte Grenzen
 
 Die GitHub-Actions-Prüfungen validieren Bash-Syntax, Installation-/Autostart-Verträge und den Python-/React-Build, nicht die GPU-Funktion. Ausstehend sind insbesondere ein echter Modell-/Lizenz-/Hörvergleich (Thorsten, Qwen, MOSS), ein vollständiger EPUB-zu-M4B-Ablauf auf einem Pod, Prozessneustart und Qualitätssicherung durch ASR. Die notwendigen Freigabepunkte stehen in [docs/studio-production-progress.md](../docs/studio-production-progress.md).
 
-PR-Abhängigkeiten: #8 → #9 → #10 → #11 → #12. Der unabhängige PR #6 ist Quelle der konservativ übernommenen RunPod-Skripte und muss vor dem finalen Merge gegen die integrierte Variante abgeglichen werden.
+Die ehemals gestapelten PRs #8–#14 wurden mit PR #14 nach `master` integriert. Die dokumentierten offenen GPU-/Hörtests bleiben Voraussetzung einer Produktionsfreigabe. Der separate ältere PR #6 wird nicht ungeprüft nachgemergt.
