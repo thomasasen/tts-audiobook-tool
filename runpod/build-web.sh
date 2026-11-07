@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Safe, repeatable React build; can run while Python dependencies install.
-# Called by first-start.sh and (as fallback) start-web.sh, never concurrently.
+# Called by autostart.sh and (as fallback) start-web.sh, never concurrently.
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
