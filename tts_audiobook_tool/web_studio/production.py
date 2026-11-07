@@ -896,6 +896,20 @@ def _loop():
             )
 
 
+def _segment_fingerprint(segment: dict, plan: dict) -> str:
+    version = plan.get("normalizer_version")
+    if version not in (None, DE_NORMALIZER_VERSION):
+        raise ValueError("Unbekannte Normalisierungsversion im gespeicherten Auftrag.")
+    # Legacy plans must retain byte-for-byte their original cache hash.
+    source = (
+        segment["text"] + "\0" + json.dumps(plan["glossary"], sort_keys=True)
+        + "\0" + VOICE_ID + "\0" + plan.get("model_identity", "")
+    )
+    if version:
+        source += "\0" + version
+    return hashlib.sha256(source.encode()).hexdigest()
+
+
 def _run(job_id: str):
     # Export and manual previews may briefly own the GPU lock. Waiting must
     # not permanently fail a queued job that has not started inference yet.
@@ -914,17 +928,7 @@ def _run(job_id: str):
                 return
             path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
             normalizer_version = plan.get("normalizer_version")
-            if normalizer_version not in (None, DE_NORMALIZER_VERSION):
-                raise ValueError("Unbekannte Normalisierungsversion im gespeicherten Auftrag.")
-            # Legacy plans retain the *exact* original fingerprint and prompt
-            # behavior, so valid partial WAV checkpoints survive an upgrade.
-            fingerprint_source = (
-                segment["text"] + "\0" + json.dumps(plan["glossary"], sort_keys=True)
-                + "\0" + VOICE_ID + "\0" + plan.get("model_identity", "")
-            )
-            if normalizer_version:
-                fingerprint_source += "\0" + normalizer_version
-            fingerprint = hashlib.sha256(fingerprint_source.encode()).hexdigest()
+            fingerprint = _segment_fingerprint(segment, plan)
             meta = path.with_suffix(".json")
             seconds = 0.0
             if path.exists() and meta.exists():
