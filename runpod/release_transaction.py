@@ -207,6 +207,8 @@ def _backup_active(
             assets[key] = {"present": present, "is_symlink": source.is_symlink() if present else False}
             if not present:
                 continue
+            if source.is_symlink():
+                raise RuntimeError(f"Refusing to back up a symlinked release root: {key}")
             destination = backup_dir / "assets" / key
             destination.parent.mkdir(parents=True, exist_ok=True)
             if source.stat().st_dev != backup_dir.stat().st_dev:
@@ -270,13 +272,15 @@ def _load_backup(data_root: Path, backup_id: str) -> tuple[Path, dict[str, Any]]
 
 def _restore_assets_only(backup_dir: Path, data_root: Path, venv_root: Path, metadata: dict[str, Any]) -> None:
     paths = _asset_paths(data_root, venv_root)
+    if set(metadata.get("assets", {})) != set(paths):
+        raise RuntimeError("Backup asset manifest does not match the supported release layout")
     for key, details in metadata["assets"].items():
         if not details.get("present"):
             continue
         source = backup_dir / "assets" / key
         destination = paths[key]
-        if not _exists(source):
-            raise RuntimeError(f"Backup asset is missing: {key}")
+        if not _exists(source) or source.is_symlink():
+            raise RuntimeError(f"Backup asset is missing or unsafe: {key}")
         if _exists(destination):
             raise FileExistsError(f"Refusing to overwrite active release asset: {key}")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -323,13 +327,15 @@ def restore_release(
     moved_from_target: list[tuple[Path, Path]] = []
     try:
         paths = _asset_paths(data_root, venv_root)
+        if set(target_metadata.get("assets", {})) != set(paths):
+            raise RuntimeError("Backup asset manifest does not match the supported release layout")
         for key, details in target_metadata["assets"].items():
             if not details.get("present"):
                 continue
             source = target_dir / "assets" / key
             destination = paths[key]
-            if not _exists(source):
-                raise RuntimeError(f"Backup asset is missing: {key}")
+            if not _exists(source) or source.is_symlink():
+                raise RuntimeError(f"Backup asset is missing or unsafe: {key}")
             if _exists(destination):
                 raise FileExistsError(f"Active path unexpectedly exists during rollback: {key}")
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -404,7 +410,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.data_root, args.venv_root, args.repo_root,
                 args.backup_id, allow_code_mismatch=args.allow_code_mismatch,
             )
-            print(json.dumps({"restored_backup": args.backup_id, "pre_rollback_backup": pre_id}))
+            _, restored_metadata = _load_backup(args.data_root.resolve(), args.backup_id)
+            print(json.dumps({
+                "restored_backup": args.backup_id,
+                "pre_rollback_backup": pre_id,
+                "previous_repo_commit": restored_metadata.get("repo_commit"),
+            }))
         else:
             print(json.dumps(list_backups(args.data_root), indent=2))
     except Exception as exc:  # noqa: BLE001 - CLI must fail closed and report one concise reason
