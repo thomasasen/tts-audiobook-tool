@@ -8,6 +8,7 @@ from tts_audiobook_tool.app_support import app_text
 from tts_audiobook_tool.constants import COL_DEFAULT, COL_DIM
 from tts_audiobook_tool.text_util import strip_ansi_codes
 from tts_audiobook_tool.text_ops.epub_extractor import BeautifulSoupEpubChapterTextExtractor, EpubExtractor, EpubNavigationTarget, EpubSourceChapter, EpubTextExtractionResult, EpubTextSlice
+from tts_audiobook_tool.text_ops.epub_css import EpubCssResolver, parse_stylesheet
 from tts_audiobook_tool.app_types.phrase import Phrase, PhraseGroup, Reason
 
 
@@ -1729,7 +1730,7 @@ if __name__ == "__main__":
     def test_drop_cap_reconstructs_split_initials_and_preserves_fragment(self):
         chapter = EpubSourceChapter(
             "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
-            '<body><p class="block_29" id="start">W</p>'
+            '<body><p class="block_29" id="start" style="font-size: 44pt">W</p>'
             '<p class="block_6">ird heute geprüft.</p><p>Danach folgt ein Absatz.</p></body>',
             navigation_targets=[make_navigation_target("Kapitel", "Text/chapter.xhtml#start", 0)],
         )
@@ -1741,7 +1742,7 @@ if __name__ == "__main__":
     def test_drop_cap_repairs_float_wrapper_nested_inline_and_umlaut(self):
         chapter = EpubSourceChapter(
             "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
-            '<body><div class="frame_"><p class="block_29"><em>W</em></p></div>'
+            '<body><div class="frame_" style="float: left"><p class="block_29"><em>W</em></p></div>'
             '<p class="block_6">ährend der Sitzung wurde gesprochen.</p></body>',
         )
         result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
@@ -1750,16 +1751,30 @@ if __name__ == "__main__":
     def test_drop_cap_keeps_whitespace_between_full_words_and_removes_layout_indent(self):
         chapter = EpubSourceChapter(
             "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
-            '<body><p class="block_29">Eine</p><p class="block_6"> Woche später.</p>'
-            '<p class="block_29">„L</p><p class="block_6">assen Sie uns starten.</p></body>',
+            '<body><p style="font-size: 44pt">Eine</p><p class="block_6"> Woche später.</p>'
+            '<p style="font-size: 44pt">„L</p><p class="block_6">assen Sie uns starten.</p></body>',
         )
         result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
         self.assertEqual(result.text, "Eine Woche später.\\n\\n„Lassen Sie uns starten.")
 
+    def test_drop_cap_reads_author_stylesheet_without_hardcoded_class(self):
+        css = EpubCssResolver(parse_stylesheet(
+            ".large-first { font-size: 44pt } .normal { font-size: 12pt }"
+        ))
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><p class="large-first">Ä</p>'
+            '<p class="normal">nderungen bleiben nachvollziehbar.</p></body>',
+            css=css,
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Änderungen bleiben nachvollziehbar.")
+
     def test_drop_cap_does_not_join_unmarked_or_ambiguous_paragraphs(self):
         for html, expected_warning in [
             ('<p class="ordinary">A</p><p>lpha</p>', False),
-            ('<p class="block_29">D</p><p class="block_6">Während der Sitzung.</p>', True),
+            ('<p class="block_29" style="font-size: 44pt">D</p><p class="block_6">Während der Sitzung.</p>', True),
+            ('<p class="block_29">A</p><p class="block_6">lpha</p>', False),
         ]:
             with self.subTest(html=html):
                 chapter = EpubSourceChapter(
