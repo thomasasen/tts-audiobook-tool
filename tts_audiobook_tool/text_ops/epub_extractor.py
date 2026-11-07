@@ -348,6 +348,34 @@ class BeautifulSoupEpubChapterTextExtractor:
             # following fragment starts lowercase. For full words, preserve a
             # space; an isolated opening quote binds directly to its word.
             if is_single and not following_text[0].islower():
+                # An isolated source-language drop cap may survive translation,
+                # while the next paragraph already starts with a complete,
+                # capitalized target-language word. Only discard that stray
+                # glyph when *both* large-cap typography and a floated frame
+                # identify it as a decorative initial. A size hint alone is
+                # deliberately insufficient; uncertain cases still warn.
+                complete_word = re.match(r"[A-ZÄÖÜ][a-zäöüß]{2,}", following_text)
+                if len(prefix) == 1 and large and floated and complete_word:
+                    # Keep navigation anchors even though the old glyph is not
+                    # spoken. Empty spans anchor the first audible word.
+                    anchor_nodes = [container, *container.descendants]
+                    anchors = []
+                    for node in anchor_nodes:
+                        if not getattr(node, "name", None):
+                            continue
+                        anchor_id = node.get("id")
+                        anchor_name = node.get("name") if node.name == "a" else None
+                        if anchor_id or anchor_name:
+                            anchor = soup.new_tag("span")
+                            if anchor_id:
+                                anchor["id"] = anchor_id
+                            if anchor_name:
+                                anchor["name"] = anchor_name
+                            anchors.append(anchor)
+                    for anchor in reversed(anchors):
+                        following.insert(0, anchor)
+                    container.decompose()
+                    continue
                 warnings.append(
                     f"EPUB split initial requires manual review in {source_href}: "
                     f"{prefix!r} before {following_text[:35]!r}"
