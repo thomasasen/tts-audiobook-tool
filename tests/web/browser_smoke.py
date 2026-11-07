@@ -107,9 +107,8 @@ def main() -> None:
                     page.get_by_text("Thorsten noch nicht betriebsbereit", exact=True).wait_for()
                     assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_disabled()
 
-                    # Reproduce the actual RunPod error when native Thorsten
-                    # inference crashes: FastAPI responds with plain-text 500
-                    # to a preview expecting audio, not a JSON error body.
+                    # A non-JSON error from the new asynchronous start endpoint
+                    # must be visible; no empty audio element may be displayed.
                     page.route(
                         "**/api/capabilities",
                         lambda route: route.fulfill(
@@ -121,7 +120,7 @@ def main() -> None:
                         ),
                     )
                     page.route(
-                        "**/api/voices/preview",
+                        "**/api/voices/preview/start",
                         lambda route: route.fulfill(
                             status=500, content_type="text/plain",
                             body="Internal Server Error",
@@ -133,9 +132,74 @@ def main() -> None:
                     assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_enabled()
                     assert page.get_by_text("Thorsten-CosyVoice3 muss lokal installiert werden").count() == 0
                     page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
-                    page.get_by_text("Serverfehler (HTTP 500) bei /api/voices/preview", exact=False).wait_for()
+                    page.get_by_text("Serverfehler (HTTP 500) bei /api/voices/preview/start", exact=False).wait_for()
                     assert "Unexpected token" not in page.locator(".message.error").inner_text()
-                    page.unroute("**/api/voices/preview")
+                    page.unroute("**/api/voices/preview/start")
+
+                    # Reproduce a real long-running preview. Backend stages
+                    # are not percentages, and the user can inspect a log.
+                    state = {"status": "running"}
+                    task_id = "c" * 32
+
+                    def mock_status(route):
+                        stage = ("Sprachsynthese läuft. Die GPU erzeugt die Hörprobe."
+                                 if state["status"] == "running" else
+                                 "Die Hörprobe konnte nicht erzeugt werden.")
+                        payload = {
+                            "id": task_id, "status": state["status"],
+                            "stage": stage,
+                            "events": [{"at": "2026-11-07T01:00:00+00:00",
+                                        "message": "Hörprobe angefordert."},
+                                       {"at": "2026-11-07T01:00:02+00:00",
+                                        "message": stage}],
+                            "error": "" if state["status"] == "running" else stage,
+                        }
+                        route.fulfill(status=200, content_type="application/json",
+                                      body=__import__("json").dumps(payload))
+
+                    page.route("**/api/voices/preview/status", mock_status)
+                    page.route(
+                        "**/api/voices/preview/start",
+                        lambda route: route.fulfill(
+                            status=202, content_type="application/json",
+                            body='{"id":"' + task_id + '","status":"running",'
+                                 '"stage":"Hörprobe wird vorbereitet.","events":'
+                                 '[{"at":"2026-11-07T01:00:00+00:00",'
+                                 '"message":"Hörprobe angefordert."}],"error":""}',
+                        ),
+                    )
+                    page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
+                    page.get_by_text("Hörprobe wird vorbereitet.", exact=True).wait_for()
+                    page.get_by_text("Protokoll der Hörprobe (1 Einträge)").click()
+                    page.get_by_text("Hörprobe angefordert.", exact=True).wait_for()
+                    state["status"] = "failed"
+                    page.get_by_text("Hörprobe fehlgeschlagen", exact=True).wait_for(timeout=10000)
+                    assert not page.locator(".audio-preview audio").count()
+                    page.unroute("**/api/voices/preview/start")
+                    page.unroute("**/api/voices/preview/status")
+
+                    # A backend claiming audio readiness must not create an
+                    # empty 0:00 player if it returns a zero-byte WAV.
+                    page.route(
+                        "**/api/voices/preview/start",
+                        lambda route: route.fulfill(
+                            status=202, content_type="application/json",
+                            body='{"id":"' + ("d" * 32) + '","status":"ready",'
+                                 '"stage":"Hörprobe geprüft.","events":[],"error":""}',
+                        ),
+                    )
+                    page.route(
+                        "**/api/voices/preview/audio/*",
+                        lambda route: route.fulfill(
+                            status=200, content_type="audio/wav", body="",
+                        ),
+                    )
+                    page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
+                    page.get_by_text("Die erzeugte Hörprobe ist leer oder unvollständig.").wait_for()
+                    assert page.get_by_role("button", name="Nach Anhören freigeben").is_disabled()
+                    assert not page.locator(".audio-preview audio").count()
+                    page.unroute("**/api/voices/preview/start")
+                    page.unroute("**/api/voices/preview/audio/*")
                     page.unroute("**/api/capabilities")
 
                     page.get_by_role("button", name="Hörbuch und Export").click()
