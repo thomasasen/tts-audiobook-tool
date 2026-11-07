@@ -652,6 +652,35 @@ def _job_event(job_id: str, message: str) -> None:
         _atomic_json(filename, events[-60:])
 
 
+def _job_eta(job_id: str, done: int, total: int) -> tuple[int | None, int]:
+    """Use persisted segment measurements; survive paused/restarted jobs.
+
+    Read at most twelve recent checkpoints to calculate inference rate.
+    Remaining text length is computed from the immutable job manifest.
+    """
+    from .progress_estimate import remaining_seconds
+    try:
+        plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
+        segments = plan["segments"]
+        if not isinstance(segments, list) or len(segments) != total:
+            return None, 0
+        samples = []
+        for index in range(max(0, done - 20), done):
+            file = _jobs_dir(job_id) / "audio" / f"{index:07d}.json"
+            try:
+                meta = json.loads(file.read_text(encoding="utf-8"))
+                chars = len(meta["prompt"])
+                duration = float(meta.get("processing_seconds") or meta["inference_seconds"])
+                if chars > 0 and 0 < duration < 3600:
+                    samples.append((chars, duration))
+            except (OSError, ValueError, TypeError, KeyError):
+                continue
+        remaining_chars = sum(len(item["text"]) for item in segments[done:])
+        return remaining_seconds(samples, remaining_chars), min(len(samples), 12)
+    except (OSError, ValueError, TypeError, KeyError):
+        return None, 0
+
+
 def job_activity(project_id: str, job_id: str) -> dict:
     """Authenticated and project-isolated progress; never return raw worker logs."""
     job = public_job(project_id, job_id)
@@ -665,12 +694,25 @@ def job_activity(project_id: str, job_id: str) -> dict:
             events = []
     total = max(0, job["total"])
     done = max(0, min(job["done"], total))
-    # A completed audio-generation percentage describes segments only.
-    # M4B muxing is a separate step, so do not report a fabricated export ETA.
+    # M4B muxing has a separate progress stage; do not attach a fabricated
+    # export ETA to the finished speech synthesis progress.
+    eta, sample_count = _job_eta(job_id, done, total) if done < total else (0, 0)
+    if job["status"] not in ("running", "generated", "completed"):
+        eta = None
+    now = datetime.now(timezone.utc)
+    try:
+        started_at = datetime.fromisoformat(job["created_at"])
+        elapsed = max(0, int((now - started_at).total_seconds()))
+    except (ValueError, TypeError):
+        elapsed = 0
     return {
         "id": job_id, "status": job["status"],
         "done": done, "total": total,
         "percent": round(100 * done / total) if total else 0,
+        "elapsed_seconds": elapsed,
+        "remaining_seconds": eta,
+        "eta_sample_count": sample_count,
+        "calculated_at": now.isoformat(),
         "events": events[-60:],
     }
 
@@ -912,10 +954,13 @@ def _run(job_id: str):
                             raise
                         time.sleep(1)
                 inference_seconds = round(time.perf_counter() - infer_started, 3)
+                quality = _audio_quality(path, prompt)
+                processing_seconds = round(time.perf_counter() - infer_started, 3)
                 _atomic_json(meta, {"fingerprint": fingerprint, "text": segment["text"],
                                     "prompt": prompt, "duration": seconds,
                                     "inference_seconds": inference_seconds,
-                                    "quality": _audio_quality(path, prompt)})
+                                    "processing_seconds": processing_seconds,
+                                    "quality": quality})
             # Pause/cancel/shutdown may have arrived during a long GPU call.
             # Preserve the valid segment, but never overwrite the new status.
             if _STOP.is_set() or _job(job_id)["status"] != "running":
