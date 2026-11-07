@@ -406,15 +406,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "restore":
             if not args.confirm:
                 raise RuntimeError("Rollback is destructive; pass --confirm explicitly")
+            _, target_metadata = _load_backup(args.data_root.resolve(), args.backup_id)
             pre_id = restore_release(
                 args.data_root, args.venv_root, args.repo_root,
                 args.backup_id, allow_code_mismatch=args.allow_code_mismatch,
             )
-            _, restored_metadata = _load_backup(args.data_root.resolve(), args.backup_id)
             print(json.dumps({
                 "restored_backup": args.backup_id,
                 "pre_rollback_backup": pre_id,
-                "previous_repo_commit": restored_metadata.get("repo_commit"),
+                "previous_repo_commit": target_metadata.get("repo_commit"),
             }))
         else:
             print(json.dumps(list_backups(args.data_root), indent=2))
