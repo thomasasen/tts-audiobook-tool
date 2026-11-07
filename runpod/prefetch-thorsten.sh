@@ -38,17 +38,16 @@ fi
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models"
 ensure_cosyvoice_checkout "$MODEL_ROOT"
 
-# An isolated, pinned small CLI avoids waiting for the gigantic Thorsten pip
-# environment. uv reuses the persistent cache and never changes Qwen/Thorsten.
-# Hugging Face already downloads multiple files concurrently via --max-workers.
-# Do not run base and fine-tune downloads simultaneously: both write llm.pt,
-# flow.pt and spk2info.pt into the exact same target folder.
+# Use the same pinned Hugging Face client for minimal downloads and upstream
+# LFS/Git-blob verification. Only required base assets and Thorsten overlays are fetched.
 export HF_HUB_ENABLE_HF_TRANSFER=0
 export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"
 export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-20}"
-hf_download() {
-  "$UV" tool run --python "$WEB_PYTHON_VERSION" --from "huggingface_hub==${HF_HUB_VERSION}" \
-    hf download "$@" --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
+run_hf_script() {
+  local script="$1"
+  shift
+  "$UV" tool run --python "$WEB_PYTHON_VERSION" --with "huggingface-hub==${HF_HUB_VERSION}" \
+    python "$SCRIPT_DIR/$script" "$@"
 }
 
 mkdir -p "$MODEL_DIR"
@@ -74,21 +73,18 @@ if [[ -d "$MODEL_DIR" ]] && find "$MODEL_DIR" -mindepth 1 -maxdepth 1 -type f -p
   exit 1
 fi
 
-echo "Prefetching CosyVoice3 base model (max $RUNPOD_TTS_DOWNLOAD_WORKERS parallel files)."
-hf_download "$BASE_MODEL_ID" --revision "$BASE_MODEL_REVISION" --local-dir "$MODEL_DIR"
-echo "Overlaying Thorsten fine-tuning AFTER the base download completes."
-hf_download "$THORSTEN_MODEL_ID" llm.pt flow.pt spk2info.pt infer_thorsten.py \
-  --revision "$THORSTEN_MODEL_REVISION" --local-dir "$MODEL_DIR"
-
-# The base and fine-tune snapshots overlap filenames. Capture the FINAL
-# overlaid bytes to prevent the installer from re-downloading base and
-# Thorsten weights, which otherwise doubles disk/network writes.
-for name in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx speech_tokenizer_v3.batch.onnx; do
-  [[ -s "$MODEL_DIR/$name" ]] || { echo "Missing prefetched file: $name" >&2; exit 1; }
-done
-(cd "$MODEL_DIR" && sha256sum llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py \
-  cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx speech_tokenizer_v3.batch.onnx) > "$PREFETCH_SUMS.tmp"
-mv -f "$PREFETCH_SUMS.tmp" "$PREFETCH_SUMS"
+echo "Prefetching the pinned minimal CosyVoice3 and Thorsten asset set."
+run_hf_script download-hf-models.py \
+  --model-dir "$MODEL_DIR" \
+  --base-model-id "$BASE_MODEL_ID" --base-revision "$BASE_MODEL_REVISION" \
+  --thorsten-model-id "$THORSTEN_MODEL_ID" --thorsten-revision "$THORSTEN_MODEL_REVISION" \
+  --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
+run_hf_script verify-hf-models.py \
+  --model-dir "$MODEL_DIR" \
+  --base-model-id "$BASE_MODEL_ID" --base-revision "$BASE_MODEL_REVISION" \
+  --thorsten-model-id "$THORSTEN_MODEL_ID" --thorsten-revision "$THORSTEN_MODEL_REVISION" \
+  --output "$PREFETCH_SUMS"
+(cd "$MODEL_DIR" && sha256sum --check "$PREFETCH_SUMS")
 printf '%s\n' "$PREFETCH_VERSION" > "$PREFETCH_READY.tmp"
 mv -f "$PREFETCH_READY.tmp" "$PREFETCH_READY"
 echo "Thorsten weights prefetched and verified; final installer still required."
