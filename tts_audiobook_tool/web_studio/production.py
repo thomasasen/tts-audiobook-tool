@@ -93,6 +93,12 @@ def _generate_with_worker(text: str, output: Path, config: tuple[str, str]) -> N
                 )
             response = _model_message(_MODEL_PROC, 300)
             if response.get("ready") is not True:
+                if response.get("error_code") == "CUDA_UNAVAILABLE":
+                    raise RuntimeError(
+                        "GPU nicht für CUDA-Ausführung verfügbar. "
+                        "RunPod-Host/GPU-Zuweisung prüfen; "
+                        "runpod/gpu_preflight.py --env both ausführen."
+                    )
                 raise RuntimeError("Thorsten-Modell konnte nicht geladen werden.")
         if _MODEL_PROC.stdin is None:
             raise RuntimeError("Thorsten-Worker ist nicht schreibbar.")
