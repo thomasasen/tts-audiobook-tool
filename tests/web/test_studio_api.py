@@ -144,7 +144,8 @@ def test_preview_progress_activity_is_authenticated_and_duplicate_safe(client, m
     release = threading.Event()
     seen = []
 
-    def fake_generate(on_progress=None):
+    def fake_generate(on_progress=None, duration_seconds=5):
+        assert duration_seconds == 5
         assert on_progress is not None
         on_progress("Thorsten-Modell wird in den GPU-Speicher geladen.")
         entered.set()
@@ -187,11 +188,38 @@ def test_preview_progress_activity_is_authenticated_and_duplicate_safe(client, m
     assert client.get("/api/voices/preview/audio/" + task["id"], headers=authorized()).status_code == 404
 
 
+def test_preview_duration_validation_and_multisentence_assembly(client, monkeypatch):
+    from tts_audiobook_tool.web_studio import production
+    monkeypatch.setattr(production, "_model_identity", lambda: "synthetic-thorsten")
+    calls = []
+    def synthetic_speech(text, path, on_progress=None):
+        calls.append(text)
+        _test_preview_wav(path)
+        return 1.0
+    monkeypatch.setattr(production, "_synthesize", synthetic_speech)
+    for invalid in (0, 1, 12, 90, -1):
+        response = client.post("/api/voices/preview/start", headers=authorized(),
+                               json={"duration_seconds": invalid})
+        assert response.status_code == 422
+    assert production.SAMPLE_LENGTHS == {5: 1, 15: 3, 30: 6, 60: 12}
+    sample = production.make_sample(duration_seconds=15)
+    assert len(calls) == 3
+    assert sample.is_file()
+    with wave.open(str(sample), "rb") as reader:
+        assert reader.getnframes() == 16000 * 3
+        assert reader.getsampwidth() == 2
+        assert reader.getnchannels() == 1
+    # A new sample invalidates prior approval and does not truncate words.
+    with pytest.raises(ValueError, match="5, 15, 30 oder 60"):
+        production.make_sample(duration_seconds=12)
+
+
 def test_preview_worker_failure_exposes_safe_summary_and_steps(client, monkeypatch):
     from tts_audiobook_tool.web_studio import production
     monkeypatch.setattr(production, "_model_identity", lambda: "test-installed-voice")
 
-    def fail(on_progress=None):
+    def fail(on_progress=None, duration_seconds=5):
+        assert duration_seconds == 5
         on_progress("Sprachsynthese läuft. Die GPU erzeugt die Hörprobe.")
         raise RuntimeError("private worker diagnostic and user audiobook pathname")
 
