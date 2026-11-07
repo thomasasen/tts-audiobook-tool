@@ -286,6 +286,8 @@ export default function Studio() {
     ])
     const selected = list.jobs[0] ?? null
     setJob(selected); setCapabilities(caps)
+    setJobActivity(null)
+    if (selected) void refreshActivity(projectId, selected.id)
     if (selected && ['generated','completed'].includes(selected.status)) {
       setQuality(await api<QualityReport>('/api/projects/' + projectId + '/jobs/' + selected.id + '/quality', token))
     } else setQuality(null)
@@ -299,6 +301,7 @@ export default function Studio() {
         const next = await api<Job>(`/api/projects/${active.id}/jobs`, token, {method: 'POST'})
         setJob(next)
       } else if (action === 'export' && job) {
+        setExportPending(true)
         await api(`/api/projects/${active.id}/jobs/${job.id}/export`, token, {method: 'POST'})
         await refreshJob(job.id, active.id)
       } else if (job) {
@@ -309,7 +312,7 @@ export default function Studio() {
       }
       await refreshProjects()
     } catch (err) { setError((err as Error).message) }
-    finally { setBusy(false) }
+    finally { setBusy(false); setExportPending(false) }
   }
 
   async function retrySegment(index: number) {
@@ -328,7 +331,7 @@ export default function Studio() {
     setBusy(true); setError('')
     try {
       await api(`/api/projects/${id}`, token, {method: 'DELETE'})
-      if (active?.id === id) {setActive(null); setJob(null);setView('library')}
+      if (active?.id === id) {setActive(null); setJob(null);setJobActivity(null);setView('library')}
       await refreshProjects()
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -357,7 +360,9 @@ export default function Studio() {
   function signOut() {
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
     if (audioUrl) URL.revokeObjectURL(audioUrl)
-    setAudioUrl(''); setJob(null); setQuality(null); setNotice(''); setError(''); setView('library')
+    setAudioUrl(''); setJob(null); setJobActivity(null); setQuality(null); setPreviewTask(null)
+    setPreviewAudioError(''); setPreviewAudioValid(false); setPreviewPlayed(false); setExportPending(false)
+    setNotice(''); setError(''); setView('library')
   }
 
   async function refreshProjects() {
@@ -372,7 +377,7 @@ export default function Studio() {
       setActive(project)
       setStart(project.selected_start)
       setExcluded(project.excluded_indices)
-      setJob(null)
+      setJob(null); setJobActivity(null)
       if (next === 'export') await refreshProduction(id)
       setView(next)
     } catch (err) { setError((err as Error).message) }
@@ -422,8 +427,13 @@ export default function Studio() {
       const catalog = await api<{ready: VoiceCandidate[], candidates: VoiceCandidate[]}>('/api/voices', token)
       setVoices([...catalog.ready, ...catalog.candidates])
       if (audioUrl) URL.revokeObjectURL(audioUrl)
-      setAudioUrl(''); setPreviewPlayed(false)
-      setCapabilities(await api<Capabilities>('/api/capabilities', token))
+      setAudioUrl(''); setPreviewPlayed(false); setPreviewAudioValid(false)
+      setPreviewAudioError(''); handledPreview.current = null
+      const [caps, task] = await Promise.all([
+        api<Capabilities>('/api/capabilities', token),
+        api<PreviewTask>('/api/voices/preview/status', token),
+      ])
+      setCapabilities(caps); setPreviewTask(task)
       setView('voices')
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
