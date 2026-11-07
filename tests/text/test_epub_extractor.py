@@ -1691,6 +1691,51 @@ class TestEpubExtractor(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+    def test_drop_cap_reconstructs_split_initials_and_preserves_fragment(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><p class="block_29" id="start">W</p>'
+            '<p class="block_6">ird heute geprüft.</p><p>Danach folgt ein Absatz.</p></body>',
+            navigation_targets=[make_navigation_target("Kapitel", "Text/chapter.xhtml#start", 0)],
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Wird heute geprüft.\\n\\nDanach folgt ein Absatz.")
+        self.assertEqual(result.significant_warnings, [])
+        self.assertEqual(len(result.slices), 1)
+
+    def test_drop_cap_repairs_float_wrapper_nested_inline_and_umlaut(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><div class="frame_"><p class="block_29"><em>W</em></p></div>'
+            '<p class="block_6">ährend der Sitzung wurde gesprochen.</p></body>',
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Während der Sitzung wurde gesprochen.")
+
+    def test_drop_cap_keeps_whitespace_between_full_words_and_removes_layout_indent(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><p class="block_29">Eine</p><p class="block_6"> Woche später.</p>'
+            '<p class="block_29">„L</p><p class="block_6">assen Sie uns starten.</p></body>',
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Eine Woche später.\\n\\n„Lassen Sie uns starten.")
+
+    def test_drop_cap_does_not_join_unmarked_or_ambiguous_paragraphs(self):
+        for html, expected_warning in [
+            ('<p class="ordinary">A</p><p>lpha</p>', False),
+            ('<p class="block_29">D</p><p class="block_6">Während der Sitzung.</p>', True),
+        ]:
+            with self.subTest(html=html):
+                chapter = EpubSourceChapter(
+                    "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+                    "<body>" + html + "</body>",
+                )
+                result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+                self.assertIn("\\n\\n", result.text)
+                self.assertEqual(bool(result.significant_warnings), expected_warning)
+
+
 class TestEpubLogWarnings(unittest.TestCase):
 
     def test_log_warnings_strips_ansi(self):
