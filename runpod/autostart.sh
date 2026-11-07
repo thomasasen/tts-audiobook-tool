@@ -130,7 +130,16 @@ fi
 
 echo "Source commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 echo "Installing required environments. No book data or voice samples are downloaded."
-bash "$REPO_DIR/runpod/setup.sh" --models "$RUNPOD_TTS_MODELS"
+# A failed optional TTS dependency/strict-GPU check must not prevent an
+# already-installed Web Studio from starting. Keep a hard failure when there is
+# no usable base Python environment at all.
+if ! bash "$REPO_DIR/runpod/setup.sh" --models "$RUNPOD_TTS_MODELS"; then
+  echo "WARNING: TTS setup failed. Trying existing web/base Python environment."
+fi
+if [[ ! -x "$DATA_ROOT/venvs/qwen/bin/python" ]]; then
+  echo "ERROR: Web Studio base Python is missing. See the latest setup log under $DATA_ROOT/logs." >&2
+  exit 1
+fi
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "ERROR: tmux missing after setup." >&2
@@ -155,40 +164,20 @@ else
   fi
 fi
 
-# Unlike nvidia-smi and torch.cuda.is_available(), this checks a real GPU
-# memory allocation. On broken RunPod hosts it saves unnecessary large model
-# downloads and makes the cause visible in startup logs before voice setup.
-echo "Checking CUDA execution in the Qwen environment (actual allocation)."
-CUDA_QWEN_READY=0
-if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env qwen --json; then
-  CUDA_QWEN_READY=1
-  echo "CUDA execution preflight: QWEN OK."
+# Bring up the Web Studio BEFORE optional multi-GB model downloads. The app
+# discovers newly installed Thorsten weights dynamically after validation.
+# Running tmux alone does not prove that uvicorn is alive: an earlier
+# crash leaves an interactive bash shell in the session. Only HTTP health
+# determines readiness. Replace dead sessions; never create duplicates.
+if curl -fsS --max-time 2 "http://127.0.0.1:${AUDIOBOOK_STUDIO_PORT:-7860}/api/health" >/dev/null 2>&1; then
+  echo "Existing Web Studio is already responding."
 else
-  echo "WARNING: CUDA execution preflight failed in Qwen: the GPU may be unavailable despite nvidia-smi visibility."
-  echo "WARNING: On a new host, verify CUDA before attempting expensive model downloads."
-fi
-
-echo "Installing German voice (optional until GPU acceptance)."
-THORSTEN_INSTALL_OK=0
-if (( ! CUDA_QWEN_READY )) && [[ ! -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
-  echo "WARNING: Skipping FIRST-TIME Thorsten weight download on a host with unusable CUDA."
-  echo "The Web Studio will remain available for EPUB preparation; select a working GPU host to continue."
-elif bash "$REPO_DIR/runpod/install-thorsten.sh"; then
-  THORSTEN_INSTALL_OK=1
-else
-  echo "WARNING: Thorsten installation failed. Web voice generation remains disabled."
-fi
-if (( THORSTEN_INSTALL_OK )); then
-  echo "Checking CUDA execution in the isolated Thorsten environment."
-  if ! python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
-    echo "WARNING: Thorsten model files are verified, but CUDA EXECUTION FAILED; GPU speech generation will fail."
+  if tmux has-session -t audiobook-web 2>/dev/null; then
+    echo "WARNING: Stale audiobook-web tmux session has no healthy server. Restarting."
+    tmux kill-session -t audiobook-web
   fi
-fi
-if tmux has-session -t audiobook-web 2>/dev/null; then
-  echo "Existing web studio session left running."
-else
-  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\$?; echo Web server stopped: \$rc; exec bash"
-  echo "Started the web studio in tmux session audiobook-web (port 7860)."
+  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\\$?; echo Web server stopped: \\$rc; exec bash"
+  echo "Started the Web Studio session (port ${AUDIOBOOK_STUDIO_PORT:-7860})."
 fi
 
 # Announce the *generated* login code only after FastAPI responds successfully.
@@ -197,7 +186,7 @@ fi
 WEB_HEALTHY=0
 WEB_PORT="${AUDIOBOOK_STUDIO_PORT:-7860}"
 if [[ "$WEB_PORT" =~ ^[0-9]+$ ]]; then
-  for (( attempt=1; attempt<=45; attempt++ )); do
+  for (( attempt=1; attempt<=90; attempt++ )); do
     if curl -fsS --max-time 2 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1; then
       WEB_HEALTHY=1
       break
@@ -232,8 +221,53 @@ if (( WEB_HEALTHY )); then
     fi
   fi
 else
-  echo "WARNING: Web studio did not respond on port $WEB_PORT. Check tmux attach -t audiobook-web."
+  echo "WARNING: Web Studio did not become healthy on port $WEB_PORT. Last Web Studio output:"
+  tmux capture-pane -pt audiobook-web -S -45 2>&1 | tail -n 45 || true
+  echo "WARNING: Web failed or is still initializing; inspect the above server output."
 fi
+# Unlike nvidia-smi and torch.cuda.is_available(), this checks a real GPU
+# memory allocation. On broken RunPod hosts it saves unnecessary large model
+# downloads and makes the cause visible in startup logs before voice setup.
+echo "Checking CUDA execution in the Qwen environment (actual allocation)."
+CUDA_QWEN_READY=0
+if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env qwen --json; then
+  CUDA_QWEN_READY=1
+  echo "CUDA execution preflight: QWEN OK."
+else
+  echo "WARNING: CUDA execution preflight failed in Qwen: the GPU may be unavailable despite nvidia-smi visibility."
+  echo "WARNING: On a new host, verify CUDA before attempting expensive model downloads."
+fi
+
+echo "Installing German voice (optional until GPU acceptance)."
+THORSTEN_INSTALL_OK=0
+if (( ! CUDA_QWEN_READY )) && [[ ! -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
+  echo "WARNING: Skipping FIRST-TIME Thorsten weight download on a host with unusable CUDA."
+  echo "The Web Studio will remain available for EPUB preparation; select a working GPU host to continue."
+elif bash "$REPO_DIR/runpod/install-thorsten.sh"; then
+  THORSTEN_INSTALL_OK=1
+else
+  echo "WARNING: Thorsten installation failed. Web voice generation remains disabled."
+fi
+if (( THORSTEN_INSTALL_OK )); then
+  echo "Checking CUDA execution in the isolated Thorsten environment."
+  if ! python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
+    echo "WARNING: Thorsten model files are verified, but CUDA EXECUTION FAILED; GPU speech generation will fail."
+  fi
+fi
+# Running tmux alone does not prove that uvicorn is alive: an earlier
+# crash leaves an interactive bash shell in the session. Only HTTP health
+# determines readiness. Replace dead sessions; never create duplicates.
+if curl -fsS --max-time 2 "http://127.0.0.1:${AUDIOBOOK_STUDIO_PORT:-7860}/api/health" >/dev/null 2>&1; then
+  echo "Existing Web Studio is already responding."
+else
+  if tmux has-session -t audiobook-web 2>/dev/null; then
+    echo "WARNING: Stale audiobook-web tmux session has no healthy server. Restarting."
+    tmux kill-session -t audiobook-web
+  fi
+  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\\$?; echo Web server stopped: \\$rc; exec bash"
+  echo "Started the Web Studio session (port ${AUDIOBOOK_STUDIO_PORT:-7860})."
+fi
+
 exec 3>&-
 
 if (( THORSTEN_INSTALL_OK )); then
