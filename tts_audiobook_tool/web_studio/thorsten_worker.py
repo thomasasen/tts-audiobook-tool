@@ -122,7 +122,15 @@ def main() -> None:
                 ]
                 if not chunks:
                     raise RuntimeError("Empty TTS output")
-                torchaudio.save(str(output), torch.cat(chunks, dim=1), model.sample_rate)
+                # Explicitly use browser-compatible 16-bit integer PCM. The
+                # default for floating point TTS tensors may be floating
+                # or higher-bit-depth WAV that some browsers cannot decode.
+                # 16-bit PCM is also supported by Python's wave validator
+                # and downstream M4B encoding.
+                torchaudio.save(
+                    str(output), torch.cat(chunks, dim=1), model.sample_rate,
+                    format="wav", encoding="PCM_S", bits_per_sample=16,
+                )
             print(json.dumps({"id": request["id"], "ok": True}), flush=True)
         except Exception as exc:
             # Diagnose in PRIVATE worker logs: error classes and curated
