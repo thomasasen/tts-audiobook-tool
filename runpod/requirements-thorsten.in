@@ -1,9 +1,7 @@
 # Dependency input copied from QwenAudio/CosyVoice requirements.txt at
 # COSYVOICE_REVISION in runpod/model-pins.env (commit ace7c47f41bbd303aa6bf1ea80e6f9fbd595cd40).
-# Keep the upstream pins intact. These extra packages are pinned for the
-# Thorsten RunPod worker and the Hugging Face CLI used by the installer.
---extra-index-url https://download.pytorch.org/whl/cu121
---extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+# Keep the upstream pins intact. Additional production-runtime packages are
+# pinned below. PyPI is the sole index to avoid cross-index dependency confusion.
 conformer==0.3.2
 deepspeed==0.15.1; sys_platform == 'linux'
 diffusers==0.29.0
