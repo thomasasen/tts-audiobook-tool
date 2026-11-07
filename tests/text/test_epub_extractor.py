@@ -912,9 +912,8 @@ class TestEpubExtractor(unittest.TestCase):
         nav.properties = ["nav"]
         book = StubEpubBookWithSpine([nav])
         with patch("os.path.exists", return_value=True), \
-                patch("importlib.import_module") as import_module, \
+                patch("ebooklib.epub.read_epub", return_value=book), \
                 patch.object(EpubExtractor, "extract_navigation_targets", return_value=[]):
-            import_module.return_value.read_epub.return_value = book
             source, _, warnings, significant = EpubExtractor.load_source_chapters("test.epub")
         self.assertEqual(len(source), 1, warnings)
         self.assertTrue(source[0].contains_reading_text_outside_nav)
@@ -932,9 +931,8 @@ class TestEpubExtractor(unittest.TestCase):
         nav.properties = ["nav"]
         book = StubEpubBookWithSpine([nav])
         with patch("os.path.exists", return_value=True), \
-                patch("importlib.import_module") as import_module, \
+                patch("ebooklib.epub.read_epub", return_value=book), \
                 patch.object(EpubExtractor, "extract_navigation_targets", return_value=[]):
-            import_module.return_value.read_epub.return_value = book
             source, _, warnings, _ = EpubExtractor.load_source_chapters("test.epub")
         self.assertEqual(source, [])
         self.assertTrue(any("navigation" in warning.lower() for warning in warnings))
