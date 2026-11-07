@@ -106,6 +106,32 @@ def main() -> None:
                     page.get_by_text("Freigabe offen").wait_for()
                     assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_disabled()
 
+                    # Reproduce the actual RunPod error when native Thorsten
+                    # inference crashes: FastAPI responds with plain-text 500
+                    # to a preview expecting audio, not a JSON error body.
+                    page.route(
+                        "**/api/capabilities",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body='{"epub_import":true,"chapter_selection":true,'
+                                 '"tts_generation":false,"audio_export":true,'
+                                 '"voice_preview_available":true,"reason":"Test"}',
+                        ),
+                    )
+                    page.route(
+                        "**/api/voices/preview",
+                        lambda route: route.fulfill(
+                            status=500, content_type="text/plain",
+                            body="Internal Server Error",
+                        ),
+                    )
+                    page.get_by_role("button", name="Sprecher").click()
+                    page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
+                    page.get_by_text("Serverfehler (HTTP 500) bei /api/voices/preview", exact=False).wait_for()
+                    assert "Unexpected token" not in page.locator(".message.error").inner_text()
+                    page.unroute("**/api/voices/preview")
+                    page.unroute("**/api/capabilities")
+
                     page.get_by_role("button", name="Hörbuch und Export").click()
                     page.get_by_role("heading", name="Vertonung vorbereiten").wait_for()
                     assert page.get_by_role("button", name="Vertonung starten").is_disabled()
