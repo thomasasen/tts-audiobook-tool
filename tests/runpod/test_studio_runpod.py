@@ -29,6 +29,19 @@ class TestGermanStudioRunPod(unittest.TestCase):
         self.assertIn('sha256sum --check --status "$CHECKSUMS"', source)
         self.assertIn("Refusing to trust or silently rebaseline weights", source)
 
+    def test_huggingface_transfer_fallback_in_runpod_environment(self):
+        # The official GPU image can enable hf_transfer even when the isolated
+        # Thorsten virtualenv does not contain the optional package.
+        env = (ROOT / "runpod/env.sh").resolve()
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1"; printf "%s" "$HF_HUB_ENABLE_HF_TRANSFER"', "bash", str(env)],
+            env={**os.environ, "HF_HUB_ENABLE_HF_TRANSFER": "1"},
+            text=True, capture_output=True, check=True,
+        )
+        self.assertEqual(result.stdout, "0")
+        installer = (ROOT / "runpod/install-thorsten.sh").read_text(encoding="utf-8")
+        self.assertIn('source "$SCRIPT_DIR/env.sh"', installer)
+
     def test_readme_command_points_to_exact_integrated_autostart(self):
         root = (ROOT / "README.md").read_text(encoding="utf-8")
         autostart = (ROOT / "runpod/autostart.sh").read_text(encoding="utf-8")
