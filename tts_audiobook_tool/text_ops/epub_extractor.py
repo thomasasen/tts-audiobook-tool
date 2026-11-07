@@ -217,13 +217,97 @@ class BeautifulSoupEpubChapterTextExtractor:
         "wbr",
     }
 
+    @staticmethod
+    def is_semantic_scene_separator(node: Any) -> bool:
+        """Recognize explicit image-based scene separators, never arbitrary images."""
+        if getattr(node, "name", None) != "img":
+            return False
+        labels = " ".join([
+            str(node.get("alt") or ""), str(node.get("title") or ""),
+            " ".join(node.get("class") or []),
+        ]).lower().replace("-", " ").replace("_", " ")
+        return bool(re.search(r"\b(dinkus|scene break|scenebreak|ornamental separator)\b", labels))
+
+    @classmethod
+    def repair_floated_drop_caps(cls, soup: Any, css: EpubCssResolver | None) -> int:
+        """Repair only structurally identifiable initial-letter floats.
+
+        Generic neighboring block elements are not joined. Ambiguous initial
+        letters are retained for editorial review, not silently discarded.
+        """
+        ambiguous = 0
+        for node in list(soup.find_all(["div", "span"])):
+            if node.parent is None:
+                continue
+            initial = node.get_text("", strip=True)
+            if not initial or len(initial) > 6 or any(char.isspace() for char in initial):
+                continue
+            classes = frozenset(node.get("class") or [])
+            inline_style = str(node.get("style") or "")
+            float_value = ""
+            if css is not None:
+                float_value = css.declarations_for(node.name, classes, node.get("id")).get("float", "")
+            inline_float = re.search(r"(?:^|;)\s*float\s*:\s*(left|right)\b", inline_style, re.I)
+            has_drop_cap_class = any(
+                "dropcap" in name.lower().replace("-", "").replace("_", "")
+                or "initialletter" in name.lower().replace("-", "").replace("_", "")
+                for name in classes
+            )
+            if float_value not in ("left", "right") and not inline_float and not has_drop_cap_class:
+                continue
+
+            following = node.next_sibling
+            while following is not None and getattr(following, "name", None) is None \
+                    and not str(following).strip():
+                following = following.next_sibling
+            if getattr(following, "name", None) != "p":
+                continue
+            continuation = following.get_text("", strip=True)
+            if not continuation:
+                continue
+            letter = initial.lstrip("„“«»‘'\"")
+            if len(letter) == 1 and letter.isalpha() and letter.isupper() and continuation[0].islower():
+                prefix = initial
+            elif len(letter) == 1 and letter.isalpha() and continuation.startswith(letter):
+                prefix = ""
+            elif initial in ("„", "“", "«", "‘", "'"):
+                prefix = initial
+            elif 1 < len(letter) <= 6 and letter[0].isupper() and letter.isalpha() \
+                    and continuation[0].isalpha():
+                prefix = initial + " "
+            else:
+                ambiguous += 1
+                continue
+
+            # Transfer IDs before decomposing the float: NCX fragment anchors
+            # may target the initial itself, not the continuation paragraph.
+            anchored = []
+            for descendant in [node, *node.find_all(True)]:
+                for attr in ("id", "name"):
+                    value = descendant.get(attr) if hasattr(descendant, "get") else None
+                    if value and value not in anchored:
+                        anchored.append(value)
+            if prefix:
+                following.insert(0, prefix)
+            for anchor in reversed(anchored):
+                placeholder = soup.new_tag("span", id=anchor)
+                following.insert(0, placeholder)
+            node.decompose()
+        return ambiguous
+
     def extract_text(self, chapter: EpubSourceChapter) -> EpubTextExtractionResult:
         BeautifulSoup = self.import_beautiful_soup()
         soup = BeautifulSoup(chapter.html, "html.parser")
         self.apply_speaker_overrides(soup, chapter.speaker_overrides)
+        ambiguous_drop_caps = self.repair_floated_drop_caps(soup, chapter.css)
         stats = EpubTextExtractionStats()
         warnings: list[str] = []
         significant_warnings: list[str] = []
+        if ambiguous_drop_caps:
+            warning = (f"EPUB drop-cap requires manual review in {chapter.href}: "
+                       f"{ambiguous_drop_caps} ambiguous floated initials.")
+            warnings.append(warning)
+            significant_warnings.append(warning)
         target_fragments = {
             target.fragment
             for target in chapter.navigation_targets
@@ -374,6 +458,10 @@ class BeautifulSoupEpubChapterTextExtractor:
         speaker_text = node.get("data-audiobook-speaker-text") if hasattr(node, "get") else None
         has_speaker_text = isinstance(speaker_text, str) and bool(speaker_text.strip())
 
+        if name == "img" and self.is_semantic_scene_separator(node) and not has_speaker_text:
+            self.ensure_block_boundary(pieces)
+            pieces.append("* * *\n\n")
+            return
         if name in self.SKIP_TAGS and not has_speaker_text:
             return
         if name == "br":
@@ -1204,12 +1292,13 @@ class EpubExtractor:
             return [], "", [], [message]
 
         book_title = EpubExtractor.extract_book_title(book)
-        navigation_targets = EpubExtractor.extract_navigation_targets(book)
+        navigation_title_warnings: list[str] = []
+        navigation_targets = EpubExtractor.extract_navigation_targets(book, navigation_title_warnings)
         navigation_targets_by_path: dict[str, list[EpubNavigationTarget]] = {}
         for navigation_target in navigation_targets:
             navigation_targets_by_path.setdefault(navigation_target.path, []).append(navigation_target)
-        warnings: list[str] = []
-        significant_warnings: list[str] = []
+        warnings: list[str] = list(navigation_title_warnings)
+        significant_warnings: list[str] = list(navigation_title_warnings)
         source_chapter_candidates: list[EpubSourceChapter] = []
         source_chapters: list[EpubSourceChapter] = []
         stylesheets = EpubExtractor.load_stylesheets(book)
@@ -1344,6 +1433,23 @@ class EpubExtractor:
         reading_spine_count = sum(text_bearing_flags)
         reading_spine_position = 0
         for source_chapter, is_text_bearing in zip(source_chapter_candidates, text_bearing_flags):
+            technical_attribution = EpubSectionSkipDetector.detect_technical_attribution_skip(
+                source_chapter.href, source_chapter.title, source_chapter.html,
+            )
+            forced_include = is_manually_included(source_chapter.href)
+            if technical_attribution.should_skip:
+                if not forced_include:
+                    record_source(source_chapter.href, source_chapter.title, "technical-attribution",
+                                  technical_attribution.reason, source_chapter.html)
+                    EpubExtractor.append_skipped_section_warning(
+                        warnings, significant_warnings, source_chapter, technical_attribution.reason,
+                    )
+                    continue
+                source_chapter.skip_override_reason = technical_attribution.reason
+                record_source(source_chapter.href, source_chapter.title, "technical-attribution",
+                              technical_attribution.reason, source_chapter.html,
+                              status="retained", can_restore=True, overridden=True)
+
             publication_metadata_skip_decision = EpubSectionSkipDetector.detect_publication_metadata_skip(
                 reading_spine_position,
                 reading_spine_count,
@@ -1512,7 +1618,65 @@ class EpubExtractor:
         return []
 
     @staticmethod
-    def extract_navigation_targets(book: Any) -> list[EpubNavigationTarget]:
+    def prefer_matching_xhtml_toc_labels(
+            book: Any,
+            targets: list[EpubNavigationTarget],
+            warnings: list[str] | None = None,
+    ) -> list[EpubNavigationTarget]:
+        """Use verified source XHTML TOC labels instead of terse NCX labels.
+
+        A complete one-to-one path/order match is required. Fragment-heavy
+        navigation and conflicting alternate TOCs fall back unchanged.
+        """
+        if len(targets) < 5 or len({target.path for target in targets}) != len(targets):
+            return targets
+        matching_label_sets: list[list[str]] = []
+        source_paths = [target.path for target in targets]
+        BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
+        for item in getattr(book, "items", []):
+            href = str(getattr(item, "file_name", "") or "")
+            if not href.lower().endswith((".html", ".xhtml")):
+                continue
+            html = EpubExtractor.decode_item_content(item)
+            if html.count("href=") < len(targets):
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            links = soup.select("a[href]")
+            if len(links) != len(targets):
+                continue
+            candidates = [
+                EpubExtractor.make_navigation_target(
+                    str(link.get("href") or ""),
+                    BeautifulSoupEpubChapterTextExtractor.normalize_inline_text(link.get_text()),
+                    order,
+                    posixpath.dirname(href),
+                )
+                for order, link in enumerate(links)
+            ]
+            if any(target is None for target in candidates):
+                continue
+            if [target.path for target in candidates] != source_paths:
+                continue
+            matching_label_sets.append([target.title for target in candidates])
+
+        if not matching_label_sets:
+            return targets
+        if any(labels != matching_label_sets[0] for labels in matching_label_sets[1:]):
+            if warnings is not None:
+                warnings.append("EPUB XHTML table of contents has conflicting chapter labels; kept original navigation.")
+            return targets
+
+        labels = matching_label_sets[0]
+        return [
+            EpubNavigationTarget(
+                title=label, path=target.path, fragment=target.fragment,
+                href=target.href, order=target.order, depth=target.depth,
+            )
+            for target, label in zip(targets, labels)
+        ]
+
+    @staticmethod
+    def extract_navigation_targets(book: Any, warnings: list[str] | None = None) -> list[EpubNavigationTarget]:
         document_targets = EpubExtractor.extract_navigation_document_targets(book)
         if document_targets:
             return document_targets
@@ -1529,7 +1693,7 @@ class EpubExtractor:
             navigation_targets,
             navigation_base_path,
         )
-        return navigation_targets
+        return EpubExtractor.prefer_matching_xhtml_toc_labels(book, navigation_targets, warnings)
 
     @staticmethod
     def collect_navigation_targets(
