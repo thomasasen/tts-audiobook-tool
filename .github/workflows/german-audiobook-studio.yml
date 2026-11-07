@@ -10,6 +10,7 @@ on:
       - ".github/workflows/german-audiobook-studio.yml"
   push:
     branches:
+      - "master"
       - "feature/german-audiobook-*"
     paths:
       - "tts_audiobook_tool/web_studio/**"
