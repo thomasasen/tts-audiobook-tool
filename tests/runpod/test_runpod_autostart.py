@@ -75,6 +75,39 @@ class TestRunPodAutostart(unittest.TestCase):
         self.assertIn("keine Benutzer-Stimmklone oder Referenzaufnahme", readme)
         self.assertLess(readme.index("RunPod-Template vollständig einrichten"), readme.index("# Table of contents"))
 
+    def test_generated_web_token_only_reaches_live_pod_stdout_after_health(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        self.assertIn("exec 3>&1", source)
+        self.assertLess(source.index("exec 3>&1"), source.index('exec > >(tee -a "$LOG_FILE")'))
+        self.assertIn("/api/health", source)
+        self.assertIn("if (( WEB_HEALTHY )); then", source)
+        self.assertIn('if [[ -n "${AUDIOBOOK_STUDIO_TOKEN:-}" ]]; then', source)
+        self.assertIn('WEB_ACCESS_TOKEN="$(<"$TOKEN_FILE")"', source)
+        self.assertIn('"Zugangsschlüssel: $WEB_ACCESS_TOKEN"', source)
+        self.assertIn("'VERTRAULICH: Nur in privaten RunPod-Container-Logs anzeigen; nicht weitergeben.' >&3", source)
+        self.assertIn("exec 3>&-", source)
+        self.assertNotIn('echo "$WEB_ACCESS_TOKEN"', source)
+
+    def test_persistent_log_does_not_get_a_live_stdout_secret(self):
+        # Exercise the stdout/tee isolation used by the autostart script:
+        # fd 3 bypasses tee but remains visible to the container log collector.
+        with tempfile.TemporaryDirectory() as work:
+            log = Path(work) / "autostart.log"
+            script = (
+                'exec 3>&1; '
+                'exec > >(tee -a "$1") 2>&1; '
+                'echo "ordinary boot output"; '
+                'printf "generated-token-12345\\n" >&3; '
+                'sleep 0.2'
+            )
+            result = subprocess.run(
+                ["bash", "-c", script, "bash", str(log)],
+                capture_output=True, text=True, timeout=5, check=True,
+            )
+            self.assertIn("generated-token-12345", result.stdout)
+            self.assertIn("ordinary boot output", log.read_text(encoding="utf-8"))
+            self.assertNotIn("generated-token-12345", log.read_text(encoding="utf-8"))
+
     def test_invalid_model_is_rejected_without_side_effects(self):
         result = self.call(
             "--check-only",
