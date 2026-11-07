@@ -1793,6 +1793,21 @@ if __name__ == "__main__":
                 self.assertEqual(len(result.slices), 1)
                 self.assertEqual(result.slices[0].navigation_target.fragment, "initial")
 
+    def test_drop_cap_omitted_orphan_keeps_named_navigation_anchor(self):
+        chapter = EpubSourceChapter(
+            "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+            '<body><div style="float: left"><p style="font-size:44pt">'
+            '<a name="old-opening"></a>M</p></div>'
+            '<p>Im Deutschen ist der Anfang vollständig.</p></body>',
+            navigation_targets=[
+                make_navigation_target("Kapitel", "Text/chapter.xhtml#old-opening", 0),
+            ],
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertEqual(result.text, "Im Deutschen ist der Anfang vollständig.")
+        self.assertEqual(result.significant_warnings, [])
+        self.assertEqual(result.slices[0].navigation_target.fragment, "old-opening")
+
     def test_drop_cap_keeps_unexpected_capital_without_large_float_pair(self):
         for html in [
             '<p style="font-size: 44pt">M</p><p>Kleine Schritte helfen.</p>',
