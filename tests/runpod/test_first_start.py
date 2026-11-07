@@ -162,6 +162,9 @@ exit 90
 """, encoding="utf-8")
         uv.chmod(0o755)
 
+        activate = venv / "activate"
+        activate.write_text("# test virtualenv activation\\n", encoding="utf-8")
+
         py = venv / "python"
         py.write_text("""#!/bin/sh
 if [ "$1" = "-c" ]; then echo "3.11.18"; exit 0; fi
