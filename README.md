@@ -50,6 +50,8 @@ bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.co
 
 **Hinweis:** RunPods Meldung `Pod is ready` bestätigt nur die Basisdienste, nicht die fertig installierte Webanwendung. Für den ersten Aufbau müssen große Abhängigkeiten und Thorsten-Gewichte installiert werden. Bei Fehlern nicht unbemerkt weiter GPU-Kosten verursachen.
 
+**Bekannter Installationsfehler vom ersten GPU-Test (07.11.2026):** Das RunPod-Basisimage hatte `HF_HUB_ENABLE_HF_TRANSFER=1` gesetzt, während das optionale Paket `hf_transfer` in der isolierten Thorsten-Umgebung fehlte. Die Installation stoppte beim Modell-Download mit `ValueError: Fast download ... hf_transfer ... not available`. **In `master` behoben:** Unsere RunPod-Umgebung erzwingt für Hugging-Face-Downloads den Standard-HTTP-Modus; dafür ist kein `hf_transfer` erforderlich. Bei erneutem Pod-Start übernimmt der Autostart die Korrektur aus `master` und verwendet bereits vorhandene Modelldateien soweit möglich wieder. Das Web-Studio kann auch bei gescheitertem Thorsten-Setup erreichbar sein: eine sichtbare Oberfläche bedeutet noch keine freigegebene Stimme.
+
 ### Environment Variables (optional)
 
 Für den ersten Test reichen die im Docker Start Command gesetzten Werte. Wenn das Template noch alte Variablen enthält, aktualisiere sie zusätzlich wie folgt. Das Startkommando hat für die drei genannten `RUNPOD_TTS_…`-Werte Vorrang:
