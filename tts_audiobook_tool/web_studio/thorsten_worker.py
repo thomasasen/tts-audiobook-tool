@@ -9,7 +9,7 @@ parent. It never binds a port, executes a shell or accepts voice references.
 """
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import json
 import os
 from pathlib import Path
@@ -20,13 +20,46 @@ sys.path.insert(0, os.getcwd())
 sys.path.insert(0, str(Path.cwd() / "third_party" / "Matcha-TTS"))
 
 
+
+@contextmanager
+def _cpu_speech_tokenizer_frontend():
+    """Initialize only CosyVoice3's reference-audio ONNX tokenizer on CPU.
+
+    Upstream chooses CUDAExecutionProvider whenever torch sees a GPU, but
+    ONNX Runtime may fail at cudaSetDevice (CUDA error 46). The fixed Thorsten
+    SFT narration doesn't use reference-audio token extraction. Keep the
+    PyTorch synthesis model on CUDA and do not edit the pinned CosyVoice tree.
+    The process-local override is limited to CosyVoice3 construction and
+    restored even if that constructor raises.
+    """
+    import onnxruntime
+
+    original_session = onnxruntime.InferenceSession
+
+    def session(model_path, *args, **kwargs):
+        if (Path(str(model_path)).name == "speech_tokenizer_v3.onnx"
+                and kwargs.get("providers") == ["CUDAExecutionProvider"]):
+            kwargs["providers"] = ["CPUExecutionProvider"]
+            print("Thorsten ONNX speech tokenizer: CPUExecutionProvider; PyTorch synthesis remains on CUDA.", file=sys.stderr)
+        return original_session(model_path, *args, **kwargs)
+
+    onnxruntime.InferenceSession = session
+    try:
+        yield
+    finally:
+        onnxruntime.InferenceSession = original_session
+
+
 def main() -> None:
     with redirect_stdout(sys.stderr):
         import torch
         import torchaudio
         from cosyvoice.cli.cosyvoice import CosyVoice3
 
-        model = CosyVoice3("pretrained_models/CosyVoice3-0.5B")
+        # The optional reference-audio ONNX tokenizer must not take over GPU.
+        # This does not change PyTorch/CUDA model placement or SFT voice data.
+        with _cpu_speech_tokenizer_frontend():
+            model = CosyVoice3("pretrained_models/CosyVoice3-0.5B")
         original_frontend = model.frontend.frontend_sft
 
         def patched_frontend_sft(tts_text, spk_id):
