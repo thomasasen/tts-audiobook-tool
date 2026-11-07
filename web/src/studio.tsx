@@ -7,11 +7,53 @@ import {
 import { downloadAuthenticatedM4b, supportsDirectSave, type DownloadProgress } from './download'
 
 type Chapter = {
+  id?: string
   index: number
   title: string
   preview: string
   characters: number
   is_toc: boolean
+}
+type SkippedSection = {
+  id: string
+  title: string
+  href: string
+  reason: string
+  preview: string
+  category: string
+  spine_index: number
+  recoverable: boolean
+  included: boolean
+}
+type ContentReviewItem = {
+  id: string
+  kind: string
+  title: string
+  href: string
+  reason: string
+  preview: string
+  count: number
+}
+type CoverageSection = {
+  chapter_id: string
+  title: string
+  href: string
+  source_start: number
+  source_end: number
+  phrase_group_start: number
+  phrase_group_end: number
+  source_characters: number
+  spoken_characters: number
+  complete: boolean
+}
+type CoverageSummary = {
+  complete: boolean
+  sections_checked: number
+  sections_total: number
+  phrase_groups: number
+  source_characters: number
+  spoken_characters: number
+  sections: CoverageSection[]
 }
 type BookProject = {
   id: string
@@ -25,6 +67,10 @@ type BookProject = {
   chapters?: Chapter[]
   suggested_start?: number
   warnings?: string[]
+  skipped_sections?: SkippedSection[]
+  included_skipped_ids?: string[]
+  content_review_items?: ContentReviewItem[]
+  coverage?: CoverageSummary | null
 }
 type VoiceCandidate = {
   id: string
@@ -471,11 +517,37 @@ export default function Studio() {
       await refreshProjects()
       setActive(project)
       setStart(project.suggested_start ?? project.selected_start)
-      setExcluded(project.chapters?.filter(c => c.is_toc).map(c => c.index) ?? [])
+      const hasReadableChapter = project.chapters?.some(c => !c.is_toc) ?? false
+      setExcluded(hasReadableChapter
+        ? project.chapters?.filter(c => c.is_toc && c.index !== (project.suggested_start ?? project.selected_start)).map(c => c.index) ?? []
+        : [])
       setView('chapters')
       setNotice('EPUB erfolgreich analysiert. Bitte Vorlesebeginn und Kapitel prüfen.')
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
+  }
+
+  async function updateSkippedSection(sectionId: string, include: boolean) {
+    if (!active) return
+    setSaving(true); setError(''); setNotice('')
+    try {
+      const selected = new Set(active.included_skipped_ids ?? [])
+      if (include) selected.add(sectionId)
+      else selected.delete(sectionId)
+      const project = await api<BookProject>(`/api/projects/${active.id}/skipped-sections`, token, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({included_ids: [...selected]}),
+      })
+      setActive(project)
+      setStart(project.selected_start)
+      setExcluded(project.excluded_indices)
+      await refreshProjects()
+      setNotice(include
+        ? 'Abschnitt wurde wieder aufgenommen. Vorlesebeginn und Kapitelauswahl bitte erneut prüfen.'
+        : 'Abschnitt wird wieder ausgelassen. Die Kapitelauswahl wurde aktualisiert.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setSaving(false) }
   }
 
   async function saveChapters() {
@@ -528,7 +600,7 @@ export default function Studio() {
   }, [token, view, active?.id, capabilities?.voice_installed])
 
   const allChapters = active?.chapters ?? []
-  const readChapters = allChapters.filter(c => c.index >= start && !c.is_toc && !excluded.includes(c.index))
+  const readChapters = allChapters.filter(c => c.index >= start && !excluded.includes(c.index))
   const selectedChapter = allChapters.find(c => c.index === start)
 
   function toggleExcluded(index: number) {
@@ -594,6 +666,43 @@ export default function Studio() {
             {view === 'chapters' && active && <>
               <div className="page-heading"><div><button className="back-link" onClick={() => setView('library')}><ArrowLeft size={16}/> Bibliothek</button><p className="eyebrow">KAPITEL VORBEREITEN</p><h1>{active.title}</h1><p>Lege fest, welcher Abschnitt als Erstes vorgelesen werden soll.</p></div></div>
               {active.warnings && active.warnings.length > 0 && <details className="warning-details"><summary><AlertCircle size={17}/> {active.warnings.length} Hinweise zur EPUB-Struktur</summary><ul>{active.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
+              {active.coverage && <div className={`coverage-summary ${active.coverage.complete ? 'complete' : 'incomplete'}`} role="status">
+                <div><strong>{active.coverage.complete ? 'Textabdeckung geprüft' : 'Textabdeckung mit Abweichungen'}</strong><span>{active.coverage.sections_checked} von {active.coverage.sections_total} Abschnitten · {active.coverage.phrase_groups.toLocaleString('de-DE')} Sprachsegmente · {active.coverage.source_characters.toLocaleString('de-DE')} Quellzeichen</span></div>
+                <details className="coverage-details"><summary>Quelltext- und Segmentzuordnung</summary>
+                  <ul>{active.coverage.sections.map(section => <li key={section.chapter_id}>
+                    <strong>{section.title}</strong> · {section.complete ? 'vollständig' : 'Abweichung'} · Quelltext {section.source_start.toLocaleString('de-DE')}–{section.source_end.toLocaleString('de-DE')} · Segmente {section.phrase_group_start + 1}–{section.phrase_group_end}
+                  </li>)}</ul>
+                </details>
+              </div>}
+              {active.skipped_sections && active.skipped_sections.length > 0 && <section className="panel skipped-panel">
+                <div className="panel-head"><h2>Automatisch ausgelassene Abschnitte</h2><span className="count">{active.skipped_sections.length} Einträge</span></div>
+                <p className="helper">Der Parser lässt typische Inhaltsverzeichnisse und Verlagsmetadaten aus. Prüfe Vorschau und Grund. Wiederherstellbare Abschnitte kannst du ausdrücklich in den Lesetext aufnehmen. Die EPUB-Originaldatei bleibt unverändert.</p>
+                <div className="skipped-list">
+                  {active.skipped_sections.map(item => <article className="skipped-item" key={item.id}>
+                    <div className="skipped-copy">
+                      <strong>{item.title}</strong>
+                      <small>{item.category} · {item.href}</small>
+                      <p>{item.reason}</p>
+                      {item.preview && <div className="skipped-preview">{item.preview}</div>}
+                    </div>
+                    {item.recoverable
+                      ? <label className="skipped-toggle"><input type="checkbox" checked={item.included} disabled={saving || busy} onChange={e => {void updateSkippedSection(item.id, e.target.checked)}}/><span>{item.included ? 'Wieder aufgenommen' : 'In Lesetext aufnehmen'}</span></label>
+                      : <span className="skipped-locked">Nur Hinweis · nicht wiederherstellbar</span>}
+                  </article>)}
+                </div>
+              </section>}
+              {active.content_review_items && active.content_review_items.length > 0 && <section className="panel review-panel">
+                <div className="panel-head"><h2>Inhalt für manuelle Prüfung</h2><span className="count">{active.content_review_items.length} Hinweise</span></div>
+                <p className="helper">Diese Strukturen bleiben im Original erhalten. Es wird keine alternative Sprecherfassung automatisch erfunden oder in den Text geschrieben.</p>
+                <div className="review-list">
+                  {active.content_review_items.map(item => <article className="review-item" key={item.id}>
+                    <strong>{item.title}{item.count > 1 ? ` · ${item.count}×` : ''}</strong>
+                    <small>{item.href}</small>
+                    <p>{item.reason}</p>
+                    {item.preview && <div className="skipped-preview">{item.preview}</div>}
+                  </article>)}
+                </div>
+              </section>}
               <div className="chapter-layout">
                 <section className="panel chapter-panel"><div className="panel-head"><h2>Kapitelübersicht</h2><span className="count">{allChapters.length} Abschnitte</span></div>
                   <p className="helper">Wähle den Vorlesebeginn. Frühere Abschnitte und Inhaltsverzeichnisse werden nicht vorgelesen.</p>

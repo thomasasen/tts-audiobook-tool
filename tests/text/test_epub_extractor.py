@@ -903,10 +903,7 @@ class TestEpubExtractor(unittest.TestCase):
             <li><a href="two.xhtml">Kapitel zwei</a></li>
             <li><a href="three.xhtml">Kapitel drei</a></li>
           </ol></nav>
-          <p>Dieses Vorwort erklärt den Aufbau des Buches und die wichtigen
-          Grundlagen für die folgenden Kapitel im täglichen Arbeitsalltag.</p>
-          <p>Die Leser lernen hier, wie man gute Entscheidungen trifft
-          und technische Begriffe im Zusammenhang versteht.</p>
+          <p>Kurzer Hinweis für alle Leser.</p>
         </body></html>"""
         nav = StubEpubSpineItem("nav", "Navigation/nav.xhtml", html)
         nav.properties = ["nav"]
@@ -918,10 +915,90 @@ class TestEpubExtractor(unittest.TestCase):
         self.assertEqual(len(source), 1, warnings)
         self.assertTrue(source[0].contains_reading_text_outside_nav)
         spoken = BeautifulSoupEpubChapterTextExtractor().extract_text(source[0]).text
-        self.assertIn("Dieses Vorwort erklärt", spoken)
-        self.assertIn("technische Begriffe", spoken)
+        self.assertIn("Kurzer Hinweis für alle Leser", spoken)
         self.assertNotIn("Kapitel eins", spoken)
         self.assertTrue(any("readable prose outside" in warning for warning in significant))
+
+    def test_empty_navigation_anchor_is_recorded_when_navigation_sectioning_is_used(self):
+        empty_target = make_navigation_target("Leerer Abschnitt", "chapter.xhtml#empty", 0)
+        content_target = make_navigation_target("Kapitel", "chapter.xhtml#content", 1)
+        extracted = [
+            (
+                EpubSourceChapter("Leerer Abschnitt", "chapter.xhtml", "application/xhtml+xml", ""),
+                EpubTextExtractionResult(
+                    text="",
+                    slices=[EpubTextSlice("", empty_target)],
+                ),
+            ),
+            (
+                EpubSourceChapter("Kapitel", "chapter.xhtml", "application/xhtml+xml", "Inhalt."),
+                EpubTextExtractionResult(
+                    text="Inhalt.",
+                    slices=[EpubTextSlice("Inhalt.", content_target)],
+                ),
+            ),
+        ]
+        omitted = []
+        chapters, used_navigation = EpubExtractor.assemble_navigation_text_chapters(
+            extracted, [], [], omitted_navigation_targets=omitted
+        )
+        self.assertTrue(used_navigation)
+        self.assertEqual(len(chapters), 1)
+        self.assertEqual(omitted, [empty_target])
+        skipped = EpubExtractor.make_empty_navigation_skip(omitted[0])
+        self.assertEqual(skipped.category, "empty-navigation-section")
+        self.assertFalse(skipped.recoverable)
+        self.assertFalse(skipped.included)
+
+    def test_extract_text_preserves_ordered_lists_and_table_row_cells(self):
+        chapter = EpubSourceChapter(
+            title="Struktur",
+            href="Text/structure.xhtml",
+            media_type="application/xhtml+xml",
+            html=(
+                "<html><body><table><caption>Umsatz</caption>"
+                "<tr><th>Quartal</th><th>Wert</th></tr>"
+                "<tr><td>Q1</td><td>1,2 Millionen Euro</td></tr></table>"
+                "<ol start='3'><li>Erster Prüfschritt.</li>"
+                "<li value='7'>Zweiter Prüfschritt.</li></ol>"
+                "<ul><li>Ein Unterpunkt.</li></ul></body></html>"
+            ),
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        self.assertIn("Quartal; Wert", result.text)
+        self.assertIn("Q1; 1,2 Millionen Euro", result.text)
+        self.assertIn("3. Erster Prüfschritt.", result.text)
+        self.assertIn("7. Zweiter Prüfschritt.", result.text)
+        self.assertIn("- Ein Unterpunkt.", result.text)
+
+    def test_extract_text_reports_complex_source_structures_without_rewriting_them(self):
+        chapter = EpubSourceChapter(
+            title="Komplex",
+            href="Text/complex.xhtml",
+            media_type="application/xhtml+xml",
+            html=(
+                '<html xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+                "<table><tr><td>Umsatz</td></tr></table>"
+                '<figure><img src="chart.png" alt="Diagramm"/>'
+                "<figcaption>Abbildung mit Legende.</figcaption></figure>"
+                '<p><math xmlns="http://www.w3.org/1998/Math/MathML">'
+                "<mi>x</mi><mo>=</mo><mn>2</mn></math></p>"
+                '<aside id="fn1" epub:type="footnote" role="doc-footnote">'
+                "<p>Fußnotentext.</p></aside>"
+                "</body></html>"
+            ),
+        )
+        result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+        kinds = {item.kind for item in result.review_items}
+        self.assertEqual(kinds, {"table", "figure", "formula", "footnote"})
+        self.assertIn("Abbildung mit Legende.", result.text)
+        self.assertIn("Fußnotentext.", result.text)
+        self.assertIn("x=2", result.text.replace(" ", ""))
+        self.assertNotIn("Diagramm", result.text)
+        self.assertIn(
+            "Alt-Texte werden nicht ungefragt",
+            next(item.reason for item in result.review_items if item.kind == "figure"),
+        )
 
     def test_navigation_only_spine_remains_excluded(self):
         nav = StubEpubSpineItem("nav", "Navigation/nav.xhtml",
@@ -933,9 +1010,13 @@ class TestEpubExtractor(unittest.TestCase):
         with patch("os.path.exists", return_value=True), \
                 patch("ebooklib.epub.read_epub", return_value=book), \
                 patch.object(EpubExtractor, "extract_navigation_targets", return_value=[]):
-            source, _, warnings, _ = EpubExtractor.load_source_chapters("test.epub")
+            load_result = EpubExtractor.load_source_chapters("test.epub")
+            source, _, warnings, _ = load_result
         self.assertEqual(source, [])
         self.assertTrue(any("navigation" in warning.lower() for warning in warnings))
+        self.assertEqual(len(load_result.skipped_sections), 1)
+        self.assertEqual(load_result.skipped_sections[0].category, "navigation-document")
+        self.assertFalse(load_result.skipped_sections[0].recoverable)
 
     def test_load_source_chapters_prefers_toc_title_over_html_heading(self):
         book = StubEpubBookWithSpine(
@@ -1004,7 +1085,13 @@ class TestEpubExtractor(unittest.TestCase):
                 patch("importlib.import_module") as import_module, \
                 patch.object(EpubExtractor, "extract_title", return_value="Fallback Title"):
             import_module.return_value.read_epub.return_value = book
-            source_chapters, _, warnings, significant_warnings = EpubExtractor.load_source_chapters("book.epub")
+            load_result = EpubExtractor.load_source_chapters("book.epub")
+            source_chapters, _, warnings, significant_warnings = load_result
+            skipped = next(item for item in load_result.skipped_sections if item.href == "Text/copyright.xhtml")
+            restored_result = EpubExtractor.load_source_chapters(
+                "book.epub", include_skipped_ids={skipped.id}
+            )
+            restored_chapters, _, _, _ = restored_result
 
         kept_hrefs = [chapter.href for chapter in source_chapters]
         self.assertNotIn("Text/copyright.xhtml", kept_hrefs)
@@ -1013,6 +1100,12 @@ class TestEpubExtractor(unittest.TestCase):
         skip_warning = next(warning for warning in warnings if "copyright.xhtml" in warning)
         self.assertIn("publication metadata", skip_warning)
         self.assertIn(skip_warning, significant_warnings)
+        self.assertTrue(skipped.recoverable)
+        self.assertFalse(skipped.included)
+        self.assertIn("Copyright", skipped.preview)
+        self.assertIn("Text/copyright.xhtml", [chapter.href for chapter in restored_chapters])
+        restored_skip = next(item for item in restored_result.skipped_sections if item.id == skipped.id)
+        self.assertTrue(restored_skip.included)
 
     def test_load_source_chapters_warns_for_navigation_target_outside_spine(self):
         book = StubEpubBookWithSpine(
