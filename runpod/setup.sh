@@ -9,19 +9,19 @@ source "$SCRIPT_DIR/env.sh"
 
 usage() {
   cat <<'HELP'
-Usage: bash runpod/setup.sh [--models qwen|moss|both] [--check-only] [--bootstrap-only]
-  --models       Install selected local TTS environments (default: both).
+Usage: bash runpod/setup.sh [--models none|qwen|moss|both] [--check-only] [--bootstrap-only]
+  --models       Optional legacy TUI models (none|qwen|moss|both; default: none).
   --check-only   Print diagnostics without installing anything.
   --bootstrap-only Prepare system packages, uv, and Python without large TTS dependencies.
   --help         Show this message.
 
-Requires an NVIDIA GPU Pod, a mounted persistent /workspace volume, and root
-or sudo for system packages. Python 3.12 and two isolated model environments
-are installed under /workspace/audiobook-data, outside the git checkout.
+Requires a mounted persistent /workspace volume and root or sudo for system
+packages. --bootstrap-only prepares system utilities, uv and Python 3.12.
+Qwen/MOSS are optional legacy TUI environments; Thorsten uses a separate venv.
 HELP
 }
 
-MODELS="both"
+MODELS="none"
 CHECK_ONLY=0
 BOOTSTRAP_ONLY=0
 while (( $# > 0 )); do
@@ -36,7 +36,7 @@ while (( $# > 0 )); do
   esac
 done
 case "$MODELS" in
-  qwen|moss|both) ;;
+  none|qwen|moss|both) ;;
   *) echo "Invalid models value: $MODELS" >&2; exit 2 ;;
 esac
 
@@ -55,8 +55,9 @@ if [[ "${RUNPOD_ALLOW_UNMOUNTED:-0}" != "1" ]] && ! mountpoint -q "$RUNPOD_WORKS
   echo "Attach a RunPod volume at $RUNPOD_WORKSPACE before proceeding." >&2
   exit 1
 fi
-if ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi -L >/dev/null 2>&1; then
-  echo "No working NVIDIA GPU detected (nvidia-smi). Choose a GPU Pod." >&2
+if (( ! BOOTSTRAP_ONLY )) && [[ "$MODELS" != none ]] &&
+   { ! command -v nvidia-smi >/dev/null 2>&1 || ! nvidia-smi -L >/dev/null 2>&1; }; then
+  echo "No NVIDIA GPU found for optional legacy TUI models." >&2
   exit 1
 fi
 
@@ -172,6 +173,7 @@ install_model() {
 }
 
 case "$MODELS" in
+  none) echo "No legacy TUI runtime requested; Web Studio uses its own lean venv." ;;
   qwen) install_model qwen requirements-qwen3tts.txt 2.8.0 ;;
   moss) install_model moss requirements-moss.txt 2.9.1 ;;
   both)
@@ -187,5 +189,9 @@ for model in qwen moss; do
   fi
 done
 echo "Hardware and installed environment diagnostics:"
-python3 "$SCRIPT_DIR/doctor.py" --strict --require-models "$MODELS"
-echo "Setup complete. Run: bash runpod/start.sh"
+if [[ "$MODELS" == none ]]; then
+  python3 "$SCRIPT_DIR/doctor.py" --json
+else
+  python3 "$SCRIPT_DIR/doctor.py" --strict --require-models "$MODELS"
+fi
+echo "Setup complete. Web Studio: bash runpod/install-web.sh && bash runpod/start-web.sh"
