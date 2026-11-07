@@ -1,0 +1,32 @@
+# Runtime for the authenticated German Audiobook Studio (no Qwen/MOSS TTS).
+# Must mirror the exact dependency set exercised by the Studio CI backend tests.
+# Torch 2.8.0 CPU-only is installed separately from the official PyTorch CPU index.
+-r requirements.txt
+httpx==0.28.1
+av==18.1.0
+soundfile==0.13.1
+numpy>=1.26,<3
+EbookLib==0.18
+beautifulsoup4==4.12.3
+pysbd==0.3.4
+num2words==0.5.14
+natsort==8.4.0
+librosa==0.11.0
+sounddevice==0.5.2
+mutagen==1.48.1
+textual==8.2.8
+pyloudnorm==0.1.1
+audiotsm==0.1.2
+xxhash==3.5.0
+watchdog==6.0.0
+wakepy
+text2num==3.0.1
+whisper_normalizer==0.1.12
+requests
+psutil
+loguru==0.7.3
+nvidia-ml-py
+chardet==5.2.0
+metaphone==0.6
+prompt-toolkit==3.0.52
+huggingface_hub>=0.25,<2
