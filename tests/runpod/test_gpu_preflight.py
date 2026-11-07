@@ -85,7 +85,7 @@ def ones(count, device):
             bin_dir = work / "bin"
             bin_dir.mkdir()
             smi = bin_dir / "nvidia-smi"
-            smi.write_text("#!/bin/sh\\necho 'RTX 5000 Ada, 590.48.01, 5'\\n", encoding="utf-8")
+            smi.write_text("#!/bin/sh\necho 'RTX 5000 Ada, 590.48.01, 5'\n", encoding="utf-8")
             smi.chmod(0o755)
             with patch.dict(os.environ, {
                 "PYTHONPATH": str(work),
