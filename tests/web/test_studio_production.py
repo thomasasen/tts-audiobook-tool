@@ -144,6 +144,59 @@ def test_job_queue_control_and_cross_project_isolation(env, monkeypatch):
     assert env.get(f"/api/projects/{identifier}/jobs/{job_id}/download", headers=HEADERS).status_code == 404
 
 
+def test_job_eta_uses_real_persisted_processing_times(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    created = production.create_job(project_id)
+    job_id = created["id"]
+    plan_file = production._jobs_dir(job_id) / "plan.json"
+    plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    # Three completed and three outstanding 100-character segments.
+    plan["segments"] = [
+        {"text": "A" * 100, "title": "Kapitel 1", "chapter_index": 0}
+        for _ in range(6)
+    ]
+    production._atomic_json(plan_file, plan)
+    with studio._db() as db:
+        db.execute(
+            "UPDATE studio_jobs SET status='running',done=3,total=6 WHERE id=?",
+            (job_id,),
+        )
+    audio_dir = production._jobs_dir(job_id) / "audio"
+    audio_dir.mkdir(exist_ok=True)
+    for index, seconds in enumerate((4.0, 5.0, 6.0)):
+        production._atomic_json(audio_dir / f"{index:07d}.json", {
+            "prompt": "A" * 100, "inference_seconds": 0.5,
+            "processing_seconds": seconds,
+        })
+    endpoint = f"/api/projects/{project_id}/jobs/{job_id}/activity"
+    response = env.get(endpoint, headers=HEADERS)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["percent"] == 50
+    assert data["eta_sample_count"] == 3
+    assert data["remaining_seconds"] == 15
+    assert data["elapsed_seconds"] >= 0
+    assert data["calculated_at"]
+    production._atomic_json(audio_dir / "0000002.json", {
+        "prompt": "A" * 100, "processing_seconds": 2.0
+    })
+    revised = env.get(endpoint, headers=HEADERS).json()
+    assert revised["remaining_seconds"] == 12
+
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='paused' WHERE id=?", (job_id,))
+    paused = env.get(endpoint, headers=HEADERS).json()
+    assert paused["remaining_seconds"] is None
+
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='generated',done=6 WHERE id=?", (job_id,))
+    generated = env.get(endpoint, headers=HEADERS).json()
+    assert generated["remaining_seconds"] == 0
+    assert generated["percent"] == 100
+
+
 def test_private_job_activity_progress_and_bounded_operational_log(env, monkeypatch):
     project_id, foreign_project = uuid.uuid4().hex, uuid.uuid4().hex
     prepare_project(project_id)
