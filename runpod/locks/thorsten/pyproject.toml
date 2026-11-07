@@ -61,6 +61,9 @@ name = "onnxruntime-cuda-12"
 url = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/"
 explicit = true
 
+[tool.uv.extra-build-dependencies]
+openai-whisper = ["setuptools==80.9.0"]
+
 [tool.uv.sources]
 torch = { index = "pytorch-cu121" }
 torchaudio = { index = "pytorch-cu121" }
