@@ -14,6 +14,7 @@ Environment variables:
   RUNPOD_TTS_MODELS           qwen | moss | both (default: qwen)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
   RUNPOD_TTS_START_TUI       0 (web only) | 1 (also launch legacy TUI); default: 0
+  RUNPOD_TTS_SKIP_VOICE_INSTALL  1 starts Web Studio without new model downloads; default: 0
 
 This script does NOT run the standard RunPod /start.sh service. In the Pod
 Docker Command, start /start.sh in the background before invoking it.
@@ -35,6 +36,7 @@ done
 : "${RUNPOD_TTS_MODELS:=qwen}"
 : "${RUNPOD_TTS_AUTOSTART_MODEL:=qwen}"
 : "${RUNPOD_TTS_START_TUI:=0}"
+: "${RUNPOD_TTS_SKIP_VOICE_INSTALL:=0}"
 case "$RUNPOD_WORKSPACE" in
   /*) ;;
   *) printf 'RUNPOD_WORKSPACE must be absolute\n' >&2; exit 2 ;;
@@ -46,6 +48,10 @@ esac
 case "$RUNPOD_TTS_START_TUI" in
   0|1) ;;
   *) printf 'Invalid RUNPOD_TTS_START_TUI: %s\n' "$RUNPOD_TTS_START_TUI" >&2; exit 2 ;;
+esac
+case "$RUNPOD_TTS_SKIP_VOICE_INSTALL" in
+  0|1) ;;
+  *) printf 'Invalid RUNPOD_TTS_SKIP_VOICE_INSTALL: %s\n' "$RUNPOD_TTS_SKIP_VOICE_INSTALL" >&2; exit 2 ;;
 esac
 case "$RUNPOD_TTS_AUTOSTART_MODEL" in
   qwen|moss|menu) ;;
@@ -240,7 +246,9 @@ fi
 
 echo "Installing German voice (optional until GPU acceptance)."
 THORSTEN_INSTALL_OK=0
-if (( ! CUDA_QWEN_READY )) && [[ ! -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
+if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then
+  echo "Skipping Thorsten installation as requested. No new model weights are downloaded."
+elif (( ! CUDA_QWEN_READY )) && [[ ! -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
   echo "WARNING: Skipping FIRST-TIME Thorsten weight download on a host with unusable CUDA."
   echo "The Web Studio will remain available for EPUB preparation; select a working GPU host to continue."
 elif bash "$REPO_DIR/runpod/install-thorsten.sh"; then
