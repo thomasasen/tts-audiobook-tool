@@ -127,10 +127,13 @@ else
     echo "RUNPOD_TTS_DOWNLOAD_WORKERS must be 1..8." >&2
     exit 2
   fi
-  "$VENV/bin/hf" download "$BASE_MODEL_ID" --revision "$BASE_MODEL_REVISION" \
-    --local-dir "$MODEL_DIR" --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
-  "$VENV/bin/hf" download "$THORSTEN_MODEL_ID" llm.pt flow.pt spk2info.pt infer_thorsten.py \
-    --revision "$THORSTEN_MODEL_REVISION" --local-dir "$MODEL_DIR" \
+  export HF_HUB_ENABLE_HF_TRANSFER=0
+  export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"
+  export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-20}"
+  "$VENV/bin/python" "$SCRIPT_DIR/download-hf-models.py" \
+    --model-dir "$MODEL_DIR" \
+    --base-model-id "$BASE_MODEL_ID" --base-revision "$BASE_MODEL_REVISION" \
+    --thorsten-model-id "$THORSTEN_MODEL_ID" --thorsten-revision "$THORSTEN_MODEL_REVISION" \
     --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
 fi
 for artifact in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py; do
@@ -139,6 +142,10 @@ done
 for artifact in cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx speech_tokenizer_v3.batch.onnx; do
   test -s "$MODEL_DIR/$artifact" || { echo "Required base-model artifact missing: $artifact" >&2; exit 1; }
 done
+[[ -d "$MODEL_DIR/CosyVoice-BlankEN" ]] || {
+  echo "Required CosyVoice-BlankEN tokenizer assets are missing." >&2
+  exit 1
+}
 cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
 cmp -s "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py" || {
   echo "Thorsten inference adapter copy failed integrity check." >&2
@@ -163,13 +170,17 @@ assert version("openai-whisper") == "20231117"
 print("Thorsten native runtime import OK", torch.__version__)
 PY
 )
-# A private weight checksum audit record, never committed to Git.
-(
-  cd "$MODEL_DIR"
-  sha256sum llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py \
-    cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx \
-    speech_tokenizer_v3.batch.onnx > "$CHECKSUMS"
-)
+# Reuse the upstream-verified prefetch manifest, or verify the direct
+# download against pinned Hugging Face LFS/Git-blob metadata before recording it.
+if [[ -f "$PREFETCH_VERSION" ]]; then
+  cp "$PREFETCH_SUMS" "$CHECKSUMS"
+else
+  "$VENV/bin/python" "$SCRIPT_DIR/verify-hf-models.py" \
+    --model-dir "$MODEL_DIR" \
+    --base-model-id "$BASE_MODEL_ID" --base-revision "$BASE_MODEL_REVISION" \
+    --thorsten-model-id "$THORSTEN_MODEL_ID" --thorsten-revision "$THORSTEN_MODEL_REVISION" \
+    --output "$CHECKSUMS"
+fi
 chmod 600 "$CHECKSUMS"
 runtime_hash="$(runtime_freeze_hash)"
 printf '%s\n' "$runtime_hash" > "$RUNTIME_MANIFEST.tmp"
