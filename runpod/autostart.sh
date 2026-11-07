@@ -137,7 +137,10 @@ else
 fi
 
 echo "Installing German voice (optional until GPU acceptance)."
-if ! bash "$REPO_DIR/runpod/install-thorsten.sh"; then
+THORSTEN_INSTALL_OK=0
+if bash "$REPO_DIR/runpod/install-thorsten.sh"; then
+  THORSTEN_INSTALL_OK=1
+else
   echo "WARNING: Thorsten installation failed. Web voice generation remains disabled."
 fi
 if tmux has-session -t audiobook-web 2>/dev/null; then
@@ -146,7 +149,11 @@ else
   tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\$?; echo Web server stopped: \$rc; exec bash"
   echo "Started the web studio in tmux session audiobook-web (port 7860)."
 fi
-echo "=== Ready ==="
+if (( THORSTEN_INSTALL_OK )); then
+  echo "=== Web studio launch requested; Thorsten installed (GPU hearing test still mandatory) ==="
+else
+  echo "=== Web studio launch requested; THORSTEN NOT READY, narration disabled ==="
+fi
 echo "TUI: tmux attach -t audiobook | Web log: tmux attach -t audiobook-web"
 echo "Optional: bash $REPO_DIR/runpod/start.sh --doctor"
 echo "Models, settings, reference voices and projects remain under $DATA_ROOT"
