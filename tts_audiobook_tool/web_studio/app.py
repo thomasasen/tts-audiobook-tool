@@ -440,11 +440,15 @@ def preview_voice():
         ) from exc
 
 
+class PreviewOptions(BaseModel):
+    duration_seconds: Literal[5, 15, 30, 60] = 5
+
+
 @app.post("/api/voices/preview/start", dependencies=[Depends(require_auth)], status_code=202)
-def start_preview():
+def start_preview(options: PreviewOptions = Body(default=PreviewOptions())):
     """Fast response: model load and inference continue in a single background worker."""
     try:
-        return production.start_sample()
+        return production.start_sample(duration_seconds=options.duration_seconds)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
