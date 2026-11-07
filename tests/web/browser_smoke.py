@@ -136,13 +136,15 @@ def main() -> None:
                                  '"reason":"Thorsten-CosyVoice3 ist installiert. Bitte die Hörprobe freigeben."}',
                         ),
                     )
-                    page.route(
-                        "**/api/voices/preview/start",
-                        lambda route: route.fulfill(
+                    page.get_by_label("Länge der Hörprobe").select_option("15")
+                    assert page.get_by_label("Länge der Hörprobe").input_value() == "15"
+                    def reject_preview(route):
+                        assert route.request.post_data_json["duration_seconds"] == 15
+                        route.fulfill(
                             status=500, content_type="text/plain",
                             body="Internal Server Error",
-                        ),
-                    )
+                        )
+                    page.route("**/api/voices/preview/start", reject_preview)
                     page.get_by_role("button", name="Sprecher").click()
                     page.get_by_text("Thorsten installiert – Hörfreigabe noch offen", exact=True).wait_for()
                     page.get_by_text("Installiert · Freigabe offen", exact=True).wait_for()
@@ -152,6 +154,7 @@ def main() -> None:
                     page.get_by_text("Serverfehler (HTTP 500) bei /api/voices/preview/start", exact=False).wait_for()
                     assert "Unexpected token" not in page.locator(".message.error").inner_text()
                     page.unroute("**/api/voices/preview/start")
+                    page.get_by_label("Länge der Hörprobe").select_option("5")
 
                     # Reproduce a real long-running preview. Backend stages
                     # are not percentages, and the user can inspect a log.
