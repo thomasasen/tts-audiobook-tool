@@ -26,6 +26,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: a03-release-locks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   generate:
     runs-on: ubuntu-24.04
@@ -55,13 +59,38 @@ jobs:
           cp release-locks/web/package-lock.json web/package-lock.json
           sha256sum requirements-qwen3tts.lock.txt requirements-moss.lock.txt runpod/locks/thorsten/uv.lock web/requirements-runtime.lock.txt web/torch-cpu.lock.txt web/package-lock.json > runpod/locks/SHA256SUMS
           sha256sum -c runpod/locks/SHA256SUMS
+          BASE_SHA="$(git rev-parse HEAD)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add requirements-qwen3tts.lock.txt requirements-moss.lock.txt runpod/locks/thorsten/uv.lock runpod/locks/SHA256SUMS web/requirements-runtime.lock.txt web/torch-cpu.lock.txt web/package-lock.json
+          git fetch origin "$BRANCH"
+          if git diff --name-only "$BASE_SHA" "origin/$BRANCH" | grep -Eq '^(requirements-base.txt|requirements-qwen3tts.txt|requirements-moss.txt|web/requirements-runtime.txt|web/requirements.txt|web/torch-cpu.in|web/package.json|runpod/locks/thorsten/pyproject.toml|runpod/model-pins.env|runpod/generate-release-locks.sh)
+      - name: Upload generated lock files for review and commit
+        uses: actions/upload-artifact@v4
+        with:
+          name: a03-release-locks
+          path: release-locks/
+          if-no-files-found: error
+          retention-days: 7
+; then
+            echo "Lock inputs changed while generation was running; refusing to push stale locks." >&2
+            exit 1
+          fi
+          if git cat-file -e "origin/$BRANCH:web/package-lock.json" 2>/dev/null; then
+            for lock in requirements-qwen3tts.lock.txt requirements-moss.lock.txt runpod/locks/thorsten/uv.lock runpod/locks/SHA256SUMS web/requirements-runtime.lock.txt web/torch-cpu.lock.txt web/package-lock.json; do
+              git show "origin/$BRANCH:$lock" | cmp - "release-locks/${lock#*/}" 2>/dev/null || {
+                echo "Remote lock $lock differs from the generated release lock." >&2
+                exit 1
+              }
+            done
+            echo "Generated locks already exist on the branch."
+            exit 0
+          fi
           if git diff --cached --quiet; then
             echo "Committed release locks are already current."
           else
             git commit -m "chore: update reproducible release locks"
+            git rebase "origin/$BRANCH"
             git push origin "HEAD:$BRANCH"
           fi
       - name: Upload generated lock files for review and commit
