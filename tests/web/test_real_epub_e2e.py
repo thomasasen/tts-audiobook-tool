@@ -91,7 +91,15 @@ def test_complex_epub_audit_reports_skips_and_restores_selected_sections(client)
     assert response.status_code == 201, response.text[:2000]
     project = response.json()
 
+    from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
+    source_path = Path(os.environ["AUDIOBOOK_STUDIO_DATA_DIR"]) / "studio-projects" / project["id"] / "source.epub"
+    load_result = EpubExtractor.load_source_chapters(str(source_path))
+    assert load_result.skipped_sections, "load_source_chapters did not expose its structured omissions"
+    chapter_result = EpubExtractor.extract_import_chapters(str(source_path))
+    assert chapter_result.skipped_sections, "extract_import_chapters dropped structured omissions"
+
     skipped = project["skipped_sections"]
+    assert skipped, f"Web catalogue dropped structured omissions: {project}"
     toc = next(item for item in skipped if item["category"] == "table-of-contents")
     imprint = next(item for item in skipped if item["category"] == "publication-metadata")
     assert toc["reason"] and toc["preview"]
