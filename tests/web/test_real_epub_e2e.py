@@ -208,6 +208,9 @@ def test_complex_epub_audit_reports_skips_and_restores_selected_sections(client)
     assert next(
         item for item in toc_project["skipped_sections"] if item["id"] == toc["id"]
     )["included"] is True
+    assert next(
+        item for item in toc_project["skipped_sections"] if item["id"] == imprint["id"]
+    )["included"] is False
     assert any("Kapitel 2" in chapter["preview"] for chapter in toc_project["chapters"])
     assert source_path.read_bytes() == epub
 

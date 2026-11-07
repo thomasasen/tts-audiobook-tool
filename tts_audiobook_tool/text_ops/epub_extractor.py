@@ -110,12 +110,19 @@ class EpubSourceChapterLoad:
     significant_warnings: list[str]
     skipped_sections: list[EpubSkippedSection] = field(default_factory=list)
 
+    def _legacy_values(self) -> tuple[list[EpubSourceChapter], str, list[str], list[str]]:
+        return self.chapters, self.book_title, self.warnings, self.significant_warnings
+
     def __iter__(self):
         # Preserve the historical four-value unpacking contract.
-        yield self.chapters
-        yield self.book_title
-        yield self.warnings
-        yield self.significant_warnings
+        yield from self._legacy_values()
+
+    def __len__(self) -> int:
+        return 4
+
+    def __getitem__(self, index):
+        # Keep tuple-style indexing/slicing compatible for downstream callers.
+        return self._legacy_values()[index]
 
 
 @dataclass
@@ -1512,8 +1519,8 @@ class EpubExtractor:
                     )
                     continue
                 source_chapters.append(source_chapter)
-                if is_text_bearing:
-                    reading_spine_position += 1
+                # Keep the heuristic scan position independent of whether a
+                # user restores this TOC; otherwise later skip decisions vary.
                 continue
 
             source_chapters.append(source_chapter)
