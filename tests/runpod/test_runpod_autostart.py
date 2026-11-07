@@ -52,6 +52,39 @@ class TestRunPodAutostart(unittest.TestCase):
             self.assertIn("Autostart: qwen", result.stdout)
             self.assertFalse((Path(workspace) / "tts-audiobook-tool").exists())
 
+    def test_immutable_sha_configuration_is_validated_before_any_mount_or_network(self):
+        good_sha = "a" * 40
+        for invalid in ("short", "g" * 40, "a" * 39, "a" * 41, "a" * 39 + ";"):
+            with self.subTest(invalid=invalid):
+                result = self.call("--check-only", extra_env={"RUNPOD_TTS_COMMIT": invalid})
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("full 40-character Git SHA", result.stderr)
+        rejected = self.call("--check-only", extra_env={
+            "RUNPOD_TTS_COMMIT": good_sha,
+            "RUNPOD_TTS_BRANCH": "feature/german-audiobook-release-validation",
+        })
+        self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+        self.assertIn("requires RUNPOD_TTS_BRANCH=master", rejected.stderr)
+
+        valid = self.call("--check-only", extra_env={
+            "RUNPOD_TTS_COMMIT": good_sha,
+            "RUNPOD_TTS_BRANCH": "master",
+        })
+        self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+        self.assertIn("Source mode: immutable " + good_sha, valid.stdout)
+        self.assertIn("Branch: master", valid.stdout)
+        self.assertIn("Autostart: qwen", valid.stdout)
+
+    def test_source_pinning_is_distinct_from_explicit_development_mode(self):
+        dev = self.call("--check-only", extra_env={"RUNPOD_TTS_COMMIT": ""})
+        self.assertEqual(dev.returncode, 0, dev.stderr)
+        self.assertIn("Source mode: development (floating branch)", dev.stdout)
+        script = AUTOSTART.read_text(encoding="utf-8")
+        self.assertIn('git -C "$REPO_DIR" switch --detach "$RUNPOD_TTS_COMMIT"', script)
+        self.assertIn('git -C "$REPO_DIR" merge-base --is-ancestor "$RUNPOD_TTS_COMMIT" FETCH_HEAD', script)
+        self.assertIn('git -C "$REPO_DIR" rev-parse HEAD', script)
+        self.assertIn('status --porcelain --untracked-files=no', script)
+
     def test_help_default_matches_effective_auto_start_default(self):
         help_response = self.call("--help")
         self.assertEqual(help_response.returncode, 0)
