@@ -557,13 +557,43 @@ export default function Studio() {
               <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Deutsche Erzählerstimme</h1><p>Ausschließlich fertig trainierte Stimmen, keine hochgeladenen Referenzen oder Stimmklone.</p></div></div>
               {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice"><LockKeyhole size={21}/><div><strong>{capabilities?.voice_installed ? 'Thorsten installiert – Hörfreigabe noch offen' : 'Thorsten noch nicht betriebsbereit'}</strong><p>{capabilities?.reason ?? 'Installationsstatus wird geprüft.'}</p></div></div>}
               <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
-                <div className="voice-actions"><button className="outline-btn" disabled={busy || !capabilities?.voice_preview_available} onClick={() => {setPreviewPlayed(false);void loadAudio('/api/voices/preview','POST')}}><PlayCircle size={17}/> Echte Hörprobe erzeugen</button>
-                <button className="primary-btn" disabled={busy || !previewPlayed} onClick={async () => {
+                <div className="voice-actions"><button className="outline-btn" disabled={busy || !capabilities?.voice_preview_available || previewTask?.status === 'running'} onClick={() => {void startPreview()}}>{previewTask?.status === 'running' ? <LoaderCircle className="spinning" size={17}/> : <PlayCircle size={17}/>} {previewTask?.status === 'running' ? 'Hörprobe wird erzeugt …' : 'Echte Hörprobe erzeugen'}</button>
+                <button className="primary-btn" disabled={busy || !previewPlayed || !previewAudioValid || previewTask?.status !== 'ready'} onClick={async () => {
                   try { await api('/api/voices/approve', token, {method:'POST'}); await showVoices(); setNotice('Stimme nach manueller Hörabnahme freigegeben.') }
                   catch (err) { setError((err as Error).message) }
                 }}><Check size={17}/> Nach Anhören freigeben</button></div>
               </div></div>)}</div>
-              {audioUrl && <div className="panel audio-preview"><h3>Hörprobe</h3><audio src={audioUrl} controls onEnded={() => setPreviewPlayed(true)}/><p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p></div>}
+              {previewTask && previewTask.status !== 'idle' && <section className="panel generation-progress" aria-label="Hörproben-Fortschritt">
+                <div className="panel-head"><h2>{previewTask.status === 'ready' ? 'Hörprobe erzeugt' : previewTask.status === 'failed' ? 'Hörprobe fehlgeschlagen' : 'Hörprobe wird erzeugt'}</h2>
+                  <span className="status-chip">{previewTask.status === 'running' ? 'In Bearbeitung' : previewTask.status === 'ready' ? 'Bereit zur Hörkontrolle' : 'Fehler'}</span>
+                </div>
+                <p role="status" aria-live="polite">{previewTask.stage}</p>
+                {previewTask.status === 'running' && <progress aria-label="Hörprobe wird verarbeitet (Fortschritt der Modellberechnung nicht messbar)"/>}
+                <p className="helper">Die Modellinitialisierung und GPU-Synthese liefern keine belastbaren Prozentwerte. Die Arbeitsschritte werden live angezeigt.</p>
+                <details className="activity-log">
+                  <summary>Protokoll der Hörprobe ({previewTask.events.length} Einträge)</summary>
+                  <ol>{previewTask.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>)}</ol>
+                </details>
+              </section>}
+              {previewAudioError && <div className="message error" role="alert"><AlertCircle size={18}/><span>{previewAudioError}</span></div>}
+              {audioUrl && previewTask?.status === 'ready' && !previewAudioError && <div className="panel audio-preview">
+                <h3>Hörprobe</h3>
+                <audio src={audioUrl} controls preload="metadata" onLoadedMetadata={event => {
+                  const duration = event.currentTarget.duration
+                  if (Number.isFinite(duration) && duration >= 0.25) {
+                    setPreviewAudioValid(true)
+                  } else {
+                    setPreviewAudioValid(false)
+                    setPreviewPlayed(false)
+                    setPreviewAudioError('Die Hörprobe enthält keine abspielbare Audiodauer. Bitte das Thorsten-Worker-Log prüfen.')
+                  }
+                }} onError={() => {
+                  setPreviewAudioValid(false)
+                  setPreviewPlayed(false)
+                  setPreviewAudioError('Der Browser kann die Hörprobe nicht abspielen. Die WAV-Datei ist möglicherweise beschädigt oder inkompatibel.')
+                }} onEnded={() => { if (previewAudioValid) setPreviewPlayed(true) }}/>
+                <p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p>
+              </div>}
             </>}
             {view === 'export' && active && <>
               <div className="page-heading"><div><p className="eyebrow">PRODUKTION UND EXPORT</p><h1>Hörbuch erstellen</h1><p>{active.title}</p></div></div>
@@ -576,7 +606,14 @@ export default function Studio() {
                 </> : <>
                   <div className="panel-head"><h2>Auftrag</h2><span className="status-chip">{STATUS_LABELS[job.status] ?? job.status}</span></div>
                   <p>Aktuelles Kapitel: {job.chapter || 'Noch kein Kapitel begonnen'}</p>
-                  <progress max={Math.max(1,job.total)} value={job.done} aria-label="Fortschritt"/><p>{job.done} von {job.total} Segmenten · {Math.round(job.duration)} Sekunden Audio</p>
+                  <div className="progress-head"><strong>Audioerzeugung</strong><span>{job.total > 0 ? Math.round(100 * job.done / job.total) : 0} %</span></div>
+                  <progress max={Math.max(1,job.total)} value={job.done} aria-label="Fertiggestellte Audiosegmente"/>
+                  <p>{job.done} von {job.total} Segmenten tatsächlich fertig · {Math.round(job.duration)} Sekunden Audio</p>
+                  {(job.status === 'exporting' || exportPending) && <p role="status">M4B-Export läuft. Fortschritt ist im Protokoll sichtbar; keine Schätzung der Restzeit.</p>
+                  <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
+                    <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
+                    <ol>{jobActivity?.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>) ?? <li>Noch keine Einträge vorhanden.</li>}</ol>
+                  </details>
                   {job.error && <p className="error" role="alert">{job.error}</p>}
                   <div className="job-actions">
                     {['queued','running'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('pause')}><PauseCircle size={17}/> Pausieren</button>}
