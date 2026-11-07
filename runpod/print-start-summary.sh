@@ -7,7 +7,7 @@ set -Eeuo pipefail
 : "${RUNPOD_SUMMARY_WEB:=unknown}"
 : "${RUNPOD_SUMMARY_THORSTEN:=not-ready}"
 : "${RUNPOD_SUMMARY_CUDA_SYSTEM:=unknown}"
-: "${RUNPOD_SUMMARY_CUDA_THORSTEN:=unknown}"
+: "${RUNPOD_SUMMARY_CUDA_THORSTEN:=not-tested}"
 : "${RUNPOD_SUMMARY_GPU:=unknown}"
 : "${RUNPOD_SUMMARY_COMMIT:=unknown}"
 : "${RUNPOD_SUMMARY_PORT:=7860}"
