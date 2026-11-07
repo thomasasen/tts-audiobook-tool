@@ -64,7 +64,7 @@ Eine Zeile ist ein eigenständig prüfbares PR-Arbeitspaket; nur nachgewiesene A
 | [x] | A02 | P0 | keine | S | Kapitel-IDs statt Titel für M4B-Marker |
 | [x] | A03 | P1 | keine | M | Reproduzierbare Releases, Abhängigkeiten und Modelle |
 | [x] | A04 | P2 | keine | M | Speicherfreundliche, authentifizierte Downloads |
-| [ ] | B01 | P1 | keine | M | EPUB-Struktur-/Auslassungs-Audit und Vorschau |
+| [x] | B01 | P1 | keine | M | EPUB-Struktur-/Auslassungs-Audit und Vorschau |
 | [ ] | B02 | P1 | B01 | M | Deutsche Textnormalisierung/Fachbegriff-Layer |
 | [ ] | B03 | P1 | A02, B01, B02 | L | Versionierter NarrationPlan mit Text-/Sprechmetadaten |
 | [ ] | B04 | P1 | B02, B03 | M | Buchbezogene, produktionsidentische Hörproben |
@@ -142,7 +142,7 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 
 **Technische Akzeptanz:** Synthetische Regressionen und E2E prüfen Navigation, Quellzuordnung, Heuristik-Wiederaufnahme, Sprecherfassungen und tatsächliche Project-V5-Phrase-Groups. CI-Run [42407963183](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42407963183) auf PR-Head `d1a903db5db81a67d797c2199ffff0d0dca2a028` vollständig erfolgreich.
 
-**Noch ausstehende redaktionelle Abnahme:** Mindestens ein komplexes, rechtmäßig nutzbares privates EPUB muss im Studio gegen das Original geprüft werden. Mapping-Abdeckung von 100 Prozent belegt nur die Zuordnung des übernommenen Textes, nicht die semantische Vollständigkeit von Tabellen, Formeln, Abbildungen und Fußnoten. B01 bleibt bis zu dieser manuellen Prüfung offen.
+**Abnahme des privaten Referenz-EPUBs (08.11.2026):** Echter Import auf Windows mit dem produktiven EPUB-Extraktor, Kapitel-/Titel- und Warnungsaudit sowie anschließende Project-V5-Speicherung und verlustfreies Wiederladen über die Studio-API bestanden. Das Ergebnis enthielt 69 logische Abschnitte; 5.443 gespeicherte und erneut geladene Phrase-Groups waren textgleich, ebenso alle Kapitelüberschriften. Die vier fachlichen Abbildungen wurden privat visuell geprüft und mit deutschsprachigen Sprecherfassungen für eine **separate private Hörbuch-EPUB-Kopie** ergänzt; ursprüngliche Quelldatei und öffentliche GitHub-Tests bleiben unverändert. Die 100-Prozent-Mapping-Abdeckung belegt nur die Zuordnung des extrahierten Textes. `review-required` ist wegen grafischer Elemente und redaktioneller Beurteilung korrekt. Vollständiges Lektorat, Audioinferenz und Hörabnahme gehören zur späteren E03-Freigabe, nicht zu B01.
 
 ### B02 — Deterministische deutsche Textnormalisierung
 
@@ -456,14 +456,6 @@ XHTML-Inhaltsverzeichnis-Titel, getrennte technische
 Unit-/Negativ- und Importtests ergänzen den bisherigen Testbestand;
 der Fokus-CI-Workflow wurde auf Audit, Skip-Detektor und CSS ausgedehnt.
 
-**Abnahmegrenze:** Die CRC-/Manifest-/Spine-/NCX-Prüfung der privaten Datei
-erfolgte ausschließlich in der privaten Arbeitsumgebung. Ohne
-EbookLib/Python-Laufzeit des vollständigen Projekts kann der kanonische
-`EpubExtractor` mit genau dieser privaten Datei hier noch nicht ausgeführt
-werden. Die echte Project-V5-Persistenz dieses privaten Buches ist deshalb
-nicht nachgewiesen. Die Redaktionsfreigabe der Fachgrafiken steht ebenso aus.
-Synthetische CI-Tests und strukturelle Preflights ersetzen dies nicht.
+**Abnahmebeleg (08.11.2026):** Der Anwender hat das private Referenz-EPUB mit dem produktiven `EpubExtractor` und `epub_content_audit` lokal importiert; die deutsche Kapitel-/Navigationsordnung wurde geprüft, die 13 anfänglichen Initialenwarnungen wurden durch die Reparatur auf null reduziert, und die verbleibenden zwei signifikanten Hinweise betreffen bewusst ausgeschlossene Inhalts-/Attributionsressourcen. Ein zweiter lokaler Test über die echte Studio-API hat Project-V5-Version 5, `book.v3` sowie vollständige Übereinstimmung von 5.443 gespeicherten und erneut geladenen Phrase-Groups nachgewiesen. Der unter Windows nicht verfügbare Linux-/GPU-Worker-Lifecycle wurde im lokalen Test gezielt ausgeklammert; die Linux-CI deckt die reguläre Startumgebung ab. Die vier Fachgrafiken und die auffälligen Quell-Kapitelauftakte wurden anschließend redaktionell in einer **privaten EPUB-Kopie** bearbeitet. Die private Kopie ist unabhängig vom öffentlichen Repository und wurde strukturell (ZIP-CRC, XML, unveränderte Ressourcennamen und Anker) validiert; eine weitere kanonische Importprüfung dieser **neuen Kopie** und eine Hörabnahme stehen für die spätere Hörbuchproduktion aus.
 
-**Status:** B01 bleibt **offen**; PR #29 darf erst nach erfolgreicher CI und
-geschlossenem Qualitätsgate gemergt werden. Bei fehlender vollständiger
-Offline-Abnahme ist ein Merge gemäß Auftrag ausdrücklich zurückzuhalten.
+**Status:** B01 als Implementierungs- und Offline-Abnahmepaket **abgeschlossen**, vorbehaltlich unveränderter erfolgreicher CI auf dem finalen PR-Head. Eigenständige Audio-/Release-Abnahme in E03 bleibt ausdrücklich offen.
