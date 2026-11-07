@@ -14,6 +14,26 @@ if [[ ! -x "$UV" ]]; then
   echo "Run bash runpod/setup.sh --models qwen before installing Thorsten." >&2
   exit 1
 fi
+# CosyVoice's pinned Lightning 2.2.4 still imports pkg_resources.
+# setuptools 82+ removed that module. Repair *only* the isolated Thorsten
+# runtime, including already verified persistent model installs, so a Pod
+# restart does not download or reinstall multi-gigabyte model weights.
+ensure_thorsten_pkg_resources() {
+  [[ -x "$VENV/bin/python" ]] || return 0
+  if "$VENV/bin/python" -W ignore::DeprecationWarning -c 'import pkg_resources' >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Repairing Thorsten runtime: pkg_resources unavailable; pinning setuptools==80.9.0."
+  "$VENV/bin/python" -m pip install --disable-pip-version-check --no-input "setuptools==80.9.0"
+  "$VENV/bin/python" -W ignore::DeprecationWarning -c 'import pkg_resources' >/dev/null || {
+    echo "Thorsten runtime repair failed: pkg_resources is still unavailable." >&2
+    return 1
+  }
+}
+
+# Must execute BEFORE the .studio-ready fast path. The weights may be valid
+# even though a later pip upgrade made the installed runtime unusable.
+ensure_thorsten_pkg_resources
 if [[ -f "$MODEL_ROOT/.studio-ready" && "$(cat "$MODEL_ROOT/.studio-ready")" == "$VERSION" &&
       -x "$VENV/bin/python" && -s "$MODEL_DIR/llm.pt" &&
       -s "$MODEL_DIR/flow.pt" && -s "$MODEL_DIR/spk2info.pt" &&
@@ -50,10 +70,13 @@ git -C "$MODEL_ROOT" submodule update --init --recursive
 if command -v apt-get >/dev/null 2>&1 && [[ "$EUID" -eq 0 ]]; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sox libsox-fmt-all
 fi
-"$VENV/bin/python" -m pip install --disable-pip-version-check --upgrade setuptools
+# Do not upgrade setuptools: v82+ removes pkg_resources needed by Lightning.
+"$VENV/bin/python" -m pip install --disable-pip-version-check --no-input "setuptools==80.9.0"
 "$VENV/bin/python" -m pip install --disable-pip-version-check openai-whisper huggingface_hub
 grep -v '^openai-whisper' "$MODEL_ROOT/requirements.txt" > "$AUDIOBOOK_DATA_ROOT/cosyvoice-requirements.txt"
 "$VENV/bin/python" -m pip install --disable-pip-version-check -r "$AUDIOBOOK_DATA_ROOT/cosyvoice-requirements.txt"
+# Guard against transitive upgrades that could remove pkg_resources again.
+ensure_thorsten_pkg_resources
 
 # Download into persistent paths and overlay *only* the authored fine-tune
 # weights and embedding. The base vocoder is preserved.
