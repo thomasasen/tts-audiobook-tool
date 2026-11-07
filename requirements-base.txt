@@ -54,4 +54,5 @@ xxhash==3.5.0
 
 # dev
 pillow==12.1.0
+setuptools==80.9.0
 
