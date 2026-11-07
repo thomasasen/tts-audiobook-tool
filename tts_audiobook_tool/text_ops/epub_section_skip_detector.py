@@ -179,6 +179,28 @@ class EpubSectionSkipDetector:
         return EpubSectionSkipDecision()
 
     @staticmethod
+    def detect_technical_attribution_skip(href: str, title: str, html: str) -> EpubSectionSkipDecision:
+        """Identify standalone machine-translation/tool credits conservatively.
+
+        These remain in the original EPUB and appear in the audit as
+        user-restorable exclusions. Do not classify human translator notes,
+        acknowledgments or normal prose from a single keyword.
+        """
+        key = EpubSectionSkipDetector.normalize_key_text(f"{href} {title}")
+        if "attribution" not in key and "toolcredit" not in key:
+            return EpubSectionSkipDecision()
+        text = EpubSectionSkipDetector.normalize_content_text(
+            EpubSectionSkipDetector.html_to_text_preview(html)
+        )
+        if len(text) > 600 or not any(
+            token in text for token in ("übersetzt mit", "translated with", "generated with", "erstellt mit")
+        ):
+            return EpubSectionSkipDecision()
+        if not re.search(r"https?://|www\.", text):
+            return EpubSectionSkipDecision()
+        return EpubSectionSkipDecision(True, "standalone technical tool attribution")
+
+    @staticmethod
     def detect_table_of_contents_skip(
             readable_spine_index: int,
             readable_spine_count: int,
