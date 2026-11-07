@@ -54,6 +54,18 @@ bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.co
 
 **Bekannter Installationsfehler vom ersten GPU-Test (07.11.2026):** Das RunPod-Basisimage hatte `HF_HUB_ENABLE_HF_TRANSFER=1` gesetzt, während das optionale Paket `hf_transfer` in der isolierten Thorsten-Umgebung fehlte. Die Installation stoppte beim Modell-Download mit `ValueError: Fast download ... hf_transfer ... not available`. **In `master` behoben:** Unsere RunPod-Umgebung erzwingt für Hugging-Face-Downloads den Standard-HTTP-Modus; dafür ist kein `hf_transfer` erforderlich. Bei erneutem Pod-Start übernimmt der Autostart die Korrektur aus `master` und verwendet bereits vorhandene Modelldateien soweit möglich wieder. Das Web-Studio kann auch bei gescheitertem Thorsten-Setup erreichbar sein: eine sichtbare Oberfläche bedeutet noch keine freigegebene Stimme.
 
+**Reparatur von Thorsten-CosyVoice3 nach dem ersten GPU-Test (07.11.2026):** Der Webserver erreichte das Modell, aber der native TTS-Worker stürzte mit `ModuleNotFoundError: No module named 'pkg_resources'` ab. Ursache: Die isolierte Thorsten-Python-Umgebung hatte eine zu neue `setuptools`-Version (ab v82 ohne `pkg_resources`), während die eingebundene ältere Lightning-Bibliothek diese Schnittstelle noch verwendet. Der Installer pinnt jetzt **`setuptools==80.9.0`** und **repariert bestehende Installationen automatisch vor dem vorzeitigen `.studio-ready`-Abschluss**. Die verifizierten Modellgewichte werden dafür nicht erneut heruntergeladen.
+
+**Ohne Pod-Neustart unmittelbar reparieren:** Wenn der Pod bereits läuft und die Hörprobe mit `pkg_resources` fehlschlägt, einmal in der privaten Pod-Konsole ausführen:
+
+```bash
+/workspace/audiobook-data/venvs/thorsten/bin/python -m pip install --disable-pip-version-check "setuptools==80.9.0"
+```
+
+Danach die Hörprobe in der Weboberfläche erneut erzeugen. Der vorher abgestürzte Worker wird beim nächsten Versuch neu gestartet. Dieser Schritt behebt den bekannten Importfehler, **bestätigt aber noch nicht, dass die nachfolgende GPU-Inferenz erfolgreich ist**.
+
+**Gemessener Speicher beim laufenden Test:** Auf einem wiederverwendeten 60-GB-Network-Volume mit alten Qwen-/MOSS-Installationen und Thorsten waren am 07.11.2026 **52 GB belegt, 8,3 GB frei**. Das ist **keine allgemeingültige Mindestgröße für eine frische Installation**; es zeigt jedoch, wie knapp 60 GB bei zusätzlichen Altlasten und Audioprojekten werden können. Keine bestehenden Modell- oder Projektdateien zur vermeintlichen Platzersparnis ohne Prüfung löschen.
+
 ### Environment Variables (optional)
 
 Für den ersten Test reichen die im Docker Start Command gesetzten Werte. Wenn das Template noch alte Variablen enthält, aktualisiere sie zusätzlich wie folgt. Das Startkommando hat für die drei genannten `RUNPOD_TTS_…`-Werte Vorrang:
