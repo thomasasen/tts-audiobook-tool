@@ -54,7 +54,7 @@ class TestPinnedModelRelease(unittest.TestCase):
         self.assertIn('allow_patterns=list(THORSTEN_ALLOW_PATTERNS)', downloader)
         self.assertIn('"CosyVoice-BlankEN/**"', downloader)
         self.assertIn('files_metadata=True', verifier)
-        self.assertIn('lfs.sha256', verifier)
+        self.assertIn('_field(lfs, "sha256")', verifier)
         self.assertIn('_git_blob_sha1', verifier)
         self.assertIn('BASE_PREFIXES', verifier)
         self.assertIn('-v2"', self.pins_text)
