@@ -354,7 +354,7 @@ class BeautifulSoupEpubChapterTextExtractor:
                 # glyph when *both* large-cap typography and a floated frame
                 # identify it as a decorative initial. A size hint alone is
                 # deliberately insufficient; uncertain cases still warn.
-                complete_word = re.match(r"[A-ZÄÖÜ][a-zäöüß]{2,}", following_text)
+                complete_word = re.match(r"[A-ZÄÖÜ][a-zäöüß]+", following_text)
                 if len(prefix) == 1 and large and floated and complete_word:
                     # Keep navigation anchors even though the old glyph is not
                     # spoken. Empty spans anchor the first audible word.
@@ -366,7 +366,7 @@ class BeautifulSoupEpubChapterTextExtractor:
                         anchor_id = node.get("id")
                         anchor_name = node.get("name") if node.name == "a" else None
                         if anchor_id or anchor_name:
-                            anchor = soup.new_tag("span")
+                            anchor = soup.new_tag("a" if anchor_name else "span")
                             if anchor_id:
                                 anchor["id"] = anchor_id
                             if anchor_name:
