@@ -9,6 +9,11 @@ OUTPUT_DIR="$REPO_DIR/build/release-locks"
 if [[ "$#" -gt 0 ]]; then OUTPUT_DIR="$1"; fi
 UV="$(command -v uv || true)"
 [[ -n "$UV" ]] || { echo "uv is required to compile release locks." >&2; exit 1; }
+actual_uv_version="$("$UV" --version | awk '{print $2}')"
+[[ "$actual_uv_version" == "$UV_VERSION" ]] || {
+  echo "uv version mismatch: expected $UV_VERSION, got $actual_uv_version." >&2
+  exit 1
+}
 command -v npm >/dev/null 2>&1 || { echo "npm is required to create the frontend lock." >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
 "$UV" python install "$WEB_PYTHON_VERSION" "$THORSTEN_PYTHON_VERSION"

@@ -28,6 +28,11 @@ if [[ ! -x "$UV" ]]; then
   echo "uv is missing. Run runpod/setup.sh --bootstrap-only first." >&2
   exit 1
 fi
+actual_uv_version="$("$UV" --version | awk '{print $2}')"
+if [[ "$actual_uv_version" != "$UV_VERSION" ]]; then
+  echo "uv version mismatch: expected $UV_VERSION, got $actual_uv_version." >&2
+  exit 1
+fi
 
 # The source checkout is created and pinned before any model bytes are written.
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models"

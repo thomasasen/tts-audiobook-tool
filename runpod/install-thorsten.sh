@@ -16,6 +16,11 @@ if [[ ! -x "$UV" ]]; then
   echo "Run bash runpod/setup.sh --bootstrap-only before installing Thorsten." >&2
   exit 1
 fi
+actual_uv_version="$("$UV" --version | awk '{print $2}')"
+if [[ "$actual_uv_version" != "$UV_VERSION" ]]; then
+  echo "uv version mismatch: expected $UV_VERSION, got $actual_uv_version." >&2
+  exit 1
+fi
 # CosyVoice's pinned Lightning 2.2.4 still imports pkg_resources.
 # setuptools 82+ removed that module. Repair *only* the isolated Thorsten
 # runtime, including already verified persistent model installs, so a Pod

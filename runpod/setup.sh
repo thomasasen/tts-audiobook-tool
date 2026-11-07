@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=env.sh
 source "$SCRIPT_DIR/env.sh"
+source "$SCRIPT_DIR/model-pins.env"
 
 usage() {
   cat <<'HELP'
@@ -110,12 +111,12 @@ UV_TOOL_DIR="$AUDIOBOOK_DATA_ROOT/tools/uv-bootstrap"
 UV="$UV_TOOL_DIR/bin/uv"
 if [[ ! -x "$UV" ]]; then
   python3 -m venv "$UV_TOOL_DIR"
-  "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check 'uv==0.9.11'
+  "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
 fi
 echo "uv: $("$UV" --version)"
 "$UV" python install 3.12
 if (( BOOTSTRAP_ONLY )); then
-  echo "RunPod bootstrap-only complete: OS packages, uv and managed Python 3.12 ready."
+  echo "RunPod bootstrap-only complete: OS packages, uv and managed Python $WEB_PYTHON_VERSION and $THORSTEN_PYTHON_VERSION ready."
   exit 0
 fi
 
@@ -136,7 +137,7 @@ else:
 assert torch.__version__.split("+", 1)[0] == expected, (
     f"torch {torch.__version__}; expected {expected}"
 )
-assert sys.version_info[:2] == (3, 12), f"Expected Python 3.12, got {sys.version}"
+assert sys.version_info[:3] == (3, 12, 16), f"Expected Python 3.12.16, got {sys.version}"
 print(f"Verified {model}: Python {sys.version.split()[0]}, torch {torch.__version__}")
 PY
 }
@@ -160,7 +161,7 @@ install_model() {
   fi
 
   if [[ ! -x "$env_dir/bin/python" ]]; then
-    "$UV" venv --python 3.12 --seed "$env_dir"
+    "$UV" venv --python "$LEGACY_PYTHON_VERSION" --seed "$env_dir"
   fi
   rm -f "$marker"
   echo "Installing $model from $requirements (may download large CUDA wheels)."
