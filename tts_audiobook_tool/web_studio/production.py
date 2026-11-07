@@ -774,8 +774,8 @@ def _loop():
                 db.execute("UPDATE studio_jobs SET status='running',updated_at=? WHERE id=? AND status='queued'", (_now(), row["id"]))
         if row is None:
             continue
-        _job_event(row["id"], "GPU-Auftrag gestartet; Sprecher wird vorbereitet.")
         try:
+            _job_event(row["id"], "GPU-Auftrag gestartet; Sprecher wird vorbereitet.")
             _run(row["id"])
         except Exception as exc:
             with _studio()._db() as db:
@@ -967,6 +967,7 @@ def export_job(project_id: str, job_id: str) -> Path:
         writer = None
         with _studio()._db() as db:
             db.execute("UPDATE studio_jobs SET status='exporting',updated_at=? WHERE id=?", (_now(),job_id))
+        _job_event(job_id, "M4B-Export gestartet. Audiosegmente werden zusammengeführt.")
         try:
             for i, segment in enumerate(plan["segments"]):
                 audio, sr = sf.read(str(audio_path(project_id,job_id,i)), dtype="float32", always_2d=True)
@@ -981,6 +982,8 @@ def export_job(project_id: str, job_id: str) -> Path:
                     chapter_title, chapter_start = segment["title"], start
                 writer.write(np.asarray(audio, dtype=np.float32))
                 start += len(audio) / sr
+                if (i + 1) % 25 == 0 or i + 1 == len(plan["segments"]):
+                    _job_event(job_id, f"M4B-Export: {i + 1} von {len(plan['segments'])} Segmenten verarbeitet.")
             if chapter_title:
                 chapters.append(Chapter(chapter_start, start, chapter_title))
             if writer is None:
@@ -992,10 +995,12 @@ def export_job(project_id: str, job_id: str) -> Path:
                 writer.abort()
             with _studio()._db() as db:
                 db.execute("UPDATE studio_jobs SET status='generated',error='Export fehlgeschlagen',updated_at=? WHERE id=?", (_now(),job_id))
+            _job_event(job_id, "M4B-Export fehlgeschlagen. Privates Server-Log prüfen.")
             raise
         with _studio()._db() as db:
             db.execute("UPDATE studio_jobs SET status='completed',error='',updated_at=? WHERE id=?", (_now(),job_id))
             db.execute("UPDATE studio_projects SET status='Fertig',updated_at=? WHERE id=?", (_now(),project_id))
+        _job_event(job_id, "M4B-Hörbuch wurde erfolgreich erstellt.")
         return path
     finally:
         _GPU.release()
