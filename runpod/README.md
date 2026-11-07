@@ -23,6 +23,20 @@ Die **aktuelle, einzige Startvorlage einschließlich Docker Start Command** steh
 
 Die Stufen sind bewusst begrenzt: maximal ein Frontend-Build, ein Web-Python-Installer und ein paralleler Thorsten-Vorabdownload. Ein neuer Thorsten-Download beginnt nur bei funktionierendem System-CUDA-Test und **mindestens 25 GiB** freiem Network-Volume-Speicher. Zur GPU-Initialisierung reicht `nvidia-smi` alleine nicht aus.
 
+## Abschließende Statusanzeige
+
+Nach den **gesamten** Installations- und Prüfschritten kontrolliert der Autostart nochmals die HTTP-Erreichbarkeit des Web-Studios. Anschließend ruft er `runpod/print-start-summary.sh` auf und schreibt eine große, eingerahmte Übersicht **ans Ende der privaten RunPod-Container-Logs**. Darin stehen:
+
+- Weboberfläche (`RunPod > Connect > HTTP 7860`) und der überprüfte HTTP-Status.
+- Thorsten-Installationsstatus, separater echter CUDA-Tensortest im Thorsten-Runtime und der weiterhin ausstehende Hörproben-/Hörqualitätsnachweis.
+- Verwendete GPU, System-CUDA-Test, Git-Commit und Network-Volume-Pfad mit freiem Speicher.
+- Automatisch generierter Web-Zugangsschlüssel oder bei eigenem `AUDIOBOOK_STUDIO_TOKEN` der Hinweis, dass dieses Secret nicht angezeigt wird.
+- Nächster Bedienungsschritt im Studio.
+
+Ein fehlgeschlagener Webcheck erhält eine **Fehlermeldung statt eines Erfolgsbanners**. Eine nicht installierte Stimme oder nicht betriebsbereites CUDA wird ausdrücklich als Warnung angezeigt.
+
+**Datenschutz:** Die vollständige Abschlussübersicht wird über den beim Start gesicherten Dateideskriptor `3` auf das ursprüngliche Container-stdout ausgegeben; sie wird **nicht** durch `tee` in `autostart-*.log` gespeichert. Der kurz gefasste, nicht vertrauliche Status wird hingegen ins normale Autostart-Log geschrieben. Bitte die privaten Container-Logs nicht öffentlich teilen, weil sie den Zugangsschlüssel enthalten können.
+
 ## Verzeichnisse und Dienste
 
 | Pfad oder Prozess | Inhalt |
@@ -59,7 +73,7 @@ Die Web-Python-Umgebung lässt sich bei Problemen gezielt erneut prüfen:
 bash /workspace/tts-audiobook-tool/runpod/install-web.sh
 ```
 
-Keines dieser Prüfprogramme benötigt private Sprecheraufnahmen oder zusätzliche Qwen-/MOSS-Modellgewichte. Die Installation erzeugt einen Zugangsschlüssel, sofern kein eigenes privates `AUDIOBOOK_STUDIO_TOKEN` gesetzt ist. Der automatisch erzeugte Schlüssel wird **nur in den privaten Live-Container-Logs** ausgegeben, nie im persistenten Autostart-Protokoll. Keine Log-Screenshots mit sichtbaren Schlüsseln teilen.
+Keines dieser Prüfprogramme benötigt private Sprecheraufnahmen oder zusätzliche Qwen-/MOSS-Modellgewichte. Die Installation erzeugt einen Zugangsschlüssel, sofern kein eigenes privates `AUDIOBOOK_STUDIO_TOKEN` gesetzt ist. Der automatisch erzeugte Schlüssel wird nach dem frühen Webstart und **erneut in der abschließenden Statusübersicht** nur in den privaten Container-Logs ausgegeben, nie im persistenten Autostart-Protokoll. Keine Log-Screenshots mit sichtbaren Schlüsseln teilen.
 
 ## Bekannte Grenzen
 
