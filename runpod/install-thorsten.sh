@@ -57,6 +57,9 @@ grep -v '^openai-whisper' "$MODEL_ROOT/requirements.txt" > "$AUDIOBOOK_DATA_ROOT
 
 # Download into persistent paths and overlay *only* the authored fine-tune
 # weights and embedding. The base vocoder is preserved.
+# The common RunPod image sets HF_HUB_ENABLE_HF_TRANSFER=1 without providing
+# hf_transfer in this separate Python 3.11 venv. env.sh forces standard HTTP.
+echo "Thorsten model download mode: standard Hugging Face HTTP (HF_HUB_ENABLE_HF_TRANSFER=$HF_HUB_ENABLE_HF_TRANSFER)"
 "$VENV/bin/hf" download FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --local-dir "$MODEL_DIR"
 "$VENV/bin/hf" download Thorsten-Voice/CosyVoice3 --local-dir "$MODEL_DIR" \
   --include llm.pt flow.pt spk2info.pt infer_thorsten.py
