@@ -105,6 +105,20 @@ h1, h2, h3, p { margin-top: 0; }
 .warning-details { border: 1px solid #dfba65; color: var(--text); border-radius: 11px; padding: 13px 17px; margin: -10px 0 25px; font-size: 12px; }
 .warning-details summary { cursor: pointer; display: flex; align-items: center; gap: 8px; }
 .warning-details li { margin-top: 8px; }
+.generation-progress { padding: 24px; max-width: 900px; margin: 22px 0; }
+.generation-progress > p { margin: 12px 0; font-size: 13px; line-height: 1.65; color: var(--text); }
+.generation-progress > progress { display: block; width: 100%; height: 10px; margin: 18px 0; accent-color: var(--accent); }
+.progress-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 15px 0 9px; font-size: 13px; }
+.progress-head span { font-variant-numeric: tabular-nums; color: var(--muted); }
+.activity-log { border: 1px solid var(--line); border-radius: 12px; padding: 13px 17px; margin: 20px 0 0; background: var(--bg); font-size: 12px; }
+.activity-log summary { cursor: pointer; font-weight: 650; color: var(--text); padding: 2px 0; }
+.activity-log ol { list-style: none; margin: 14px 0 0; padding: 0; max-height: 250px; overflow-y: auto; }
+.activity-log li { display: flex; align-items: flex-start; gap: 13px; border-top: 1px solid var(--line); padding: 10px 0; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.activity-log time { color: var(--muted); min-width: 63px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.activity-log li span { min-width: 0; }
+.spinning { animation: studio-spinner 1s linear infinite; }
+@keyframes studio-spinner { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinning { animation: none; } }
 .voice-notice { display: flex; gap: 18px; padding: 22px 24px; margin-bottom: 32px; }
 .voice-notice > svg { color: var(--accent); flex-shrink: 0; }
 .voice-notice strong { font-size: 14px; }
