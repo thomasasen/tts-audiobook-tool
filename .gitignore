@@ -7,7 +7,6 @@ venv*/
 *.egg-info/
 build/
 .python-version
-package-lock.json
 
 plans/
 .agents/

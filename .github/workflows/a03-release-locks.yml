@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "runpod/model-pins.env"
+      - ".gitignore"
       - "runpod/locks/thorsten/pyproject.toml"
       - "runpod/locks/thorsten/uv.lock"
       - "runpod/locks/SHA256SUMS"
