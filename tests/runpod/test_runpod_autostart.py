@@ -55,15 +55,15 @@ class TestRunPodAutostart(unittest.TestCase):
     def test_help_default_matches_effective_auto_start_default(self):
         help_response = self.call("--help")
         self.assertEqual(help_response.returncode, 0)
-        self.assertIn("RUNPOD_TTS_MODELS           qwen | moss | both (default: qwen)", help_response.stdout)
+        self.assertIn("RUNPOD_TTS_MODELS           none | qwen | moss | both (default: none; web-only)", help_response.stdout)
         with tempfile.TemporaryDirectory() as workspace:
             actual = self.call("--check-only", extra_env={
                 "RUNPOD_WORKSPACE": workspace,
-                "RUNPOD_TTS_MODELS": "qwen",
+                "RUNPOD_TTS_MODELS": "none",
                 "RUNPOD_TTS_AUTOSTART_MODEL": "qwen",
             })
         self.assertEqual(actual.returncode, 0, actual.stderr)
-        self.assertIn("Install: qwen", actual.stdout)
+        self.assertIn("Install: none", actual.stdout)
         self.assertIn("Autostart: qwen", actual.stdout)
 
     def test_readme_separates_web_studio_from_legacy_tui(self):
@@ -80,7 +80,8 @@ class TestRunPodAutostart(unittest.TestCase):
         self.assertIn("exec 3>&1", source)
         self.assertLess(source.index("exec 3>&1"), source.index('exec > >(tee -a "$LOG_FILE")'))
         self.assertIn("/api/health", source)
-        self.assertIn("if (( WEB_HEALTHY )); then", source)
+        self.assertIn("if (( ! WEB_HEALTHY )); then", source)
+        self.assertLess(source.index("if (( ! WEB_HEALTHY )); then"), source.index("Zugangsschlüssel: $WEB_ACCESS_TOKEN"))
         self.assertIn('if [[ -n "${AUDIOBOOK_STUDIO_TOKEN:-}" ]]; then', source)
         self.assertIn('WEB_ACCESS_TOKEN="$(<"$TOKEN_FILE")"', source)
         self.assertIn('"Zugangsschlüssel: $WEB_ACCESS_TOKEN"', source)
@@ -145,8 +146,8 @@ class TestRunPodAutostart(unittest.TestCase):
         # A live pod's browser must come up before optional voice weights are
         # downloaded, especially on reused volumes with slow model access.
         start = source.index("tmux new-session -d -s audiobook-web")
-        health = source.index('if (( WEB_HEALTHY )); then')
-        voice = source.index('echo "Installing German voice (optional until GPU acceptance)."')
+        health = source.index('if (( ! WEB_HEALTHY )); then')
+        voice = source.index('bash "$REPO_DIR/runpod/install-thorsten.sh"')
         self.assertLess(start, health)
         self.assertLess(health, voice)
         self.assertEqual(source.count("tmux new-session -d -s audiobook-web"), 1)
@@ -163,7 +164,8 @@ class TestRunPodAutostart(unittest.TestCase):
             source.index('if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then'),
             source.index('bash "$REPO_DIR/runpod/install-thorsten.sh"')
         )
-        self.assertIn("Trying existing web/base Python environment", source)
+        self.assertIn('bash "$REPO_DIR/runpod/install-web.sh"', source)
+        self.assertIn("Web Studio + Thorsten", source)
 
     def test_invalid_skip_voice_flag_is_rejected(self):
         result = self.call("--check-only", extra_env={
@@ -171,6 +173,28 @@ class TestRunPodAutostart(unittest.TestCase):
         })
         self.assertEqual(result.returncode, 2)
         self.assertIn("Invalid RUNPOD_TTS_SKIP_VOICE_INSTALL", result.stderr)
+
+    def test_cold_start_overlap_and_no_legacy_tui_by_default(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        # Frontend and model downloads overlap the independent web pip install.
+        self.assertLess(source.index('BUILD_PID=$!'), source.index('bash "$REPO_DIR/runpod/install-web.sh"'))
+        self.assertLess(source.index('PREFETCH_PID=$!'), source.index('bash "$REPO_DIR/runpod/install-web.sh"'))
+        self.assertLess(source.index('bash "$REPO_DIR/runpod/install-web.sh"'), source.index('wait "$BUILD_PID"'))
+        self.assertLess(source.index('wait "$BUILD_PID"'), source.index('tmux new-session -d -s audiobook-web'))
+        self.assertLess(source.index('tmux new-session -d -s audiobook-web'), source.index('wait "$PREFETCH_PID"'))
+        self.assertLess(source.index('wait "$PREFETCH_PID"'), source.index('bash "$REPO_DIR/runpod/install-thorsten.sh"'))
+        self.assertIn(': "${RUNPOD_TTS_MODELS:=none}"', source)
+        self.assertIn('if [[ "$RUNPOD_TTS_MODELS" != none ]]; then', source)
+        self.assertIn("MIN_FREE_GIB=25", source)
+        self.assertIn('python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json', source)
+        self.assertIn('bash "$REPO_DIR/runpod/setup.sh" --models none --bootstrap-only', source)
+
+    def test_invalid_download_parallelism_fails_before_side_effects(self):
+        for value in ("0", "9", "none", "1;rm -rf", "04"):
+            with self.subTest(value=value):
+                actual = self.call("--check-only", extra_env={"RUNPOD_TTS_DOWNLOAD_WORKERS": value})
+                self.assertEqual(actual.returncode, 2)
+                self.assertIn("RUNPOD_TTS_DOWNLOAD_WORKERS must be 1..8", actual.stderr)
 
     def test_invalid_model_is_rejected_without_side_effects(self):
         result = self.call(
@@ -186,6 +210,7 @@ class TestRunPodAutostart(unittest.TestCase):
             extra_env={
                 "RUNPOD_TTS_MODELS": "qwen",
                 "RUNPOD_TTS_AUTOSTART_MODEL": "moss",
+                "RUNPOD_TTS_START_TUI": "1",
             },
         )
         self.assertEqual(result.returncode, 2)
