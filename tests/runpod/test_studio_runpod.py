@@ -84,7 +84,7 @@ class TestGermanStudioRunPod(unittest.TestCase):
 
             uv = root / "tools/uv-bootstrap/bin/uv"
             uv.parent.mkdir(parents=True)
-            uv.write_text("#!/bin/sh\\nif [ \"$1\" = \"--version\" ]; then echo \"uv 0.13.7\"; exit 0; fi\\nexit 88\\n", encoding="utf-8")
+            uv.write_text("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"uv 0.13.7\"; exit 0; fi\nexit 88\n", encoding="utf-8")
             uv.chmod(0o755)
 
             fake_bin = Path(work) / "bin"
