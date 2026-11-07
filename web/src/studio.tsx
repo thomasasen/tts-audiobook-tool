@@ -676,6 +676,8 @@ export default function Studio() {
                       <span>Geschätzte Restzeit</span>
                       <strong>{job.status === 'paused' ? 'Pausiert'
                         : job.status === 'queued' ? 'Wartet auf GPU'
+                        : job.status === 'failed' ? 'Fehlgeschlagen'
+                        : job.status === 'cancelled' ? 'Abgebrochen'
                         : ['generated','completed'].includes(job.status) ? '0 Min. 00 Sek.'
                         : job.status === 'exporting' ? 'Export läuft'
                         : job.status === 'running' && jobActivity?.id === job.id && jobActivity.remaining_seconds != null && jobActivity.calculated_at
