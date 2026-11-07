@@ -451,15 +451,33 @@ def approve_voice():
 
 @app.get("/api/capabilities", dependencies=[Depends(require_auth)])
 def capabilities():
+    # Installation and explicit approval are independent states. The Web
+    # Studio starts before the asynchronous Thorsten installation completes;
+    # compute both on EVERY request rather than caching startup state.
     from .production import _model_identity
+    installed = _model_identity() is not None
+    approved = installed and production.voice_ready()
+    if approved:
+        reason = "Thorsten-CosyVoice3 ist installiert und nach Hörprobe freigegeben."
+    elif installed:
+        reason = (
+            "Thorsten-CosyVoice3 ist installiert. Bitte eine echte Hörprobe "
+            "erzeugen, vollständig anhören und anschließend freigeben."
+        )
+    else:
+        reason = (
+            "Thorsten-CosyVoice3 ist noch nicht vollständig installiert oder "
+            "konnte nicht verifiziert werden. Die Hörprobe ist bis dahin gesperrt."
+        )
     return {
         "epub_import": True,
         "chapter_selection": True,
-        "tts_generation": production.voice_ready(),
+        "tts_generation": approved,
         "audio_export": True,
-        "voice_preview_available": _model_identity() is not None,
-        "reason": ("Produktion freigegeben." if production.voice_ready()
-                   else "Thorsten-CosyVoice3 muss installiert, probeweise erzeugt und angehört werden."),
+        "voice_installed": installed,
+        "voice_approved": approved,
+        "voice_preview_available": installed,
+        "reason": reason,
     }
 
 
