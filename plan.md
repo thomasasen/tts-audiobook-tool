@@ -298,7 +298,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | A01 | OFFEN | — | — | — |
 | A02 | OFFEN | — | — | — |
 | A03 | OFFEN | — | — | — |
-| A04 | OFFEN | — | — | — |
+| A04 | FERTIG (PR offen; nicht in master) | [PR #18](https://github.com/thomasasen/tts-audiobook-tool/pull/18), [Code-Commit 53bb76e](https://github.com/thomasasen/tts-audiobook-tool/commit/53bb76e2e42042a906913b2c3f686666194527ec) | [Studio CI #42372700653](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42372700653): Backend, Frontend, Browser (direktes Streamen und >96-MB-Fallback), isolierte Runtime grün | Native File System Access API nur in unterstützten Desktop-Browsern; echte große RunPod-Datei und Nutzerfreigabe noch offen |
 | B01 | OFFEN | — | — | — |
 | B02 | OFFEN | — | — | — |
 | B03 | OFFEN | — | — | — |
@@ -313,6 +313,14 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | E03 | OFFEN / GPU- UND HÖRABNAHME VORAUSGESETZT | — | — | — |
 
 Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄLLT (fachliche Begründung). Abhaken nur bei FERTIG; einmalige Statushinweise ändern die Checkbox nicht.
+
+### A04 – technische Umsetzung im offenen PR #18 (07.11.2026)
+
+**Ausgangsbefund:** `web/src/studio.tsx` verwendete `Response.blob()` zur vollständigen M4B-Übernahme in den Browser-RAM. Auch das Vollhörbuch-Player-Feature lud das gesamte M4B in einen Blob. Der authentifizierte `FileResponse` konnte prinzipiell bereits gestreamt werden.
+
+**Änderungen:** Neues `web/src/download.ts` schreibt auf kompatiblen Desktop-Browsern (File System Access API) die authentifizierte Antwort direkt stückweise in die vom Benutzer gewählte Datei. Abbruch per AbortController und `FileSystemWritableFileStream.abort()`, fehlender Body, HTTP-/Content-Type-Fehler, Transferlängen und fehlende Berechtigung sind abgegrenzt. Andere Browser erhalten nur einen klar dokumentierten Fallback von maximal 96 MiB im RAM und eine Erklärung für größere Dateien; kein dauerhaftes Zugangs-Token in URL, Querystring oder lokalem Speicher. `web/src/studio.tsx` zeigt Downloadfortschritt und Abbruch, entfernt den zweiten unbegrenzten Vollhörbuch-Blob-Pfad (Einzelsegmente bleiben abspielbar). `tts_audiobook_tool/web_studio/app.py` setzt `Cache-Control: private, no-store` für M4B-Antworten. `tests/web/browser_smoke.py` führt einen echten Browser-Stream-Sink und übergroßen Fallback durch; `tests/web/test_studio_export.py` bestätigt authentifizierte Range-206-Downloads, Datenschutzheader und 401 ohne Token.
+
+**Evidenz:** Code-Commit `53bb76e2e42042a906913b2c3f686666194527ec`; GitHub Actions `42372700653`: Backend, Frontend, Browser, isolierte Web-Runtime **erfolgreich**. Der finale Fortschrittscommit muss ebenfalls CI-grün bleiben. Keine echte große private RunPod-Datei, keine Browser-Untersuchung auf Firefox/Safari-Hardware. A04 hat damit die offline prüfbaren Kriterien erfüllt. A01 (PR #15), A02 (PR #16), A03 Teil 1 (Draft-PR #17) sind auf separaten noch ungemergten Master-Abzweigungen; `plan.md` vor einem genehmigten Merge abgleichen.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
