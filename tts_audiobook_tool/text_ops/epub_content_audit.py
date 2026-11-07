@@ -124,8 +124,6 @@ def _review_elements(payload: bytes, href: str, overrides: dict[str, str], *, re
     result: list[dict] = []
     for element in soup.find_all(["table", "math", "figure", "img"]):
         tag = str(element.name or "").lower()
-        if tag == "img" and element.find_parent("figure") is not None:
-            continue
         index = counters.get(tag, 0)
         counters[tag] = index + 1
         key = f"{tag}:{index}"
