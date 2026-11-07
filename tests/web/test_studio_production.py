@@ -382,6 +382,36 @@ def _prepare_fake_installed_voice(monkeypatch):
     return manifest, script
 
 
+def test_late_thorsten_installation_is_detected_without_web_restart(env, monkeypatch):
+    # RunPod starts FastAPI before the parallel model download finishes.
+    # Installation must not be confused with manually approved narration.
+    before = env.get("/api/capabilities", headers=HEADERS).json()
+    assert before["voice_installed"] is False
+    assert before["voice_approved"] is False
+    assert before["voice_preview_available"] is False
+    assert "noch nicht vollständig installiert" in before["reason"]
+
+    _prepare_fake_installed_voice(monkeypatch)
+    # Test the real late-installation discovery path (without exported startup
+    # environment variables, as during the normal RunPod boot).
+    monkeypatch.delenv("AUDIOBOOK_THORSTEN_SCRIPT", raising=False)
+    monkeypatch.delenv("AUDIOBOOK_THORSTEN_PYTHON", raising=False)
+    after = env.get("/api/capabilities", headers=HEADERS).json()
+    assert after["voice_installed"] is True
+    assert after["voice_approved"] is False
+    assert after["voice_preview_available"] is True
+    assert after["tts_generation"] is False
+    assert "ist installiert" in after["reason"]
+    assert "muss installiert" not in after["reason"]
+
+    # Explicit approval changes only the approval state, not the install state.
+    production.approve_sample()  # Synthetic test only: no genuine listening.
+    approved = env.get("/api/capabilities", headers=HEADERS).json()
+    assert approved["voice_installed"] is True
+    assert approved["voice_approved"] is True
+    assert approved["tts_generation"] is True
+
+
 def test_voice_approval_is_invalidated_after_model_or_code_change(env, monkeypatch):
     manifest, script = _prepare_fake_installed_voice(monkeypatch)
     assert production.voice_ready() is False
