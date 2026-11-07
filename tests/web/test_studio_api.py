@@ -94,6 +94,23 @@ def _test_preview_wav(path: Path) -> None:
         out.writeframes(struct.pack("<" + "h" * 16000, *([500] * 16000)))
 
 
+def test_browser_preview_accepts_pcm16_and_rejects_24_bit_wav(tmp_path):
+    from tts_audiobook_tool.web_studio import production
+    candidate = tmp_path / "preview.wav"
+    _test_preview_wav(candidate)
+    assert production._valid_browser_preview(candidate) == pytest.approx(1.0)
+    # A perfectly valid internal PCM-24 WAV must not be advertised as a
+    # browser-ready sample. It must be regenerated as signed PCM-16.
+    with wave.open(str(candidate), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(3)
+        out.setframerate(16000)
+        out.writeframes((b"\\x00\\x80\\x00") * 16000)
+    assert production._valid_audio(candidate) == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="16-Bit-PCM"):
+        production._valid_browser_preview(candidate)
+
+
 def _await_preview_status(client, expected: str) -> dict:
     deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
