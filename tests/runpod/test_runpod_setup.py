@@ -37,6 +37,17 @@ class TestRunPodSupport(unittest.TestCase):
             )
             self.assertIn("Usage:", result.stdout)
 
+    def test_optional_model_environments_use_hash_locks(self):
+        setup = (ROOT / "runpod/setup.sh").read_text(encoding="utf-8")
+        pins = (ROOT / "runpod/model-pins.env").read_text(encoding="utf-8")
+        self.assertIn('install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0', setup)
+        self.assertIn('install_model moss requirements-moss.txt requirements-moss.lock.txt 2.9.1', setup)
+        self.assertIn('"$UV" pip sync --python "$env_dir/bin/python" "$lock_path"', setup)
+        self.assertIn('model_runtime_freeze_hash', setup)
+        self.assertIn('UV_VERSION="0.13.7"', pins)
+        self.assertIn('WEB_PYTHON_VERSION="3.12.16"', pins)
+        self.assertIn('THORSTEN_PYTHON_VERSION="3.11.18"', pins)
+
     def test_environment_uses_volume_and_keeps_paths_out_of_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
