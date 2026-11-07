@@ -62,8 +62,8 @@ Eine Zeile ist ein eigenständig prüfbares PR-Arbeitspaket; nur nachgewiesene A
 |---|---|---|---|---|---|
 | [x] | A01 | P0 | keine | S | ASR-Installation und ehrliche Betriebsanzeige |
 | [x] | A02 | P0 | keine | S | Kapitel-IDs statt Titel für M4B-Marker |
-| [ ] | A03 | P1 | keine | M | Reproduzierbare Releases, Abhängigkeiten und Modelle |
-| [ ] | A04 | P2 | keine | M | Speicherfreundliche, authentifizierte Downloads |
+| [x] | A03 | P1 | keine | M | Reproduzierbare Releases, Abhängigkeiten und Modelle |
+| [x] | A04 | P2 | keine | M | Speicherfreundliche, authentifizierte Downloads |
 | [ ] | B01 | P1 | keine | M | EPUB-Struktur-/Auslassungs-Audit und Vorschau |
 | [ ] | B02 | P1 | B01 | M | Deutsche Textnormalisierung/Fachbegriff-Layer |
 | [ ] | B03 | P1 | A02, B01, B02 | L | Versionierter NarrationPlan mit Text-/Sprechmetadaten |
@@ -108,13 +108,16 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 
 **Fundstellen:** runpod/autostart.sh, runpod/install-thorsten.sh, runpod/prefetch-thorsten.sh, runpod/install-web.sh, requirements-*.txt, web/package.json, README.md und RunPod-Dokumentation.
 
-- [ ] Entwicklungsmodus (bewusst aktueller master) von **Release-Modus mit festem Git-Commit** trennen; Checkout, Rollback und Neustart deterministisch.
-- [ ] CosyVoice-Framework, Thorsten-Finetuning, Basis-Modell und alle späteren Modelle mit belegbaren vollständigen Revisionen pinnen. Lokale SHA-256-Manifeste bleiben Integritätstest, ersetzen aber keinen Upstream-Vertrauensanker.
-- [ ] Relevante Python-/Node-Abhängigkeiten passend zu getrennten Venvs reproduzierbar sperren; Installationspfade/Versionswechsel idempotent und fail-closed prüfen.
-- [ ] Keine unkontrollierten Updates beim Pod-Neustart; klarer Upgrade-/Rollback-Befehl, dokumentierte Mindestanforderungen, optionales Modell nur bewusst laden.
-- [ ] Testfälle für gültigen Cache, defekte Gewichte, Versionswechsel, fehlenden Mount, CUDA-Fehler und Speichermangel.
+- [x] Entwicklungsmodus (bewusst aktueller master) von **Release-Modus mit festem Git-Commit** trennen; Checkout, Rollback und Neustart deterministisch.
+- [x] Das aktuell verwendete CosyVoice-Framework, Matcha-TTS, Thorsten-Finetuning und CosyVoice-Basis-Modell mit vollständigen unveränderlichen Revisionen pinnen. Der Downloader verifiziert Dateien gegen Hugging-Face-LFS-SHA-256 bzw. Git-Blob-SHA-1 der jeweiligen Revision; das lokale SHA-256-Manifest sichert danach den persistenten Cache.
+- [x] Python-/Node-Abhängigkeiten für getrennte Venvs reproduzierbar mit Hashes sperren; Installationspfade, Versionswechsel und Cache-Reparatur idempotent und fail-closed prüfen.
+- [x] Unkontrollierte Updates beim Pod-Neustart verhindern; explizite Upgrade-/Rollback-Befehle, dokumentierte Mindestanforderungen und bewusst optionale Legacy-Modelle bereitstellen.
+- [x] Offline-Regressionen für gültigen Cache, beschädigte Gewichte, falsche Revisionen, Versionsabweichungen, fehlenden Mount, CUDA-Fehler sowie Release-Backup und Restore ergänzen.
+- [ ] Reale RunPod-Installation, echter Pod-Neustart mit Resume, Live-Upgrade/Rollback sowie OOM-/Volume-full-Fehlersimulation bleiben Teil der manuellen Live-Abnahme in E03.
 
-**Akzeptanz:** Derselbe Release-Stand installiert nach Neustart dieselben Artefakte; beschädigte/abweichende Modelle werden nicht als freigegeben dargestellt.
+**Code-Level-Akzeptanz:** Auf dem finalen PR-Head 8a1504e9d646de3df1b2263538a2841fea457558 waren RunPod Static (79 Tests), A03 Release Lock Generation und German Audiobook Studio erfolgreich. Die Code-Implementierung ist abgeschlossen.
+
+**Live-Release-Gate:** Echte GPU-Inferenz, Pod-Neustart/Resume, reale Upgrade-/Rollback-Ausführung und menschliche Hörabnahme sind nicht durch CI belegt und bleiben vor Produktivbetrieb verpflichtend.
 
 ### A04 — M4B-Download ohne vollständiges Speicherpuffern
 
@@ -297,7 +300,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 |---|---|---|---|---|
 | A01 | IN MASTER · technische Abnahme bestanden | [PR #15](https://github.com/thomasasen/tts-audiobook-tool/pull/15) | Sechs CI-Checks einschließlich echter deutscher CPU-ASR auf finalem Commit erfolgreich | Keine GPU-/Hörabnahme; Produktrelease offen |
 | A02 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #19](https://github.com/thomasasen/tts-audiobook-tool/pull/19) (ersetzt #16) | Fünf CI-Checks auf kombiniertem A01/A02-Stand grün, einschließlich echtem M4B-Decode | Keine menschliche Hörabnahme |
-| A03 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [Integrations-PR #21](https://github.com/thomasasen/tts-audiobook-tool/pull/21) (ersetzt #17) | Sechs CI-Checks grün, Quellcode-Commit-Pinning optional | Modellrevisionen, transitive Abhängigkeiten, echter Pod-Rollback und GPU-Abnahme fehlen |
+| A03 | CODE-IMPLEMENTIERUNG IN MASTER · LIVE-ABNAHME OFFEN | [PR #24](https://github.com/thomasasen/tts-audiobook-tool/pull/24), Merge e9085c7 | 79 RunPod-Static-Tests, A03 Lock Generation und German Audiobook Studio auf finalem Head 8a1504e grün | Echte RunPod-GPU, Pod-Neustart/Resume, Live-Upgrade/Rollback und Hörabnahme bleiben in E03 offen |
 | A04 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #20](https://github.com/thomasasen/tts-audiobook-tool/pull/20) (ersetzt #18) | Fünf CI-Checks inklusive Browser-Streaming, 96-MB-Fallback und Range-206 grün | Große echte RunPod-M4B noch nicht heruntergeladen |
 | B01 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22) | Fünf CI-Checks grün, EPUB-Navigationsverlustfall mit synthetischen Fixtures behoben | Vollständige Spine-/Tabellen-/Fußnoten-/Auslassungsprüfung und private EPUB-Abnahme fehlen |
 | B02 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #23](https://github.com/thomasasen/tts-audiobook-tool/pull/23) | Fünf CI-Checks grün; Golden Cases und rückwärtskompatible Versionierung des Cache-Fingerprints | Umfangreiche Spezialfalltests, Vorschauparität B04 und Hörabnahme fehlen |
@@ -341,14 +344,33 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 **Evidenz:** Code-Commit `53bb76e2e42042a906913b2c3f686666194527ec`; GitHub Actions `42372700653`: Backend, Frontend, Browser, isolierte Web-Runtime **erfolgreich**. Der finale Fortschrittscommit muss ebenfalls CI-grün bleiben. Keine echte große private RunPod-Datei, keine Browser-Untersuchung auf Firefox/Safari-Hardware. A04 hat damit die offline prüfbaren Kriterien erfüllt. A01 (PR #15), A02 (PR #16), A03 Teil 1 (Draft-PR #17) sind auf separaten noch ungemergten Master-Abzweigungen; `plan.md` vor einem genehmigten Merge abgleichen.
 
 
-### A03 – Teilimplementierung in Draft-PR #17
+### A03 – Historischer Zwischenstand vor PR #24 (Draft-PR #17)
 
-**Ist-Befund:** `runpod/autostart.sh` holt bislang beim Wiederanlauf den neuesten `master`-Stand. Die Thorsten-/Base-Hugging-Face-Repos werden ohne feste Revisionen heruntergeladen; lokale Prüfsummen dokumentieren nur den Downloadzustand und sind kein Upstream-Vertrauensanker.
+**Damals offener Befund:** runpod/autostart.sh besaß bereits den optionalen Release-Parameter RUNPOD_TTS_COMMIT (vollständige 40-Hex-SHA; nur master erlaubt; Zugehörigkeit zur Master-Historie und exakte HEAD-Gleichheit kontrolliert). Ohne Commit blieb der bewusste Entwicklungsmodus. Die vollständigen Quell-/Modellrevisionen und reproduzierbaren Abhängigkeits-Locks fehlten zu diesem Zwischenstand.
 
-**Teil 1 umgesetzt:** `runpod/autostart.sh` besitzt optionalen Release-Parameter `RUNPOD_TTS_COMMIT` (vollständige 40-Hex-SHA; nur `master` erlaubt; Zugehörigkeit zur Master-Historie und exakte HEAD-Gleichheit kontrolliert). Ohne Commit bleibt bewusster Entwicklungsmodus. `runpod/README.md` erklärt Start, Upgrade und Rollback mit SHA an zwei Stellen. `tests/runpod/test_runpod_autostart.py` prüft ungültige Werte/Branches und Offline-Vertragsinvarianten.
+**Teil 1 umgesetzt:** runpod/autostart.sh und runpod/README.md trennten bereits Entwicklungs- und Release-Modus. tests/runpod/test_runpod_autostart.py prüfte ungültige Werte/Branches und Offline-Vertragsinvarianten.
 
-**Unbedingt offen:** getestete vollständige Pins für CosyVoice-Code, Thorsten-SFT und Basisgewichte einschließlich Caches, Locks der Dritt-Abhängigkeiten, echte RunPod-Install-/Rollback-Simulation. Ohne diese ist A03 **nicht FERTIG**, das Produkt bleibt nicht freigegeben. Finalen CI-Head von PR #17 separat prüfen. A01 auf PR #15 und A02 auf PR #16 sind unabhängig noch ungemergt.
+**Abschluss:** Die damals offenen Quell-/Modell-Pins, Hash-Locks und die Code-seitige Upgrade-/Rollback-Transaktion wurden in PR #24 umgesetzt und in master integriert. Die echte RunPod-Installation und Pod-Neustart-Abnahme bleiben ausdrücklich offen (siehe E03).
 
+### A03 – Abschluss der Code-Implementierung in PR #24 (07.11.2026)
+
+**Merge:** PR #24, Merge-Commit e9085c718969f8c693fc32c74684149302726c75. Getesteter PR-Head: 8a1504e9d646de3df1b2263538a2841fea457558.
+
+**Änderungen:**
+- runpod/model-pins.env pinnt CosyVoice, Matcha-TTS, das CosyVoice-Basismodell und Thorsten auf vollständige Revisionen.
+- download-hf-models.py lädt nur benötigte Assets aus den gepinnten Revisionen; verify-hf-models.py prüft Upstream-LFS-SHA-256 bzw. Git-Blob-SHA-1, bevor ein lokales Cache-Manifest geschrieben wird.
+- Hash-Locks für uv-Bootstrap, Thorsten, Qwen, MOSS, Web-Runtime, CPU-Torch und npm; runpod/locks/SHA256SUMS kontrolliert die Lock-Artefakte.
+- release_transaction.py sichert persistente Runtime-Assets atomar, prüft Release-Fingerprints und ermöglicht Restore mit Vor-Rollback-Snapshot. upgrade-release.sh und rollback-release.sh stellen explizite Operator-Befehle bereit.
+- Offline-Regressionen prüfen Modellrevisionen, beschädigte Caches, gültigen Prefetch, Runtime-Versionen, Mount-/CUDA-Fehler und Backup/Restore.
+
+**CI-Evidenz auf dem endgültigen PR-Head:**
+- RunPod setup static tests #42397452055: erfolgreich, 79 Tests.
+- A03 release lock generation #42397452050: erfolgreich; fehlende Lockfiles wurden erzeugt und eingecheckt.
+- German Audiobook Studio #42397452058: erfolgreich, einschließlich Backend, Frontend, Chromium, isolierter Web-Runtime und deutschem CPU-ASR-Smoke.
+
+**Nicht durch diese CI belegt:** echte CUDA-/Thorsten-Inferenz, ein tatsächlicher Pod-Neustart, ein Live-Upgrade mit automatischem Rollback, OOM-/Volume-full-Verhalten, lange EPUB→M4B-Produktion und menschliche Hörqualität. Diese Release-Gates bleiben in E03.
+
+**Abgleich PR #6:** PR #6 ist 389 Commits hinter master und 20 Commits voraus; der Branch ist divergiert und nicht mergefähig. doctor.py und start.sh sind bereits identisch mit master. Die PR-Versionen von autostart.sh, setup.sh, env.sh, Workflow und Tests sind durch die aktuelle Master-Implementierung überholt. README.md und runpod/README.md unterscheiden sich; mögliche noch fehlende TUI-Hinweise bei Bedarf gezielt prüfen. PR #6 nicht als Ganzes mergen.
 
 ### B01 – Teilimplementierung in PR #22
 
@@ -370,11 +392,11 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 
 ### Integrationsstand auf `master` vom 07.11.2026
 
-**Verifizierter Repository-Stand:** `c21d557fe91c846f04f744c2b4ce0c69b2861ef1` nach Integration von A01, A02, A03 Teil 1, A04, B01 Teil 1 und B02 Teil 1. Der Standardbranch des Repositories heißt `master`, nicht `main`; es wurde kein zusätzlicher Hauptbranch eingerichtet. Zugehörige Pull Requests und aktuelle technische Evidenz stehen in der Fortschrittstabelle.
+**Verifizierter Repository-Stand:** master bei Merge-Commit e9085c718969f8c693fc32c74684149302726c75 nach Integration von A01, A02, A03-Codeabschluss, A04, B01 Teil 1 und B02 Teil 1. Der Standardbranch des Repositories heißt master, nicht main; es wurde kein zusätzlicher Hauptbranch eingerichtet.
 
-**Wichtig:** A01, A02 und A04 haben ihren offline prüfbaren technischen Umfang abgeschlossen. A03, B01 und B02 sind **nur teilweise umgesetzt**. B03, B04, C01, C02, D01, D02, D03, E01, E02 und E03 bleiben offen; bei D02/E03 fehlen echte GPU- und menschliche Hörbewertungen. Keine finale Releasefreigabe, keine Behauptung einer echten End-to-End-RunPod-Hörbuchproduktion.
+**Wichtig:** A01, A02, A03 (Code-Implementierung) und A04 haben ihren offline prüfbaren technischen Umfang abgeschlossen. Bei A03 bleiben die echte RunPod-Installation, Pod-Neustart/Resume und Live-Rollback Teil der Release-Abnahme E03. B01 und B02 sind **nur teilweise umgesetzt**. B03, B04, C01, C02, D01, D02, D03, E01, E02 und E03 bleiben offen; bei D02/E03 fehlen echte GPU- und menschliche Hörbewertungen. Keine finale Releasefreigabe und keine Behauptung einer echten End-to-End-RunPod-Hörbuchproduktion.
 
-**Nächster technischer Arbeitsschritt:** A03 HF-Modellrevisionen und Lockfile/Checkout-Recovery fertigstellen, B01 Auslassungsreport und komplexe synthetische EPUB-Regressionen, B02 kontext- und modellabhängige Aussprache ergänzen; danach B03 NarrationPlan und B04 Buchvorschau als Basis für C-/D-Pakete.
+**Nächster technischer Arbeitsschritt:** B01 mit vollständigem Content-Audit, Auslassungsreport und komplexen synthetischen EPUB-Regressionen abschließen; danach B02 um kontextabhängige Aussprache erweitern. Anschließend B03 NarrationPlan und B04 produktionsidentische Buchvorschau implementieren.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
