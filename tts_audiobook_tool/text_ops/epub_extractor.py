@@ -221,9 +221,10 @@ class BeautifulSoupEpubChapterTextExtractor:
         BeautifulSoup = self.import_beautiful_soup()
         soup = BeautifulSoup(chapter.html, "html.parser")
         self.apply_speaker_overrides(soup, chapter.speaker_overrides)
+        drop_cap_warnings = self.repair_split_initials(soup, chapter.href)
         stats = EpubTextExtractionStats()
-        warnings: list[str] = []
-        significant_warnings: list[str] = []
+        warnings: list[str] = list(drop_cap_warnings)
+        significant_warnings: list[str] = list(drop_cap_warnings)
         target_fragments = {
             target.fragment
             for target in chapter.navigation_targets
@@ -277,6 +278,77 @@ class BeautifulSoupEpubChapterTextExtractor:
             has_unresolved_navigation_target=has_unresolved_navigation_target,
             styled=self.make_styled_text(pieces, piece_styles) if piece_styles else None,
         )
+
+    @staticmethod
+    def repair_split_initials(soup: Any, source_href: str) -> list[str]:
+        """Repair only visibly marked split initials without merging adjacent paragraphs.
+
+        Calibre-style EPUB exports sometimes place a large initial in a dedicated
+        paragraph (optionally in a floated frame), followed by the word remainder
+        in another paragraph. Preserve descendant anchors by moving the initial
+        into the following paragraph; uncertain translations are reported rather
+        than silently rewritten.
+        """
+        warnings: list[str] = []
+        for initial in list(soup.find_all("p")):
+            if initial.parent is None:
+                continue
+            classes = [str(value).lower() for value in initial.get("class", [])]
+            marked = any(
+                re.search(r"(?:drop[-_]?cap|initial|^block_\\d+$)", value)
+                for value in classes
+            ) or "float:left" in re.sub(r"\\s+", "", str(initial.get("style", "")).lower())
+            if not marked:
+                continue
+            prefix = initial.get_text("", strip=True)
+            if not prefix or len(prefix) > 14:
+                continue
+            is_single = bool(re.fullmatch(r"[„“«‹'\\\"]?[A-ZÄÖÜ]", prefix))
+            is_word = bool(re.fullmatch(r"[„“«‹'\\\"]?[A-ZÄÖÜ][a-zäöüß]{1,12}", prefix))
+            is_quote = prefix in {"„", "“", "«", "‹"}
+            if not (is_single or is_word or is_quote):
+                continue
+
+            container = initial
+            parent = initial.parent
+            if (
+                getattr(parent, "name", None) == "div"
+                and len(parent.find_all("p")) == 1
+                and not parent.get_text("", strip=True).replace(prefix, "", 1)
+            ):
+                container = parent
+            following = container.find_next_sibling()
+            while following is not None and not getattr(following, "name", None):
+                following = following.next_sibling
+            if following is None or following.name != "p":
+                continue
+            following_text = following.get_text("", strip=True)
+            if not following_text:
+                continue
+            # An isolated capital belongs to the next word only when the
+            # following fragment starts lowercase. For full words, preserve a
+            # space; an isolated opening quote binds directly to its word.
+            if is_single and not following_text[0].islower():
+                warnings.append(
+                    f"EPUB split initial requires manual review in {source_href}: "
+                    f"{prefix!r} before {following_text[:35]!r}"
+                )
+                continue
+            separator = " " if is_word else ""
+            fragment = soup.new_tag("span")
+            if initial.get("id"):
+                fragment["id"] = initial["id"]
+            if container is not initial and container.get("id") and not fragment.get("id"):
+                fragment["id"] = container["id"]
+            fragment.string = prefix + separator
+            if not separator:
+                # The next paragraph may start with layout indentation.
+                first_string = following.find(string=True)
+                if first_string is not None:
+                    first_string.replace_with(str(first_string).lstrip())
+            following.insert(0, fragment)
+            container.decompose()
+        return warnings
 
     @staticmethod
     def apply_speaker_overrides(soup: Any, overrides: dict[str, str]) -> None:
