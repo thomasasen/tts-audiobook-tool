@@ -11,17 +11,18 @@ UV="$(command -v uv || true)"
 [[ -n "$UV" ]] || { echo "uv is required to compile release locks." >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to create the frontend lock." >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
+"$UV" python install "$WEB_PYTHON_VERSION" "$THORSTEN_PYTHON_VERSION"
 
-"$UV" pip compile --generate-hashes --python-version 3.12 \
+"$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
   --output-file "$OUTPUT_DIR/web/requirements-runtime.lock.txt" \
   "$REPO_DIR/web/requirements-runtime.txt"
-"$UV" pip compile --generate-hashes --python-version 3.11 \
+"$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$THORSTEN_PYTHON_VERSION" --python-version 3.11 \
   --output-file "$OUTPUT_DIR/runpod/requirements-thorsten.lock.txt" \
   "$REPO_DIR/runpod/requirements-thorsten.in"
-"$UV" pip compile --generate-hashes --python-version 3.12 \
+"$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
   --output-file "$OUTPUT_DIR/requirements-qwen3tts.lock.txt" \
   "$REPO_DIR/requirements-qwen3tts.txt"
-"$UV" pip compile --generate-hashes --python-version 3.12 \
+"$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
   --output-file "$OUTPUT_DIR/requirements-moss.lock.txt" \
   "$REPO_DIR/requirements-moss.txt"
 
