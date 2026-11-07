@@ -302,7 +302,7 @@ def main() -> None:
                             status=200, content_type="application/json",
                             body='{"epub_import":true,"chapter_selection":true,'
                                  '"tts_generation":true,"audio_export":true,'
-                                 '"voice_preview_available":true,"reason":"Synthetischer UI-Test"}',
+                                 '"voice_preview_available":true,"reason":"Synthetischer UI-Test","asr":{"state":"missing","message":"ASR ist in dieser Web-Runtime nicht installiert.","enabled":false,"model":null}}',
                         ),
                     )
                     page.get_by_role("button", name="Hörbuch und Export").click()
@@ -355,6 +355,26 @@ def main() -> None:
                         timeout=10000,
                     )
                     assert page.get_by_label("Fertiggestellte Audiosegmente").get_attribute("value") == "3"
+                    # A generated job with missing ASR cannot show a
+                    # misleading 'all checked' banner in the built React UI.
+                    production_job["status"] = "generated"
+                    production_job["done"] = 6
+                    page.route(
+                        "**/api/projects/*/jobs/*/quality",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body=json.dumps({
+                                "checked": 1, "unchecked": 5, "total": 6,
+                                "issues": [{"index": 1, "status": "not_checked",
+                                            "reason": "ASR ist nicht installiert.",
+                                            "warnings": []}],
+                            }),
+                        ),
+                    )
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    page.get_by_text("5 nicht per ASR geprüft", exact=False).wait_for()
+                    page.get_by_text("ASR ist nicht installiert.", exact=False).wait_for()
+                    page.unroute("**/api/projects/*/jobs/*/quality")
                     page.unroute("**/api/projects/*/jobs/*/activity")
                     page.unroute("**/api/projects/*/jobs")
 
