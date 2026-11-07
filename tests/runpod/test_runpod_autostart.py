@@ -108,6 +108,38 @@ class TestRunPodAutostart(unittest.TestCase):
             self.assertIn("ordinary boot output", log.read_text(encoding="utf-8"))
             self.assertNotIn("generated-token-12345", log.read_text(encoding="utf-8"))
 
+    def test_generated_frontend_does_not_block_git_updates(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn('status --porcelain --untracked-files=no', source)
+        self.assertIn("web/dist/", ignore)
+        self.assertIn("web/.vite/", ignore)
+        self.assertIn("refusing to deploy stale code", source)
+
+        # Demonstrate the failure case of a fresh build in a real local git
+        # checkout, without a network call or a RunPod GPU.
+        with tempfile.TemporaryDirectory() as root:
+            subprocess.run(["git", "init", "-q", root], check=True)
+            repository = Path(root)
+            (repository / "README.md").write_text("clean\n", encoding="utf-8")
+            subprocess.run(["git", "-C", root, "add", "README.md"], check=True)
+            subprocess.run(["git", "-C", root, "-c", "user.name=CI",
+                            "-c", "user.email=ci@example.invalid",
+                            "commit", "-qm", "init"], check=True)
+            output = repository / "web" / "dist" / "index.html"
+            output.parent.mkdir(parents=True)
+            output.write_text("<html>built</html>\n", encoding="utf-8")
+            def status(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-C", root, "status", "--porcelain", *args],
+                    check=True, text=True, capture_output=True,
+                ).stdout.strip()
+            self.assertIn("web/", status())
+            self.assertEqual(status("--untracked-files=no"), "")
+            # But a real tracked modification must still block deployment.
+            (repository / "README.md").write_text("modified\n", encoding="utf-8")
+            self.assertIn("README.md", status("--untracked-files=no"))
+
     def test_invalid_model_is_rejected_without_side_effects(self):
         result = self.call(
             "--check-only",
