@@ -1600,10 +1600,79 @@ class EpubExtractor:
         return []
 
     @staticmethod
+    def extract_xhtml_contents_labels(book: Any) -> dict[str, str]:
+        """Read titles from explicitly marked HTML contents pages.
+
+        NCX may contain bare chapter numbers or English labels even if the
+        book's XHTML contents page has full German descriptions. Only uniquely
+        resolved internal links are eligible; duplicates with conflicting labels
+        intentionally have no override.
+        """
+        BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
+        labels: dict[str, set[str]] = {}
+        for item in getattr(book, "items", []):
+            media_type = str(getattr(item, "media_type", "") or "")
+            if media_type not in {"application/xhtml+xml", "text/html"}:
+                continue
+            html = EpubExtractor.decode_item_content(item)
+            if not html:
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            body = soup.body
+            if body is None:
+                continue
+            heading = body.find(["h1", "h2"])
+            if heading is None or BeautifulSoupEpubChapterTextExtractor.normalize_inline_text(
+                heading.get_text()
+            ).casefold() not in {"inhaltsverzeichnis", "table of contents", "contents"}:
+                continue
+            links = body.find_all("a", href=True)
+            if len(links) < 8:
+                continue
+            base = posixpath.dirname(str(getattr(item, "file_name", "") or ""))
+            for link in links:
+                title = BeautifulSoupEpubChapterTextExtractor.normalize_inline_text(link.get_text())
+                if not title:
+                    continue
+                target = EpubExtractor.make_navigation_target(link.get("href", ""), title, 0, base)
+                if target is None:
+                    continue
+                labels.setdefault(target.href, set()).add(title)
+        return {key: next(iter(values)) for key, values in labels.items() if len(values) == 1}
+
+    @staticmethod
+    def apply_xhtml_contents_titles(book: Any, targets: list[EpubNavigationTarget]) -> list[EpubNavigationTarget]:
+        labels = EpubExtractor.extract_xhtml_contents_labels(book)
+        if not labels:
+            return targets
+        # Path-only fallback is safe for documents that have exactly one target.
+        counts: dict[str, int] = {}
+        by_path: dict[str, str] = {}
+        conflicts: set[str] = set()
+        for href, title in labels.items():
+            path = href.split("#", 1)[0]
+            if path in by_path and by_path[path] != title:
+                conflicts.add(path)
+            by_path[path] = title
+        for target in targets:
+            counts[target.path] = counts.get(target.path, 0) + 1
+        return [
+            EpubNavigationTarget(
+                title=labels.get(target.href) or (
+                    by_path.get(target.path, "")
+                    if counts.get(target.path) == 1 and target.path not in conflicts else ""
+                ) or target.title,
+                path=target.path, fragment=target.fragment, href=target.href,
+                order=target.order, depth=target.depth,
+            )
+            for target in targets
+        ]
+
+    @staticmethod
     def extract_navigation_targets(book: Any) -> list[EpubNavigationTarget]:
         document_targets = EpubExtractor.extract_navigation_document_targets(book)
         if document_targets:
-            return document_targets
+            return EpubExtractor.apply_xhtml_contents_titles(book, document_targets)
 
         try:
             toc = getattr(book, "toc", [])
@@ -1617,7 +1686,7 @@ class EpubExtractor:
             navigation_targets,
             navigation_base_path,
         )
-        return navigation_targets
+        return EpubExtractor.apply_xhtml_contents_titles(book, navigation_targets)
 
     @staticmethod
     def collect_navigation_targets(
