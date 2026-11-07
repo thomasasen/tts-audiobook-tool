@@ -16,6 +16,7 @@ actual_uv_version="$("$UV" --version | awk '{print $2}')"
 }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to create the frontend lock." >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
+OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
 "$UV" python install "$WEB_PYTHON_VERSION" "$THORSTEN_PYTHON_VERSION"
 
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
