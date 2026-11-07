@@ -105,7 +105,7 @@ def test_browser_preview_accepts_pcm16_and_rejects_24_bit_wav(tmp_path):
         out.setnchannels(1)
         out.setsampwidth(3)
         out.setframerate(16000)
-        out.writeframes((b"\\x00\\x80\\x00") * 16000)
+        out.writeframes((b"\x00\x80\x00") * 16000)
     assert production._valid_audio(candidate) == pytest.approx(1.0)
     with pytest.raises(ValueError, match="16-Bit-PCM"):
         production._valid_browser_preview(candidate)
