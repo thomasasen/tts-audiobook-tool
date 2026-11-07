@@ -77,3 +77,35 @@ def test_production_exports_playable_m4b_with_two_chapter_titles(env):
         duration = sum(frame.samples for packet in container.demux(audio=0)
                        for frame in packet.decode()) / container.streams.audio[0].rate
         assert duration >= 1.9
+
+
+def test_authenticated_download_streams_bytes_without_public_token_or_cache(env):
+    project_id, job_id = uuid.uuid4().hex, uuid.uuid4().hex
+    studio._project_dir(project_id).mkdir(parents=True)
+    now = production._now()
+    with studio._db() as db:
+        db.execute("INSERT INTO studio_projects VALUES (?,?,?,?,?,?,?,?,?)", (
+            project_id, "Private Demo", "Fertig", "private.epub", 1, 0, "[]", now, now,
+        ))
+        db.execute("INSERT INTO studio_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
+            job_id, project_id, production.VOICE_ID, "completed", 1, 1,
+            "Kapitel", 1.0, "", now, now,
+        ))
+    output = production._jobs_dir(job_id) / "audiobook.m4b"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"0123456789" * 32)
+    endpoint = f"/api/projects/{project_id}/jobs/{job_id}/download"
+    client = TestClient(studio.app)
+    assert client.get(endpoint).status_code == 401
+    auth = {"Authorization": "Bearer " + "x" * 48}
+    response = client.get(endpoint, headers=auth)
+    assert response.status_code == 200
+    assert response.content == output.read_bytes()
+    assert response.headers["content-type"].startswith("audio/mp4")
+    assert "no-store" in response.headers.get("cache-control", "")
+    assert "attachment" in response.headers["content-disposition"]
+    assert "Bearer" not in response.headers["content-disposition"]
+    partial = client.get(endpoint, headers={**auth, "Range": "bytes=10-19"})
+    assert partial.status_code == 206
+    assert partial.content == output.read_bytes()[10:20]
+    assert partial.headers["content-range"].endswith("/320")
