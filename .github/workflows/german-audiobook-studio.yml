@@ -69,6 +69,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/audiobook-venv/bin/python" -m pytest -q \
             tests/text/test_epub_extractor.py \
+            tests/text/test_epub_css.py \
             tests/text/test_epub_content_audit.py \
             tests/text/test_epub_section_skip_detector.py \
             tests/text/test_epub_private_regressions.py
