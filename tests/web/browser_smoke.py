@@ -5,9 +5,13 @@ Uvicorn server. No screenshots or large CI artifacts are produced.
 """
 from __future__ import annotations
 
+import io
+import math
 import os
 import socket
+import struct
 import subprocess
+import wave
 import sys
 import tempfile
 import time
@@ -20,6 +24,19 @@ from runpod.acceptance_epub import build_epub
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "browser-e2e-" + "c" * 44
+
+
+def browser_pcm16_wav() -> bytes:
+    """One second of real audible signed PCM-16, not a mocked zero-byte blob."""
+    rate = 24000
+    pcm = [int(7000 * math.sin(2 * math.pi * 440 * i / rate)) for i in range(rate)]
+    out = io.BytesIO()
+    with wave.open(out, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(rate)
+        audio.writeframes(struct.pack("<" + "h" * len(pcm), *pcm))
+    return out.getvalue()
 
 
 def main() -> None:
@@ -198,6 +215,41 @@ def main() -> None:
                     page.get_by_text("Die erzeugte Hörprobe ist leer oder unvollständig.").wait_for()
                     assert page.get_by_role("button", name="Nach Anhören freigeben").is_disabled()
                     assert not page.locator(".audio-preview audio").count()
+                    page.unroute("**/api/voices/preview/start")
+                    page.unroute("**/api/voices/preview/audio/*")
+
+                    # Verify REAL browser decode of a valid one-second WAV.
+                    # This was missing from the original acceptance tests:
+                    # previously they only checked empty/failed audio cases.
+                    playable_id = "e" * 32
+                    pcm_wav = browser_pcm16_wav()
+                    page.route(
+                        "**/api/voices/preview/start",
+                        lambda route: route.fulfill(
+                            status=202, content_type="application/json",
+                            body='{"id":"' + playable_id + '","status":"ready",'
+                                 '"stage":"WAV erfolgreich erzeugt.","events":[],"error":""}',
+                        ),
+                    )
+                    page.route(
+                        "**/api/voices/preview/audio/*",
+                        lambda route: route.fulfill(
+                            status=200, content_type="audio/wav",
+                            headers={"Cache-Control": "no-store"}, body=pcm_wav,
+                        ),
+                    )
+                    page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
+                    player = page.locator(".audio-preview audio")
+                    player.wait_for(state="visible", timeout=15000)
+                    page.wait_for_function(
+                        "() => { const audio = document.querySelector('.audio-preview audio');"
+                        " return !!audio && Number.isFinite(audio.duration) && audio.duration >= 0.9; }",
+                        timeout=15000,
+                    )
+                    assert player.evaluate("(a) => a.error === null")
+                    assert not page.get_by_text("Der Browser kann die Hörprobe nicht abspielen").count()
+                    assert page.get_by_role("button", name="Nach Anhören freigeben").is_disabled(), \
+                        "Metadata alone must never approve the voice."
                     page.unroute("**/api/voices/preview/start")
                     page.unroute("**/api/voices/preview/audio/*")
                     page.unroute("**/api/capabilities")
