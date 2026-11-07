@@ -13,7 +13,7 @@ VERSION="$MODEL_RELEASE_ID"
 CHECKSUMS="$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models" "$AUDIOBOOK_VENV_DIR"
 if [[ ! -x "$UV" ]]; then
-  echo "Run bash runpod/setup.sh --models qwen before installing Thorsten." >&2
+  echo "Run bash runpod/setup.sh --bootstrap-only before installing Thorsten." >&2
   exit 1
 fi
 # CosyVoice's pinned Lightning 2.2.4 still imports pkg_resources.
@@ -110,7 +110,6 @@ else
     --revision "$THORSTEN_MODEL_REVISION" --local-dir "$MODEL_DIR" \
     --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
 fi
-cp "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"
 for artifact in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py; do
   test -s "$MODEL_DIR/$artifact" || { echo "Required model file missing: $artifact" >&2; exit 1; }
 done

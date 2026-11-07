@@ -43,7 +43,7 @@ class TestPinnedModelRelease(unittest.TestCase):
     def test_installer_refuses_to_trust_unmarked_or_wrong_revision_cache(self):
         installer = (ROOT / "runpod/install-thorsten.sh").read_text(encoding="utf-8")
         prefetch = (ROOT / "runpod/prefetch-thorsten.sh").read_text(encoding="utf-8")
-        self.assertIn('if [[ -f "$MODEL_ROOT/.studio-ready" ]]; then', installer)
+        self.assertIn('if [[ -f "$MODEL_ROOT/.studio-ready" &&', installer)
         self.assertIn('Refusing to trust or silently rebaseline weights', installer)
         self.assertIn('Unmarked model files already exist without a verified prefetch marker', prefetch)
         self.assertIn('sha256sum --check --status', installer)

@@ -42,7 +42,7 @@ export HF_HUB_ENABLE_HF_TRANSFER=0
 export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-60}"
 export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-20}"
 hf_download() {
-  "$UV" tool run --python 3.12 --from "huggingface_hub==0.36.0" \
+  "$UV" tool run --python "$WEB_PYTHON_VERSION" --from "huggingface_hub==${HF_HUB_VERSION}" \
     hf download "$@" --max-workers "$RUNPOD_TTS_DOWNLOAD_WORKERS"
 }
 
@@ -81,7 +81,8 @@ hf_download "$THORSTEN_MODEL_ID" llm.pt flow.pt spk2info.pt infer_thorsten.py \
 for name in llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx speech_tokenizer_v3.batch.onnx; do
   [[ -s "$MODEL_DIR/$name" ]] || { echo "Missing prefetched file: $name" >&2; exit 1; }
 done
-(cd "$MODEL_DIR" && sha256sum llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py) > "$PREFETCH_SUMS.tmp"
+(cd "$MODEL_DIR" && sha256sum llm.pt flow.pt spk2info.pt hift.pt infer_thorsten.py \
+  cosyvoice3.yaml campplus.onnx speech_tokenizer_v3.onnx speech_tokenizer_v3.batch.onnx) > "$PREFETCH_SUMS.tmp"
 mv -f "$PREFETCH_SUMS.tmp" "$PREFETCH_SUMS"
 printf '%s\n' "$PREFETCH_VERSION" > "$PREFETCH_READY.tmp"
 mv -f "$PREFETCH_READY.tmp" "$PREFETCH_READY"

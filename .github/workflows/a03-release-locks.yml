@@ -1,0 +1,41 @@
+name: A03 release lock generation
+
+on:
+  pull_request:
+    paths:
+      - "runpod/model-pins.env"
+      - "runpod/requirements-thorsten.in"
+      - "runpod/generate-release-locks.sh"
+      - "requirements-qwen3tts.txt"
+      - "requirements-moss.txt"
+      - "web/requirements-runtime.txt"
+      - "web/requirements.txt"
+      - "web/package.json"
+      - ".github/workflows/a03-release-locks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.16"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned UV lock compiler
+        run: python -m pip install --disable-pip-version-check "uv==0.9.11"
+      - name: Generate Python hash locks and npm package lock
+        run: bash runpod/generate-release-locks.sh "$RUNNER_TEMP/release-locks"
+      - name: Upload generated lock files for review and commit
+        uses: actions/upload-artifact@v4
+        with:
+          name: a03-release-locks
+          path: "$RUNNER_TEMP/release-locks/"
+          if-no-files-found: error
+          retention-days: 7
