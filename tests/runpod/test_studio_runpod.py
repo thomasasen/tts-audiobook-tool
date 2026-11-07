@@ -4,9 +4,11 @@ No GPU, model downloads, or network required.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +43,82 @@ class TestGermanStudioRunPod(unittest.TestCase):
         self.assertEqual(result.stdout, "0")
         installer = (ROOT / "runpod/install-thorsten.sh").read_text(encoding="utf-8")
         self.assertIn('source "$SCRIPT_DIR/env.sh"', installer)
+
+    def test_existing_verified_model_repairs_pkg_resources_without_redownload(self):
+        # Simulates a persistent RunPod volume with valid weights but a
+        # post-install setuptools upgrade that dropped pkg_resources.
+        with tempfile.TemporaryDirectory(prefix="thorsten-repair-") as work:
+            root = Path(work) / "audiobook-data"
+            model = root / "models/CosyVoice"
+            weights = model / "pretrained_models/CosyVoice3-0.5B"
+            weights.mkdir(parents=True)
+            for name in ("llm.pt", "flow.pt", "spk2info.pt", "hift.pt"):
+                (weights / name).write_bytes(b"verified fixture for " + name.encode())
+            (model / "infer_thorsten.py").write_text("# fixture\\n")
+            (model / ".studio-ready").write_text(
+                "CosyVoice-ace7c47-Thorsten-CosyVoice3-2026-11-v1\\n"
+            )
+            checksums = root / "models/thorsten-model-sha256.txt"
+            checksums.write_text("".join(
+                f"{hashlib.sha256((weights / name).read_bytes()).hexdigest()}  {name}\\n"
+                for name in ("llm.pt", "flow.pt", "spk2info.pt", "hift.pt")
+            ))
+            uv = root / "tools/uv-bootstrap/bin/uv"
+            uv.parent.mkdir(parents=True)
+            uv.write_text("#!/bin/sh\\nexit 88\\n")
+            uv.chmod(0o755)
+            python = root / "venvs/thorsten/bin/python"
+            python.parent.mkdir(parents=True)
+            python.write_text("""#!/bin/sh
+if [ "$1" = "-W" ]; then
+  test -f "$FAKE_PKG_READY"
+  exit $?
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
+  printf '%s\\n' "$*" >> "$FAKE_PIP_AUDIT"
+  case "$*" in *setuptools==80.9.0*)
+    touch "$FAKE_PKG_READY"
+    exit 0 ;;
+  esac
+fi
+exit 99
+""")
+            python.chmod(0o755)
+            sentinel = Path(work) / "pkg-resources-present"
+            audit = Path(work) / "pip-audit.txt"
+            env = {
+                **os.environ,
+                "RUNPOD_WORKSPACE": work,
+                "AUDIOBOOK_DATA_ROOT": str(root),
+                "FAKE_PKG_READY": str(sentinel),
+                "FAKE_PIP_AUDIT": str(audit),
+            }
+            installer = str(ROOT / "runpod/install-thorsten.sh")
+            first = subprocess.run(
+                ["bash", installer], env=env, cwd=work,
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertIn("Repairing Thorsten runtime", first.stdout)
+            self.assertIn("weights verified", first.stdout)
+            self.assertIn("setuptools==80.9.0", audit.read_text())
+            self.assertTrue(sentinel.exists())
+            second = subprocess.run(
+                ["bash", installer], env=env, cwd=work,
+                capture_output=True, text=True, timeout=20,
+            )
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertEqual(audit.read_text().count("setuptools==80.9.0"), 1)
+            self.assertIn("weights verified", second.stdout)
+
+    def test_setuptools_is_pinned_in_fresh_install(self):
+        script = (ROOT / "runpod/install-thorsten.sh").read_text(encoding="utf-8")
+        self.assertIn('"setuptools==80.9.0"', script)
+        self.assertNotIn("--upgrade setuptools", script)
+        self.assertLess(
+            script.index("ensure_thorsten_pkg_resources\\n"),
+            script.index('if [[ -f "$MODEL_ROOT/.studio-ready"'),
+        )
 
     def test_readme_command_points_to_exact_integrated_autostart(self):
         root = (ROOT / "README.md").read_text(encoding="utf-8")
