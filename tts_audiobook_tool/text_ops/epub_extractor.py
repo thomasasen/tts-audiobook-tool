@@ -1099,6 +1099,10 @@ class EpubExtractor:
             fallback_href = ""
 
         for source_chapter, result in extracted_chapters:
+            if source_chapter.skip_override_reason == "standalone technical tool attribution":
+                # Even when manually included, a tool credit must never be appended
+                # to the last ordinary reading chapter under its navigation title.
+                flush_text_chapter()
             if result.slices:
                 slices = result.slices
             else:
