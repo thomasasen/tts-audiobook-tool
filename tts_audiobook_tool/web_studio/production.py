@@ -1054,6 +1054,20 @@ def retry_segment(project_id: str, job_id: str, index: int) -> dict:
 
 
 
+def _export_chapter_key(segment: dict) -> tuple[str, object]:
+    """Identity from book.v3 section index, never the human-facing title.
+
+    The title fallback is exclusively for historical, manually staged plans
+    that predate the canonical chapter field. New plans always carry it.
+    """
+    index = segment.get("chapter")
+    if index is None:
+        index = segment.get("chapter_index")
+    if index is not None:
+        return ("section", index)
+    return ("legacy_title", segment.get("title") or "")
+
+
 def export_job(project_id: str, job_id: str) -> Path:
     job = public_job(project_id, job_id)
     if job["status"] not in ("generated", "completed"):
@@ -1079,6 +1093,7 @@ def export_job(project_id: str, job_id: str) -> Path:
         chapters = []
         chapter_title = ""
         chapter_start = 0.0
+        chapter_key = None
         sample_rate = 0
         writer = None
         with _studio()._db() as db:
@@ -1092,15 +1107,18 @@ def export_job(project_id: str, job_id: str) -> Path:
                     writer = AacWriter(str(path), sample_rate, audio.shape[1], "96k", {"title": _studio()._project(project_id)["title"]})
                 if sr != sample_rate or audio.shape[1] != writer.channels:
                     raise ValueError("Unterschiedliche Audioformate: bitte Segmente vereinheitlichen.")
-                if segment["title"] != chapter_title:
-                    if chapter_title:
+                current_key = _export_chapter_key(segment)
+                if current_key != chapter_key:
+                    if chapter_key is not None:
                         chapters.append(Chapter(chapter_start, start, chapter_title))
-                    chapter_title, chapter_start = segment["title"], start
+                    chapter_title = (segment.get("title") or "").strip() or f"Kapitel {len(chapters) + 1}"
+                    chapter_start = start
+                    chapter_key = current_key
                 writer.write(np.asarray(audio, dtype=np.float32))
                 start += len(audio) / sr
                 if (i + 1) % 25 == 0 or i + 1 == len(plan["segments"]):
                     _job_event(job_id, f"M4B-Export: {i + 1} von {len(plan['segments'])} Segmenten verarbeitet.")
-            if chapter_title:
+            if chapter_key is not None:
                 chapters.append(Chapter(chapter_start, start, chapter_title))
             if writer is None:
                 raise ValueError("Keine Audiodaten für den Export.")

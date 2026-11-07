@@ -77,3 +77,80 @@ def test_production_exports_playable_m4b_with_two_chapter_titles(env):
         duration = sum(frame.samples for packet in container.demux(audio=0)
                        for frame in packet.decode()) / container.streams.audio[0].rate
         assert duration >= 1.9
+
+
+@pytest.mark.parametrize(("segments", "expected_titles"), [
+    (
+        [
+            {"chapter": 2, "title": "Einleitung", "text": "Erster Abschnitt."},
+            {"chapter": 2, "title": "Einleitung", "text": "Noch ein Absatz."},
+            {"chapter": 3, "title": "Einleitung", "text": "Ein neues Kapitel."},
+        ],
+        ["Einleitung", "Einleitung"],
+    ),
+    (
+        [
+            {"chapter": 7, "title": "", "text": "Unbenannter Abschnitt eins."},
+            {"chapter": 9, "title": "", "text": "Unbenannter Abschnitt zwei."},
+        ],
+        ["Kapitel 1", "Kapitel 2"],
+    ),
+    (
+        [
+            {"chapter": 1, "title": "Vorwort", "text": "Vorwort beginnt."},
+            {"chapter": 4, "title": "Einleitung", "text": "Inhalt aus Kapitel vier."},
+            {"chapter": 6, "title": "Einleitung", "text": "Inhalt aus Kapitel sechs."},
+        ],
+        ["Vorwort", "Einleitung", "Einleitung"],
+    ),
+])
+def test_export_uses_chapter_ids_even_with_repeated_or_empty_titles(
+        env, segments, expected_titles):
+    """Real AAC decode and TOC markers, with synthetic 1-second WAV segments.
+
+    The gaps in source chapter IDs emulate intentionally excluded spine
+    sections; those missing sections must not produce empty markers.
+    """
+    identifier, job_id = uuid.uuid4().hex, uuid.uuid4().hex
+    studio._project_dir(identifier).mkdir(parents=True)
+    now = production._now()
+    count = len(segments)
+    with studio._db() as db:
+        db.execute("INSERT INTO studio_projects VALUES (?,?,?,?,?,?,?,?,?)", (
+            identifier, "Fachbuch ohne private Originale", "Audio bereit",
+            "synthetisch.epub", 10, 1, "[]", now, now,
+        ))
+        db.execute("INSERT INTO studio_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
+            job_id, identifier, production.VOICE_ID, "generated",
+            count, count, "", float(count), "", now, now,
+        ))
+    job_dir = production._jobs_dir(job_id)
+    production._atomic_json(job_dir / "plan.json", {
+        "segments": segments, "glossary": {},
+    })
+    for index in range(count):
+        _wave_file(job_dir / "audio" / f"{index:07d}.wav")
+    exported = production.export_job(identifier, job_id)
+    assert exported.is_file()
+    with av.open(str(exported)) as container:
+        chapters = list(container.chapters())
+        assert [item["metadata"]["title"] for item in chapters] == expected_titles
+        assert len(chapters) == len(expected_titles)
+        duration = sum(
+            frame.samples for packet in container.demux(audio=0)
+            for frame in packet.decode()
+        ) / container.streams.audio[0].rate
+        assert count - 0.1 <= duration <= count + 0.5, (
+            "No source segment may be dropped or duplicated during export")
+        if all("start" in item and "end" in item for item in chapters):
+            assert chapters[0]["start"] == 0
+            assert all(item["end"] > item["start"] for item in chapters)
+            assert all(a["end"] <= b["start"]
+                       for a, b in zip(chapters, chapters[1:]))
+
+
+def test_legacy_export_chapter_key_fallback_without_schema_migration():
+    assert production._export_chapter_key({"chapter": 0, "title": "Gleich"}) == ("section", 0)
+    assert production._export_chapter_key({"chapter": 1, "title": "Gleich"}) == ("section", 1)
+    assert production._export_chapter_key({"chapter_index": 3, "title": ""}) == ("section", 3)
+    assert production._export_chapter_key({"title": "Alt"}) == ("legacy_title", "Alt")
