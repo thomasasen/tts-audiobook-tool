@@ -302,7 +302,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | A02 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #19](https://github.com/thomasasen/tts-audiobook-tool/pull/19) (ersetzt #16) | Fünf CI-Checks auf kombiniertem A01/A02-Stand grün, einschließlich echtem M4B-Decode | Keine menschliche Hörabnahme |
 | A03 | CODE-IMPLEMENTIERUNG IN MASTER · LIVE-ABNAHME OFFEN | [PR #24](https://github.com/thomasasen/tts-audiobook-tool/pull/24), Merge e9085c7 | 79 RunPod-Static-Tests, A03 Lock Generation und German Audiobook Studio auf finalem Head 8a1504e grün | Echte RunPod-GPU, Pod-Neustart/Resume, Live-Upgrade/Rollback und Hörabnahme bleiben in E03 offen |
 | A04 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #20](https://github.com/thomasasen/tts-audiobook-tool/pull/20) (ersetzt #18) | Fünf CI-Checks inklusive Browser-Streaming, 96-MB-Fallback und Range-206 grün | Große echte RunPod-M4B noch nicht heruntergeladen |
-| B01 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22) | Fünf CI-Checks grün, EPUB-Navigationsverlustfall mit synthetischen Fixtures behoben | Vollständige Spine-/Tabellen-/Fußnoten-/Auslassungsprüfung und private EPUB-Abnahme fehlen |
+| B01 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22), [PR #26](https://github.com/thomasasen/tts-audiobook-tool/pull/26) | PR #26: strukturierter OPF-/Spine-Quellen-Audit, Tabellen-/Listen-/Bild-/Caption-/MathML-Inventar, sichtbare nicht zugeordnete Quellen; Backend, Browser-E2E, Frontend-Build und Runtime-CI grün | Quell-zu-Sprechtext-Abdeckung, explizite Ausschlusskorrektur, komplexe Fußnoten/Formel-/XHTML-Regressionen und private EPUB-Abnahme fehlen |
 | B02 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #23](https://github.com/thomasasen/tts-audiobook-tool/pull/23) | Fünf CI-Checks grün; Golden Cases und rückwärtskompatible Versionierung des Cache-Fingerprints | Umfangreiche Spezialfalltests, Vorschauparität B04 und Hörabnahme fehlen |
 | B03 | OFFEN | — | — | — |
 | B04 | OFFEN | — | — | — |
@@ -378,7 +378,19 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 
 **Lösung (Teil 1):** Konservatives Prosasignal aus normalen XHTML-`p`-/`blockquote`-Absätzen außerhalb `<nav>`, unter Wiederverwendung des vorhandenen Textextraktors. Gemischte Ressourcen werden nicht mehr pauschal ausgeschlossen; reine Navigationslisten bleiben ausgenommen. Warnung mit Resource-Href weist auf den Sonderfall hin. Synthetische Regressionen in `tests/text/test_epub_extractor.py`.
 
-**Noch offen:** Vollständiger B01-Content-Audit (Tabellen, Unterabschnitte, Fußnoten, Formeln, Quell-Sprech-Mapping), klickbare Ausschlussübersicht, ein komplexes privates EPUB und dessen menschliche Abnahme. **B01 nicht abgeschlossen**. CI von PR #22 auf finalem Commit prüfen.
+**Noch offen nach PR #22:** Vollständiger B01-Content-Audit, Quell-Sprech-Mapping, klickbare Ausschlusskorrektur, komplexe Fußnoten-/Formel-/XHTML-Regressionen sowie ein komplexes privates EPUB und dessen menschliche Abnahme. **B01 nicht abgeschlossen**.
+
+### B01 – Quelleninventur und sichtbarer Audit in PR #26 (07.11.2026)
+
+**Merge:** PR #26, Merge-Commit c74acf770ad3387f7463d285a16f4b0b072e830a. Getesteter PR-Head: 08cb1e40a51e9db2e8f1f80dfd1022e6e7199e94.
+
+- Neuer read-only Audit liest EPUB container.xml, OPF-Manifest und Spine ohne die kanonische Extraktion zu ersetzen.
+- XHTML-Quellen werden mit Textvorschau sowie Tabellen, Listen, Abbildungen, Bildunterschriften, MathML und Überschriften inventarisiert.
+- Nicht zugeordnete Spine-Ressourcen werden mit Status und nachvollziehbarem Grund in der geschützten Projektansicht sichtbar gemacht.
+- Synthetische EPUB-Audit-Tests und der echte Studio-E2E-Test prüfen die API-Vertragsintegration. Original-EPUB und Project-V5-Persistenz bleiben unverändert.
+- CI-Run 42405175578 auf dem exakten PR-Head erfolgreich: Backend, Browser/Chromium, Frontend-Build, CPU-ASR-Smoke und isolierte Runtime.
+
+**Grenze:** Der aktuelle Audit weist Ressourcen zu, beweist aber noch keine zeichen-/segmentgenaue Quell-zu-Sprechtext-Abdeckung. Nicht zugeordnete Navigation kann auch in zusammengeführte Abschnitte eingeflossen sein. Es gibt noch keine UI-Funktion, mit der erkannte Auslassungen korrigiert oder eine alternative Sprecherfassung für Tabellen/Formeln/Abbildungen freigegeben werden kann. B01 bleibt offen.
 
 ### B02 – Versionierte Sprechtext-Normalisierung (Teilimplementierung)
 
@@ -392,11 +404,11 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 
 ### Integrationsstand auf `master` vom 07.11.2026
 
-**Verifizierter Repository-Stand:** master bei Merge-Commit e9085c718969f8c693fc32c74684149302726c75 nach Integration von A01, A02, A03-Codeabschluss, A04, B01 Teil 1 und B02 Teil 1. Der Standardbranch des Repositories heißt master, nicht main; es wurde kein zusätzlicher Hauptbranch eingerichtet.
+**Verifizierter Repository-Stand:** master nach A01, A02, A03-Codeabschluss, A04, B01-Quelleninventur (PR #26, Merge c74acf7), B01-Navigationskorrekturen (PR #22) und B02 Teil 1. Der Standardbranch heißt master, nicht main.
 
 **Wichtig:** A01, A02, A03 (Code-Implementierung) und A04 haben ihren offline prüfbaren technischen Umfang abgeschlossen. Bei A03 bleiben die echte RunPod-Installation, Pod-Neustart/Resume und Live-Rollback Teil der Release-Abnahme E03. B01 und B02 sind **nur teilweise umgesetzt**. B03, B04, C01, C02, D01, D02, D03, E01, E02 und E03 bleiben offen; bei D02/E03 fehlen echte GPU- und menschliche Hörbewertungen. Keine finale Releasefreigabe und keine Behauptung einer echten End-to-End-RunPod-Hörbuchproduktion.
 
-**Nächster technischer Arbeitsschritt:** B01 mit vollständigem Content-Audit, Auslassungsreport und komplexen synthetischen EPUB-Regressionen abschließen; danach B02 um kontextabhängige Aussprache erweitern. Anschließend B03 NarrationPlan und B04 produktionsidentische Buchvorschau implementieren.
+**Nächster technischer Arbeitsschritt:** B01 vervollständigen: Quell-zu-Sprechtext-Mapping und Segmentabdeckung, Gründe/Aktionen für Auslassungen, komplexe synthetische EPUB-Regressionen für Fußnoten/Formeln/Tabellen/XHTML-Mischdokumente sowie manuelle Vorschaukorrektur. Danach B02 um kontextabhängige Aussprache erweitern und B03 NarrationPlan vorbereiten.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
