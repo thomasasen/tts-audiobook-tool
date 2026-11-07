@@ -547,6 +547,14 @@ def get_job(project_id: str, job_id: str):
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.get("/api/projects/{project_id}/jobs/{job_id}/activity", dependencies=[Depends(require_auth)])
+def get_job_activity(project_id: str, job_id: str):
+    try:
+        return production.job_activity(project_id, job_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 class JobAction(BaseModel):
     action: str
 
