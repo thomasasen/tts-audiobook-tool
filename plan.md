@@ -299,7 +299,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | A02 | FERTIG (Integrations-PR offen) | [PR #16](https://github.com/thomasasen/tts-audiobook-tool/pull/16), [Code-Commit 3a0a731](https://github.com/thomasasen/tts-audiobook-tool/commit/3a0a7310ea2214fbc063cf0f21dcc1e866cc0286) | [Studio CI #42371605004](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371605004): Backend inkl. echtem AAC/M4B-Decode, Browser, Frontend, isolierte Runtime grün auf Code-Head; plan-only Head separat nachprüfen | Keine echte GPU/Hörabnahme; vor Merge A01-PR #15/plan.md koordinieren |
 | A03 | IN ARBEIT (nur Quellcode-Pinning) | [integration of Draft PR #17](https://github.com/thomasasen/tts-audiobook-tool/pull/17) | Shell- und Offline-Konfigurationstests ergänzt; CI auf aktuellem SHA noch zu prüfen | Ungepinntes Hugging-Face-Modellmaterial/transitive Abhängigkeiten; echter Pod-/Rollback-Test ausstehend. Nicht releasefähig. |
 | A04 | FERTIG (INTEGRATION GEPRÜFT) | [PR #18](https://github.com/thomasasen/tts-audiobook-tool/pull/18), [Code-Commit 53bb76e](https://github.com/thomasasen/tts-audiobook-tool/commit/53bb76e2e42042a906913b2c3f686666194527ec) | [Studio CI #42372700653](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42372700653): Backend, Frontend, Browser (direktes Streamen und >96-MB-Fallback), isolierte Runtime grün | Native File System Access API nur in unterstützten Desktop-Browsern; echte große RunPod-Datei und Nutzerfreigabe noch offen |
-| B01 | OFFEN | — | — | — |
+| B01 | IN ARBEIT (navigationsbedingter Textverlust behoben) | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22) | Zwei synthetische EPUB-Navigationsfixture-Regressionen; finale CI ausstehend | Vollständige Spine-/Fußnoten-/Tabellen-/Formelprüfung, verlustfreie Abdeckung und private EPUB-Hörprüfung noch offen |
 | B02 | OFFEN | — | — | — |
 | B03 | OFFEN | — | — | — |
 | B04 | OFFEN | — | — | — |
@@ -349,6 +349,14 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 
 **Unbedingt offen:** getestete vollständige Pins für CosyVoice-Code, Thorsten-SFT und Basisgewichte einschließlich Caches, Locks der Dritt-Abhängigkeiten, echte RunPod-Install-/Rollback-Simulation. Ohne diese ist A03 **nicht FERTIG**, das Produkt bleibt nicht freigegeben. Finalen CI-Head von PR #17 separat prüfen. A01 auf PR #15 und A02 auf PR #16 sind unabhängig noch ungemergt.
 
+
+### B01 – Teilimplementierung in PR #22
+
+**Befund:** `load_source_chapters` verwirft Dokumente mit EPUB-3-Nav-Metadaten standardmäßig vollständig, selbst wenn zusätzliche echte Prosa außerhalb von `<nav>` liegt. Der vorhandene BeautifulSoup-Extractor überspringt `<nav>`-Elemente bereits, wenn das XHTML als Quelle verarbeitet wird.
+
+**Lösung (Teil 1):** Konservatives Prosasignal aus normalen XHTML-`p`-/`blockquote`-Absätzen außerhalb `<nav>`, unter Wiederverwendung des vorhandenen Textextraktors. Gemischte Ressourcen werden nicht mehr pauschal ausgeschlossen; reine Navigationslisten bleiben ausgenommen. Warnung mit Resource-Href weist auf den Sonderfall hin. Synthetische Regressionen in `tests/text/test_epub_extractor.py`.
+
+**Noch offen:** Vollständiger B01-Content-Audit (Tabellen, Unterabschnitte, Fußnoten, Formeln, Quell-Sprech-Mapping), klickbare Ausschlussübersicht, ein komplexes privates EPUB und dessen menschliche Abnahme. **B01 nicht abgeschlossen**. CI von PR #22 auf finalem Commit prüfen.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
