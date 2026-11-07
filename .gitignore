@@ -19,3 +19,11 @@ tts_audiobook_tool/dev_hooks.py
 
 # Disposable diagnostic scripts
 *_probe.py
+
+# Generated German Audiobook Studio frontend (never block RunPod git updates)
+web/dist/
+web/.vite/
+
+# Local-only studio experiments (persistent RunPod projects are outside Git)
+.studio-private/
+.studio-data/
