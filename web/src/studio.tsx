@@ -41,13 +41,14 @@ type Job = {
   status: string
   done: number
   total: number
+  created_at: string
   chapter: string
   duration: number
   error: string
 }
 type ActivityEvent = {at: string; message: string}
-type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string}
-type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]}
+type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string; duration_seconds?: number}
+type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null; eta_sample_count?: number; calculated_at?: string}
 type QualityIssue = {index: number; status: string; warnings: string[]; asr_similarity?: number | null}
 type QualityReport = {checked: number; total: number; issues: QualityIssue[]}
 const STATUS_LABELS: Record<string, string> = {
@@ -105,6 +106,16 @@ async function api<T>(path: string, token: string, init: RequestInit = {}): Prom
   }
 }
 
+function formatDuration(value: number): string {
+  const seconds = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0))
+  const hh = Math.floor(seconds / 3600)
+  const mm = Math.floor((seconds % 3600) / 60)
+  const ss = seconds % 60
+  return hh > 0
+    ? `${hh} Std. ${String(mm).padStart(2, '0')} Min. ${String(ss).padStart(2, '0')} Sek.`
+    : `${mm} Min. ${String(ss).padStart(2, '0')} Sek.`
+}
+
 function formatDate(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('de-DE', {
@@ -134,6 +145,8 @@ export default function Studio() {
   const [glossary, setGlossary] = useState('')
   const [audioUrl, setAudioUrl] = useState('')
   const [previewPlayed, setPreviewPlayed] = useState(false)
+  const [previewDurationSeconds, setPreviewDurationSeconds] = useState<5|15|30|60>(5)
+  const [clockNow, setClockNow] = useState(() => Date.now())
   const [sampleIndex, setSampleIndex] = useState(0)
   const [previewTask, setPreviewTask] = useState<PreviewTask | null>(null)
   const [previewAudioValid, setPreviewAudioValid] = useState(false)
@@ -199,7 +212,11 @@ export default function Studio() {
     handledPreview.current = null
     setOwnedAudioUrl('')
     try {
-      const task = await api<PreviewTask>('/api/voices/preview/start', token, {method: 'POST'})
+      const task = await api<PreviewTask>('/api/voices/preview/start', token, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({duration_seconds: previewDurationSeconds}),
+      })
       setPreviewTask(task)
     } catch (err) {
       setPreviewAudioError((err as Error).message)
@@ -220,6 +237,15 @@ export default function Studio() {
       await refreshProjects()
     }
   }
+
+  // The on-screen clock ticks once per second while job metrics are refreshed
+  // from the server every three seconds. This is a projection, not a promise.
+  useEffect(() => {
+    if (!token || view !== 'export' || !job) return
+    setClockNow(Date.now())
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [token, view, job?.id])
 
   useEffect(() => {
     if (!token || !active || !job || (!['queued', 'running', 'exporting'].includes(job.status) && !exportPending)) return
@@ -571,6 +597,16 @@ export default function Studio() {
               <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Deutsche Erzählerstimme</h1><p>Ausschließlich fertig trainierte Stimmen, keine hochgeladenen Referenzen oder Stimmklone.</p></div></div>
               {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice"><LockKeyhole size={21}/><div><strong>{capabilities?.voice_installed ? 'Thorsten installiert – Hörfreigabe noch offen' : 'Thorsten noch nicht betriebsbereit'}</strong><p>{capabilities?.reason ?? 'Installationsstatus wird geprüft.'}</p></div></div>}
               <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
+                <div className="voice-sample-settings">
+                  <label htmlFor="voice-sample-length">Länge der Hörprobe</label>
+                  <select id="voice-sample-length" value={previewDurationSeconds} disabled={busy || previewTask?.status === 'running'} onChange={e => setPreviewDurationSeconds(Number(e.target.value) as 5|15|30|60)}>
+                    <option value={5}>Ca. 5 Sekunden</option>
+                    <option value={15}>Ca. 15 Sekunden</option>
+                    <option value={30}>Ca. 30 Sekunden</option>
+                    <option value={60}>Ca. 60 Sekunden</option>
+                  </select>
+                  <p className="helper">Ungefähre Dauer, da das Sprechtempo variieren kann. Keine Sätze werden abgeschnitten.</p>
+                </div>
                 <div className="voice-actions"><button className="outline-btn" disabled={busy || !capabilities?.voice_preview_available || previewTask?.status === 'running'} onClick={() => {void startPreview()}}>{previewTask?.status === 'running' ? <LoaderCircle className="spinning" size={17}/> : <PlayCircle size={17}/>} {previewTask?.status === 'running' ? 'Hörprobe wird erzeugt …' : 'Echte Hörprobe erzeugen'}</button>
                 <button className="primary-btn" disabled={busy || !previewPlayed || !previewAudioValid || previewTask?.status !== 'ready'} onClick={async () => {
                   try { await api('/api/voices/approve', token, {method:'POST'}); await showVoices(); setNotice('Stimme nach manueller Hörabnahme freigegeben.') }
@@ -630,6 +666,28 @@ export default function Studio() {
                   <div className="progress-head"><strong>Audioerzeugung</strong><span>{job.total > 0 ? Math.round(100 * job.done / job.total) : 0} %</span></div>
                   <progress max={Math.max(1,job.total)} value={job.done} aria-label="Fertiggestellte Audiosegmente"/>
                   <p>{job.done} von {job.total} Segmenten tatsächlich fertig · {Math.round(job.duration)} Sekunden Audio</p>
+                  <div className="production-time-metrics" aria-label="Produktionsdauer und Restzeit">
+                    <div>
+                      <span>Vergangene Zeit</span>
+                      <strong>{formatDuration(Math.max(0, (clockNow - Date.parse(job.created_at)) / 1000))}</strong>
+                      <small>Seit Auftragsbeginn, inklusive Pausen</small>
+                    </div>
+                    <div>
+                      <span>Geschätzte Restzeit</span>
+                      <strong>{job.status === 'paused' ? 'Pausiert'
+                        : job.status === 'queued' ? 'Wartet auf GPU'
+                        : ['generated','completed'].includes(job.status) ? '0 Min. 00 Sek.'
+                        : job.status === 'exporting' ? 'Export läuft'
+                        : job.status === 'running' && jobActivity?.id === job.id && jobActivity.remaining_seconds != null && jobActivity.calculated_at
+                          ? formatDuration(Math.max(0, jobActivity.remaining_seconds - (clockNow - Date.parse(jobActivity.calculated_at)) / 1000))
+                          : 'Wird ermittelt …'}</strong>
+                      <small>{job.status === 'running' && jobActivity?.remaining_seconds != null
+                        ? 'Schätzung aus echten Segmentlaufzeiten; alle 3 Sekunden neu berechnet'
+                        : job.status === 'running' ? 'Nach mindestens 3 vollständig gemessenen Segmenten'
+                        : job.status === 'exporting' ? 'Exportzeit nicht zuverlässig vorhersagbar'
+                        : 'Keine aktive Restzeitprognose'}</small>
+                    </div>
+                  </div>
                   {(job.status === 'exporting' || exportPending) && <p role="status">M4B-Export läuft. Fortschritt ist im Protokoll sichtbar; keine Schätzung der Restzeit.</p>}
                   <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
                     <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
