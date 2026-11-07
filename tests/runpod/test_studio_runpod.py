@@ -170,7 +170,8 @@ exit 99
         script = (ROOT / "runpod/autostart.sh").read_text(encoding="utf-8")
         self.assertIn(': "${RUNPOD_TTS_START_TUI:=0}"', script)
         self.assertIn('if [[ "$RUNPOD_TTS_START_TUI" == 1 ]]; then', script)
-        self.assertIn("no legacy TUI started; GPU reserved", script)
+        self.assertIn("Legacy TUI models:", script)
+        self.assertIn('if [[ "$RUNPOD_TTS_MODELS" != none ]]; then', script)
         self.assertIn('tmux has-session -t audiobook-web', script)
         self.assertIn('bash "$REPO_DIR/runpod/install-thorsten.sh"', script)
 
@@ -189,6 +190,8 @@ exit 99
     def test_web_is_access_key_protected_single_process(self):
         code = (ROOT / "runpod/start-web.sh").read_text(encoding="utf-8")
         self.assertIn("studio-access-token", code)
+        self.assertIn('PY="$AUDIOBOOK_VENV_DIR/web/bin/python"', code)
+        self.assertIn('bash "$SCRIPT_DIR/build-web.sh"', code)
         self.assertIn("chmod 600", code)
         self.assertIn("AUDIOBOOK_STUDIO_TOKEN", code)
         self.assertIn("--workers 1", code)
