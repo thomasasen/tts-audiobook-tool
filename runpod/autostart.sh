@@ -11,10 +11,11 @@ Usage: bash runpod/autostart.sh [--check-only] [--help]
 Environment variables:
   RUNPOD_WORKSPACE            Mounted network volume (default: /workspace)
   RUNPOD_TTS_BRANCH           Git branch to deploy (default: master)
-  RUNPOD_TTS_MODELS           qwen | moss | both (default: qwen)
+  RUNPOD_TTS_MODELS           none | qwen | moss | both (default: none; web-only)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
   RUNPOD_TTS_START_TUI       0 (web only) | 1 (also launch legacy TUI); default: 0
-  RUNPOD_TTS_SKIP_VOICE_INSTALL  1 starts Web Studio without new model downloads; default: 0
+  RUNPOD_TTS_SKIP_VOICE_INSTALL  1 skips new Thorsten downloads; default: 0
+  RUNPOD_TTS_DOWNLOAD_WORKERS 1..8 concurrent files per Hugging Face download; default: 4
 
 This script does NOT run the standard RunPod /start.sh service. In the Pod
 Docker Command, start /start.sh in the background before invoking it.
@@ -33,7 +34,7 @@ done
 
 : "${RUNPOD_WORKSPACE:=/workspace}"
 : "${RUNPOD_TTS_BRANCH:=master}"
-: "${RUNPOD_TTS_MODELS:=qwen}"
+: "${RUNPOD_TTS_MODELS:=none}"
 : "${RUNPOD_TTS_AUTOSTART_MODEL:=qwen}"
 : "${RUNPOD_TTS_START_TUI:=0}"
 : "${RUNPOD_TTS_SKIP_VOICE_INSTALL:=0}"
@@ -42,7 +43,7 @@ case "$RUNPOD_WORKSPACE" in
   *) printf 'RUNPOD_WORKSPACE must be absolute\n' >&2; exit 2 ;;
 esac
 case "$RUNPOD_TTS_MODELS" in
-  qwen|moss|both) ;;
+  none|qwen|moss|both) ;;
   *) printf 'Invalid RUNPOD_TTS_MODELS: %s\n' "$RUNPOD_TTS_MODELS" >&2; exit 2 ;;
 esac
 case "$RUNPOD_TTS_START_TUI" in
@@ -61,12 +62,18 @@ case "$RUNPOD_TTS_BRANCH" in
   master|feature/german-audiobook-release-hardening|feature/german-audiobook-release-validation|feature/german-audiobook-studio-runpod) ;; # Explicit audited source allowlist.
   *) printf 'Unsupported deployment branch: %s\n' "$RUNPOD_TTS_BRANCH" >&2; exit 2 ;;
 esac
-if [[ "$RUNPOD_TTS_MODELS" != "both" && "$RUNPOD_TTS_AUTOSTART_MODEL" != "menu"
+if [[ "$RUNPOD_TTS_START_TUI" == 1 && "$RUNPOD_TTS_MODELS" != "both" && "$RUNPOD_TTS_AUTOSTART_MODEL" != "menu"
    && "$RUNPOD_TTS_MODELS" != "$RUNPOD_TTS_AUTOSTART_MODEL" ]]; then
   printf 'Startup model %s must be installed by RUNPOD_TTS_MODELS=%s\n' \
     "$RUNPOD_TTS_AUTOSTART_MODEL" "$RUNPOD_TTS_MODELS" >&2
   exit 2
 fi
+: "${RUNPOD_TTS_DOWNLOAD_WORKERS:=4}"
+case "$RUNPOD_TTS_DOWNLOAD_WORKERS" in
+  [1-8]) ;;
+  *) echo "RUNPOD_TTS_DOWNLOAD_WORKERS must be 1..8." >&2; exit 2 ;;
+esac
+export RUNPOD_TTS_DOWNLOAD_WORKERS
 
 DATA_ROOT="${AUDIOBOOK_DATA_ROOT:-${RUNPOD_WORKSPACE%/}/audiobook-data}"
 REPO_DIR="${RUNPOD_WORKSPACE%/}/tts-audiobook-tool"
@@ -135,140 +142,185 @@ else
 fi
 
 echo "Source commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
-echo "Installing required environments. No book data or voice samples are downloaded."
-# A failed optional TTS dependency/strict-GPU check must not prevent an
-# already-installed Web Studio from starting. Keep a hard failure when there is
-# no usable base Python environment at all.
-if ! bash "$REPO_DIR/runpod/setup.sh" --models "$RUNPOD_TTS_MODELS"; then
-  echo "WARNING: TTS setup failed. Trying existing web/base Python environment."
-fi
-if [[ ! -x "$DATA_ROOT/venvs/qwen/bin/python" ]]; then
-  echo "ERROR: Web Studio base Python is missing. See the latest setup log under $DATA_ROOT/logs." >&2
-  exit 1
-fi
+echo "Boot mode: Web Studio + Thorsten. Legacy TUI models: $RUNPOD_TTS_MODELS."
+echo "Step 1/5: Minimal host bootstrap (system tools, uv, Python)."
+bash "$REPO_DIR/runpod/setup.sh" --models none --bootstrap-only
+command -v tmux >/dev/null || { echo "ERROR: tmux missing after host bootstrap." >&2; exit 1; }
 
-if ! command -v tmux >/dev/null 2>&1; then
-  echo "ERROR: tmux missing after setup." >&2
-  exit 1
-fi
-if [[ "$RUNPOD_TTS_START_TUI" == 1 ]]; then
-  if tmux has-session -t audiobook 2>/dev/null; then
-    echo "Existing legacy audiobook TUI session found; leaving it running."
-  else
-    session_command="bash runpod/start.sh"
-    if [[ "$RUNPOD_TTS_AUTOSTART_MODEL" != menu ]]; then
-      session_command+=" --model $RUNPOD_TTS_AUTOSTART_MODEL"
-    fi
-    session_command+='; rc=$?; echo "Audiobook app exited (code $rc)."; exec bash'
-    tmux new-session -d -s audiobook -c "$REPO_DIR" "$session_command"
-    echo "Created optional legacy TUI session 'audiobook'."
-  fi
+# Never allow a failed web startup to leave optional downloads running without
+# supervision. The bash process waits for model downloads before it exits.
+BUILD_PID=""
+PREFETCH_PID=""
+cleanup() {
+  if [[ -n "$BUILD_PID" ]]; then kill "$BUILD_PID" 2>/dev/null || true; fi
+  if [[ -n "$PREFETCH_PID" ]]; then kill "$PREFETCH_PID" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
+
+echo "Step 2/5: Start independent frontend build, while preparing the web runtime."
+WEB_BUILD_LOG="$DATA_ROOT/logs/web-build-$(date -u +%Y%m%dT%H%M%SZ).log"
+bash "$REPO_DIR/runpod/build-web.sh" >"$WEB_BUILD_LOG" 2>&1 &
+BUILD_PID=$!
+
+# Check real CUDA allocation in the OFFICIAL container image. Do not use
+# nvidia-smi or torch.cuda.is_available() alone to authorize large downloads.
+echo "Checking host CUDA execution before any model downloads."
+CUDA_SYSTEM_READY=0
+if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json; then
+  CUDA_SYSTEM_READY=1
+  echo "System CUDA allocation OK."
 else
-  echo "Web-only mode: no legacy TUI started; GPU reserved for Thorsten voice preview and books."
-  if tmux has-session -t audiobook 2>/dev/null; then
-    echo "WARNING: An older TUI session is still running; inspect it for GPU resource conflicts."
-  fi
+  echo "WARNING: System CUDA allocation failed. Thorsten downloads are disabled."
+  echo "Check RunPod GPU host; Web Studio remains available without TTS."
 fi
 
-# Bring up the Web Studio BEFORE optional multi-GB model downloads. The app
-# discovers newly installed Thorsten weights dynamically after validation.
-# Running tmux alone does not prove that uvicorn is alive: an earlier
-# crash leaves an interactive bash shell in the session. Only HTTP health
-# determines readiness. Replace dead sessions; never create duplicates.
-if curl -fsS --max-time 2 "http://127.0.0.1:${AUDIOBOOK_STUDIO_PORT:-7860}/api/health" >/dev/null 2>&1; then
-  echo "Existing Web Studio is already responding."
+# Network volumes are not unlimited. On a new 60 GB volume, allow at least
+# 25 GiB headroom before concurrent model downloads. Reused verified models
+# are handled by install-thorsten.sh even below this threshold.
+MIN_FREE_GIB=25
+FREE_BYTES=$(df -B1 --output=avail "$RUNPOD_WORKSPACE" | tail -n 1 | tr -d '[:space:]')
+FREE_GIB=$(( FREE_BYTES / 1073741824 ))
+echo "Persistent volume free: ${FREE_GIB} GiB."
+PREFETCH_FAILED=0
+NEED_PREFETCH=0
+if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then
+  echo "No-download recovery requested; skipping Thorsten prefetch."
+elif (( ! CUDA_SYSTEM_READY )); then
+  echo "Skipping Thorsten prefetch: CUDA is not operational."
+elif [[ -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
+  echo "Cached Thorsten model found; installer will validate its SHA-256 manifest."
+elif (( FREE_GIB < MIN_FREE_GIB )); then
+  echo "WARNING: Only ${FREE_GIB} GiB free; skip first-time model download (minimum ${MIN_FREE_GIB} GiB)."
+else
+  NEED_PREFETCH=1
+  PREFETCH_LOG="$DATA_ROOT/logs/thorsten-prefetch-$(date -u +%Y%m%dT%H%M%SZ).log"
+  echo "Step 3/5: Background Thorsten download, max $RUNPOD_TTS_DOWNLOAD_WORKERS concurrent files."
+  bash "$REPO_DIR/runpod/prefetch-thorsten.sh" >"$PREFETCH_LOG" 2>&1 &
+  PREFETCH_PID=$!
+fi
+
+echo "Installing isolated Web Studio runtime (no Qwen or MOSS, no GPU initialization)."
+if ! bash "$REPO_DIR/runpod/install-web.sh"; then
+  echo "ERROR: Web runtime preparation failed; see latest setup log." >&2
+  exit 1
+fi
+if ! wait "$BUILD_PID"; then
+  echo "ERROR: React build failed. Tail of private frontend build log:" >&2
+  tail -n 40 "$WEB_BUILD_LOG" >&2 || true
+  BUILD_PID=""
+  exit 1
+fi
+BUILD_PID=""
+echo "Frontend build OK."
+
+echo "Step 4/5: Start protected Web Studio before waiting for the Thorsten download."
+WEB_PORT="${AUDIOBOOK_STUDIO_PORT:-7860}"
+case "$WEB_PORT" in
+  ''|*[!0-9]*) echo "ERROR: Invalid AUDIOBOOK_STUDIO_PORT." >&2; exit 2 ;;
+esac
+
+# tmux sessions can survive as an interactive shell after Uvicorn fails.
+if curl -fsS --max-time 2 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1; then
+  echo "Existing Web Studio already healthy."
 else
   if tmux has-session -t audiobook-web 2>/dev/null; then
-    echo "WARNING: Stale audiobook-web tmux session has no healthy server. Restarting."
+    echo "WARNING: Stale audiobook-web tmux session; restarting it."
     tmux kill-session -t audiobook-web
   fi
-  tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\$?; echo Web server stopped: \$rc; exec bash"
-  echo "Started the Web Studio session (port ${AUDIOBOOK_STUDIO_PORT:-7860})."
+  tmux new-session -d -s audiobook-web -c "$REPO_DIR" \
+    'bash runpod/start-web.sh; rc=$?; echo "Web server stopped (code $rc)."; exec bash'
 fi
 
-# Announce the *generated* login code only after FastAPI responds successfully.
-# Print to original container stdout (fd 3), bypassing the persistent tee log.
-# Never display a user-provided AUDIOBOOK_STUDIO_TOKEN secret.
 WEB_HEALTHY=0
-WEB_PORT="${AUDIOBOOK_STUDIO_PORT:-7860}"
-if [[ "$WEB_PORT" =~ ^[0-9]+$ ]]; then
-  for (( attempt=1; attempt<=90; attempt++ )); do
-    if curl -fsS --max-time 2 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1; then
-      WEB_HEALTHY=1
-      break
-    fi
-    sleep 2
-  done
-else
-  echo "WARNING: Invalid AUDIOBOOK_STUDIO_PORT; cannot check web readiness."
-fi
-
-if (( WEB_HEALTHY )); then
-  echo "Web studio health check OK (port $WEB_PORT)."
-  if [[ -n "${AUDIOBOOK_STUDIO_TOKEN:-}" ]]; then
-    printf '%s\n' "German Audiobook Studio: Weboberfläche bereit. Verwende deinen selbst gesetzten Zugangsschlüssel (er wird nicht im Log angezeigt)." >&3
-  else
-    TOKEN_FILE="$DATA_ROOT/studio-access-token"
-    if [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" && -s "$TOKEN_FILE" ]]; then
-      # Read once; the access code must not appear in the persistent log.
-      WEB_ACCESS_TOKEN="$(<"$TOKEN_FILE")"
-      if (( ${#WEB_ACCESS_TOKEN} >= 32 )); then
-        printf '\n%s\n%s\n%s\n%s\n\n' \
-          '=== GERMAN AUDIOBOOK STUDIO: ZUGANGSSCHLÜSSEL ===' \
-          "Weboberfläche: RunPod → Connect → HTTP $WEB_PORT" \
-          "Zugangsschlüssel: $WEB_ACCESS_TOKEN" \
-          'VERTRAULICH: Nur in privaten RunPod-Container-Logs anzeigen; nicht weitergeben.' >&3
-      else
-        echo "WARNING: Studio token file contains an invalid token; inspect via private Pod terminal." 
-      fi
-      unset WEB_ACCESS_TOKEN
-    else
-      echo "WARNING: Web studio is healthy, but no generated token file found at $TOKEN_FILE."
-    fi
+for ((attempt=1; attempt<=90; attempt++)); do
+  if curl -fsS --max-time 2 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1; then
+    WEB_HEALTHY=1
+    break
   fi
-else
-  echo "WARNING: Web Studio did not become healthy on port $WEB_PORT. Last Web Studio output:"
-  tmux capture-pane -pt audiobook-web -S -45 2>&1 | tail -n 45 || true
-  echo "WARNING: Web failed or is still initializing; inspect the above server output."
+  sleep 2
+done
+if (( ! WEB_HEALTHY )); then
+  echo "ERROR: Web Studio did not respond on port $WEB_PORT. Webserver tail:" >&2
+  tmux capture-pane -pt audiobook-web -S -60 2>&1 | tail -n 60 >&2 || true
+  exit 1
 fi
-# Unlike nvidia-smi and torch.cuda.is_available(), this checks a real GPU
-# memory allocation. On broken RunPod hosts it saves unnecessary large model
-# downloads and makes the cause visible in startup logs before voice setup.
-echo "Checking CUDA execution in the Qwen environment (actual allocation)."
-CUDA_QWEN_READY=0
-if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env qwen --json; then
-  CUDA_QWEN_READY=1
-  echo "CUDA execution preflight: QWEN OK."
+echo "Web studio health check OK (port $WEB_PORT)."
+# The access token is shown ONLY on live Pod stdout (saved fd 3),
+# never in the persistent autostart log captured by tee.
+if [[ -n "${AUDIOBOOK_STUDIO_TOKEN:-}" ]]; then
+  printf '%s\n' "Web Studio ready at HTTP $WEB_PORT. Use your private AUDIOBOOK_STUDIO_TOKEN (not logged)." >&3
 else
-  echo "WARNING: CUDA execution preflight failed in Qwen: the GPU may be unavailable despite nvidia-smi visibility."
-  echo "WARNING: On a new host, verify CUDA before attempting expensive model downloads."
+  TOKEN_FILE="$DATA_ROOT/studio-access-token"
+  if [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" && -s "$TOKEN_FILE" ]]; then
+    WEB_ACCESS_TOKEN="$(<"$TOKEN_FILE")"
+    if (( ${#WEB_ACCESS_TOKEN} >= 32 )); then
+      printf '\n%s\n%s\n%s\n%s\n\n' \
+        '=== GERMAN AUDIOBOOK STUDIO: ZUGANGSSCHLÜSSEL ===' \
+        "Weboberfläche: RunPod → Connect → HTTP $WEB_PORT" \
+        "Zugangsschlüssel: $WEB_ACCESS_TOKEN" \
+        'VERTRAULICH: Nur in privaten RunPod-Container-Logs anzeigen; nicht weitergeben.' >&3
+    fi
+    unset WEB_ACCESS_TOKEN
+  else
+    echo "WARNING: Web health OK but no generated token file found at $TOKEN_FILE."
+  fi
 fi
 
-echo "Installing German voice (optional until GPU acceptance)."
+echo "Step 5/5: Finalize Thorsten installation only after prefetch has finished."
 THORSTEN_INSTALL_OK=0
 if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then
   echo "Skipping Thorsten installation as requested. No new model weights are downloaded."
-elif (( ! CUDA_QWEN_READY )) && [[ ! -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
-  echo "WARNING: Skipping FIRST-TIME Thorsten weight download on a host with unusable CUDA."
-  echo "The Web Studio will remain available for EPUB preparation; select a working GPU host to continue."
-elif bash "$REPO_DIR/runpod/install-thorsten.sh"; then
-  THORSTEN_INSTALL_OK=1
-else
-  echo "WARNING: Thorsten installation failed. Web voice generation remains disabled."
+elif (( ! CUDA_SYSTEM_READY )); then
+  echo "WARNING: Torch CUDA allocation failed; no Thorsten model installation."
+elif (( NEED_PREFETCH )); then
+  if ! wait "$PREFETCH_PID"; then
+    echo "WARNING: Thorsten prefetch failed. No immediate duplicate download attempt." >&2
+    tail -n 35 "$PREFETCH_LOG" >&2 || true
+    PREFETCH_FAILED=1
+  fi
+  PREFETCH_PID=""
 fi
-if (( THORSTEN_INSTALL_OK )); then
-  echo "Checking CUDA execution in the isolated Thorsten environment."
-  if ! python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
-    echo "WARNING: Thorsten model files are verified, but CUDA EXECUTION FAILED; GPU speech generation will fail."
+
+if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 && "$CUDA_SYSTEM_READY" == 1 && "$PREFETCH_FAILED" == 0 ]]; then
+  if [[ -s "$DATA_ROOT/models/CosyVoice/.studio-ready" || "$NEED_PREFETCH" == 1 ]]; then
+    if bash "$REPO_DIR/runpod/install-thorsten.sh"; then
+      THORSTEN_INSTALL_OK=1
+      if ! python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
+        echo "WARNING: Model installed, but Thorsten CUDA allocation failed; inspect host."
+      fi
+    else
+      echo "WARNING: Thorsten installation failed; web stays available without narration."
+    fi
+  else
+    echo "WARNING: Not enough free space to begin Thorsten installation."
   fi
 fi
-exec 3>&-
 
-if (( THORSTEN_INSTALL_OK )); then
-  echo "=== Web studio launch requested; Thorsten installed (GPU hearing test still mandatory) ==="
-else
-  echo "=== Web studio launch requested; THORSTEN NOT READY, narration disabled ==="
+if [[ "$RUNPOD_TTS_MODELS" != none ]]; then
+  echo "Optional legacy TUI environment requested ($RUNPOD_TTS_MODELS)."
+  if bash "$REPO_DIR/runpod/setup.sh" --models "$RUNPOD_TTS_MODELS"; then
+    if [[ "$RUNPOD_TTS_START_TUI" == 1 ]]; then
+      if ! tmux has-session -t audiobook 2>/dev/null; then
+        session_command="bash runpod/start.sh"
+        if [[ "$RUNPOD_TTS_AUTOSTART_MODEL" != menu ]]; then
+          session_command+=" --model $RUNPOD_TTS_AUTOSTART_MODEL"
+        fi
+        session_command+='; rc=$?; echo "Audiobook TUI exited (code $rc)."; exec bash'
+        tmux new-session -d -s audiobook -c "$REPO_DIR" "$session_command"
+      fi
+    fi
+  else
+    echo "WARNING: Optional legacy model install failed; Web Studio remains healthy."
+  fi
 fi
-echo "Web log: tmux attach -t audiobook-web | Optional TUI (if enabled): tmux attach -t audiobook"
-echo "Optional: bash $REPO_DIR/runpod/start.sh --doctor"
-echo "Models, settings, reference voices and projects remain under $DATA_ROOT"
+if [[ "$RUNPOD_TTS_START_TUI" == 1 && "$RUNPOD_TTS_MODELS" == none ]]; then
+  echo "WARNING: Legacy TUI requested without its model; TUI not started."
+fi
+exec 3>&-
+if (( THORSTEN_INSTALL_OK )); then
+  echo "=== Web Studio healthy; Thorsten weights installed (real listening acceptance still required) ==="
+else
+  echo "=== Web Studio healthy; Thorsten not ready, narration disabled ==="
+fi
+echo "RunPod → Connect → HTTP $WEB_PORT; web logs: tmux attach -t audiobook-web"
+echo "Volume data: $DATA_ROOT"
