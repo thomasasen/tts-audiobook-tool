@@ -1639,7 +1639,7 @@ class EpubExtractor:
             if media_type not in {"application/xhtml+xml", "text/html"}:
                 continue
             html = EpubExtractor.decode_item_content(item)
-            if not html or not re.search(r"(?:inhaltsverzeichnis|table\\s+of\\s+contents|contents)", html, re.IGNORECASE):
+            if not html or not any(token in html.lower() for token in ("inhaltsverzeichnis", "contents")):
                 continue
             BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
             soup = BeautifulSoup(html, "html.parser")
