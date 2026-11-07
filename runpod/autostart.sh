@@ -80,6 +80,10 @@ fi
 
 mkdir -p "$DATA_ROOT/logs"
 LOG_FILE="$DATA_ROOT/logs/autostart-$(date -u +%Y%m%dT%H%M%SZ).log"
+# Save the original Pod stdout on fd 3 BEFORE tee captures installation logs.
+# An auto-generated access token is shown only in the owner's live RunPod logs,
+# never written to persistent autostart-*.log (or to Git).
+exec 3>&1
 exec > >(tee -a "$LOG_FILE") 2>&1
 trap 'status=$?; echo "RunPod audiobook bootstrap FAILED (exit $status). Log: $LOG_FILE" >&2' ERR
 
@@ -149,6 +153,52 @@ else
   tmux new-session -d -s audiobook-web -c "$REPO_DIR" "bash runpod/start-web.sh; rc=\$?; echo Web server stopped: \$rc; exec bash"
   echo "Started the web studio in tmux session audiobook-web (port 7860)."
 fi
+
+# Announce the *generated* login code only after FastAPI responds successfully.
+# Print to original container stdout (fd 3), bypassing the persistent tee log.
+# Never display a user-provided AUDIOBOOK_STUDIO_TOKEN secret.
+WEB_HEALTHY=0
+WEB_PORT="${AUDIOBOOK_STUDIO_PORT:-7860}"
+if [[ "$WEB_PORT" =~ ^[0-9]+$ ]]; then
+  for (( attempt=1; attempt<=45; attempt++ )); do
+    if curl -fsS --max-time 2 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1; then
+      WEB_HEALTHY=1
+      break
+    fi
+    sleep 2
+  done
+else
+  echo "WARNING: Invalid AUDIOBOOK_STUDIO_PORT; cannot check web readiness."
+fi
+
+if (( WEB_HEALTHY )); then
+  echo "Web studio health check OK (port $WEB_PORT)."
+  if [[ -n "${AUDIOBOOK_STUDIO_TOKEN:-}" ]]; then
+    printf '%s\n' "German Audiobook Studio: Weboberfläche bereit. Verwende deinen selbst gesetzten Zugangsschlüssel (er wird nicht im Log angezeigt)." >&3
+  else
+    TOKEN_FILE="$DATA_ROOT/studio-access-token"
+    if [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" && -s "$TOKEN_FILE" ]]; then
+      # Read once; the access code must not appear in the persistent log.
+      WEB_ACCESS_TOKEN="$(<"$TOKEN_FILE")"
+      if (( ${#WEB_ACCESS_TOKEN} >= 32 )); then
+        printf '\n%s\n%s\n%s\n%s\n\n' \
+          '=== GERMAN AUDIOBOOK STUDIO: ZUGANGSSCHLÜSSEL ===' \
+          "Weboberfläche: RunPod → Connect → HTTP $WEB_PORT" \
+          "Zugangsschlüssel: $WEB_ACCESS_TOKEN" \
+          'VERTRAULICH: Nur in privaten RunPod-Container-Logs anzeigen; nicht weitergeben.' >&3
+      else
+        echo "WARNING: Studio token file contains an invalid token; inspect via private Pod terminal." 
+      fi
+      unset WEB_ACCESS_TOKEN
+    else
+      echo "WARNING: Web studio is healthy, but no generated token file found at $TOKEN_FILE."
+    fi
+  fi
+else
+  echo "WARNING: Web studio did not respond on port $WEB_PORT. Check tmux attach -t audiobook-web."
+fi
+exec 3>&-
+
 if (( THORSTEN_INSTALL_OK )); then
   echo "=== Web studio launch requested; Thorsten installed (GPU hearing test still mandatory) ==="
 else
