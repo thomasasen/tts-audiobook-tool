@@ -4,30 +4,19 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/env.sh"
-PY="$AUDIOBOOK_VENV_DIR/qwen/bin/python"
-if [[ ! -x "$PY" ]]; then
-  echo "Missing Qwen/base Python environment. Run runpod/setup.sh --models qwen." >&2
-  exit 1
-fi
-
+PY="$AUDIOBOOK_VENV_DIR/web/bin/python"
 mkdir -p "$AUDIOBOOK_DATA_ROOT" "$AUDIOBOOK_LOG_DIR"
 chmod 700 "$AUDIOBOOK_DATA_ROOT"
-# Reuse project and dependency installations; no model download here.
-WEB_READY="$AUDIOBOOK_DATA_ROOT/.studio-web-deps-ready"
-WEB_REQ_FINGERPRINT="$(sha256sum "$REPO_DIR/web/requirements.txt" | cut -d' ' -f1)"
-if [[ ! -f "$WEB_READY" || "$(cat "$WEB_READY")" != "$WEB_REQ_FINGERPRINT" ]]; then
-  "$PY" -m pip install --disable-pip-version-check -r "$REPO_DIR/web/requirements.txt"
-  printf '%s\n' "$WEB_REQ_FINGERPRINT" > "$WEB_READY"
-fi
 
-if [[ ! -f "$REPO_DIR/web/dist/index.html" || "$REPO_DIR/web/src/studio.tsx" -nt "$REPO_DIR/web/dist/index.html" ||
-      "$REPO_DIR/web/src/style.css" -nt "$REPO_DIR/web/dist/index.html" ]]; then
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "Missing npm. Please install Node.js and npm on the pod." >&2
-    exit 1
-  fi
-  (cd "$REPO_DIR/web" && npm install --no-audit --no-fund && npm run build)
+# Direct/manual launches use the same idempotent preparation as the optimized
+# autostart. It never installs Qwen/MOSS or downloads model weights.
+if [[ ! -f "$AUDIOBOOK_VENV_DIR/web/.studio-web-runtime-ready" ]]; then
+  echo "Web backend not prepared; installing minimal runtime."
+  bash "$SCRIPT_DIR/install-web.sh"
 fi
+[[ -x "$PY" ]] || { echo "Web Python environment is unavailable." >&2; exit 1; }
+bash "$SCRIPT_DIR/build-web.sh"
+
 
 # Never put a bearer token into a command line or an ordinary Git/log file.
 # Pod owner retrieves it via cat /workspace/audiobook-data/studio-access-token.
