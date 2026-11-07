@@ -1770,6 +1770,47 @@ if __name__ == "__main__":
         result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
         self.assertEqual(result.text, "Änderungen bleiben nachvollziehbar.")
 
+    def test_drop_cap_omits_stale_translated_initial_only_with_strong_layout_signal(self):
+        for initial, sentence in [
+            ("M", "Kleine Schritte helfen beim Lernen."),
+            ("D", "Die Grundlage steht fest."),
+            ("N", "Nachdem das Team begonnen hatte, ging es weiter."),
+            ("I", "In einer anderen Abteilung war es ähnlich."),
+        ]:
+            with self.subTest(initial=initial, sentence=sentence):
+                chapter = EpubSourceChapter(
+                    "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+                    '<body><div style="float: left" id="frame">'
+                    f'<p style="font-size: 44pt" id="initial"><em>{initial}</em></p></div>'
+                    f'<p id="prose">{sentence}</p></body>',
+                    navigation_targets=[
+                        make_navigation_target("Kapitel", "Text/chapter.xhtml#initial", 0),
+                    ],
+                )
+                result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+                self.assertEqual(result.text, sentence)
+                self.assertEqual(result.significant_warnings, [])
+                self.assertEqual(len(result.slices), 1)
+                self.assertEqual(result.slices[0].navigation_target.fragment, "initial")
+
+    def test_drop_cap_keeps_unexpected_capital_without_large_float_pair(self):
+        for html in [
+            '<p style="font-size: 44pt">M</p><p>Kleine Schritte helfen.</p>',
+            '<div style="float: left"><p>M</p></div><p>Kleine Schritte helfen.</p>',
+            '<p>M</p><p>Kleine Schritte helfen.</p>',
+        ]:
+            with self.subTest(html=html):
+                chapter = EpubSourceChapter(
+                    "Kapitel", "Text/chapter.xhtml", "application/xhtml+xml",
+                    "<body>" + html + "</body>",
+                )
+                result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
+                self.assertIn("M", result.text)
+                self.assertEqual(
+                    bool(result.significant_warnings),
+                    "font-size" in html or "float:" in html,
+                )
+
     def test_drop_cap_does_not_join_unmarked_or_ambiguous_paragraphs(self):
         for html, expected_warning in [
             ('<p class="ordinary">A</p><p>lpha</p>', False),
