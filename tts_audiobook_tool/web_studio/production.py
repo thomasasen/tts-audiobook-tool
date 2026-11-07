@@ -142,6 +142,16 @@ def _config() -> tuple[str, str] | None:
     """No user-specified binary flags, shell or remote TTS service allowed."""
     python = os.environ.get("AUDIOBOOK_THORSTEN_PYTHON", "")
     script = os.environ.get("AUDIOBOOK_THORSTEN_SCRIPT", "")
+    if not python and not script:
+        # A running web studio must discover a newly completed Thorsten
+        # install without requiring a webserver restart. Fixed trusted
+        # paths only; the model identity still requires the ready marker
+        # and checksums before exposing any voice.
+        root = _studio().data_dir()
+        if not (root / "models/CosyVoice/.studio-ready").is_file():
+            return None
+        python = str(root / "venvs/thorsten/bin/python")
+        script = str(root / "models/CosyVoice/infer_thorsten.py")
     if not (python and script and Path(python).is_file() and Path(script).is_file()):
         return None
     if not (Path(python).is_absolute() and Path(script).is_absolute()):
