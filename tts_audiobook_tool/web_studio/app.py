@@ -208,7 +208,7 @@ async def secure_headers(request, call_next):
     response.headers["Cache-Control"] = "no-store"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; "
-        "connect-src 'self'; img-src 'self' data:; media-src 'self'; "
+        "connect-src 'self' blob:; img-src 'self' data:; media-src 'self' blob:; "
         "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     )
     return response
