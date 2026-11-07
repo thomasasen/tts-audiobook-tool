@@ -124,8 +124,23 @@ def main() -> None:
                     raise RuntimeError("Empty TTS output")
                 torchaudio.save(str(output), torch.cat(chunks, dim=1), model.sample_rate)
             print(json.dumps({"id": request["id"], "ok": True}), flush=True)
-        except Exception:
-            # Avoid reflecting private audiobook passages or file paths in logs.
+        except Exception as exc:
+            # Diagnose in PRIVATE worker logs: error classes and curated
+            # categories, never source text, user paths or third-party
+            # exception messages (which may echo the audiobook content).
+            category = "inference"
+            detail = str(exc).lower()
+            if "out of memory" in detail or "cuda error" in detail:
+                category = "cuda-memory-or-device"
+            elif isinstance(exc, KeyError) and "thorsten" in detail:
+                category = "speaker-embedding-not-found"
+            elif "backend" in detail or "torchaudio" in detail:
+                category = "wav-encoding"
+            print(
+                f"Thorsten worker failure: {type(exc).__name__} ({category})",
+                file=sys.stderr,
+                flush=True,
+            )
             print(json.dumps({"id": request.get("id") if isinstance(request, dict) else None,
                               "ok": False, "error": "TTS-Inferenz fehlgeschlagen."}), flush=True)
 
