@@ -62,21 +62,42 @@ type Capabilities = {
   reason: string
 }
 
+async function apiResponseError(response: Response, path: string): Promise<Error> {
+  // Reverse proxies and unhandled FastAPI exceptions can return plain text
+  // ("Internal Server Error") or HTML, never a JSON {detail} object.
+  // Do not attempt to parse these bodies or expose internal response content.
+  const type = response.headers.get('content-type') ?? ''
+  if (type.includes('json')) {
+    try {
+      const payload = await response.json() as ApiError | null
+      if (payload && typeof payload.detail === 'string' && payload.detail.trim()) {
+        return new Error(payload.detail)
+      }
+    } catch { /* malformed error body: fall back to status and endpoint */ }
+  }
+  const message = response.status >= 500 ? 'Serverfehler' : 'Anfrage fehlgeschlagen'
+  return new Error(`${message} (HTTP ${response.status}) bei ${path}. Bitte das RunPod-Webserver-Log prüfen.`)
+}
+
 async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...init.headers },
     cache: 'no-store',
   })
-  if (!response.ok) {
-    let message = 'Die Anfrage ist fehlgeschlagen.'
-    try {
-      const payload = await response.json() as ApiError
-      if (typeof payload.detail === 'string') message = payload.detail
-    } catch { /* network or unexpected response */ }
-    throw new Error(message)
+  if (!response.ok) throw await apiResponseError(response, path)
+  // Successful deletion is intentionally bodyless (HTTP 204/205).
+  if (response.status === 204 || response.status === 205) return undefined as T
+
+  const type = response.headers.get('content-type') ?? ''
+  if (!type.includes('json')) {
+    throw new Error(`Unerwartete Serverantwort (HTTP ${response.status}) bei ${path}: JSON erwartet. Bitte das RunPod-Webserver-Log prüfen.`)
   }
-  return response.json() as Promise<T>
+  try {
+    return await response.json() as T
+  } catch {
+    throw new Error(`Ungültige JSON-Antwort (HTTP ${response.status}) bei ${path}. Bitte das RunPod-Webserver-Log prüfen.`)
+  }
 }
 
 function formatDate(value: string): string {
@@ -134,9 +155,10 @@ export default function Studio() {
     setBusy(true); setError('')
     try {
       const response = await fetch(path, {method, headers: {Authorization: `Bearer ${token}`}, cache: 'no-store'})
-      if (!response.ok) {
-        const payload = await response.json() as ApiError
-        throw new Error(payload.detail ?? 'Die Audiodatei ist nicht verfügbar.')
+      if (!response.ok) throw await apiResponseError(response, path)
+      const type = response.headers.get('content-type') ?? ''
+      if (!type.startsWith('audio/') && type !== 'application/octet-stream') {
+        throw new Error(`Unerwartete Audio-Antwort (HTTP ${response.status}) bei ${path}. Bitte das RunPod-Webserver-Log prüfen.`)
       }
       const url = URL.createObjectURL(await response.blob())
       setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return url })
