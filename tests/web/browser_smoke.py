@@ -375,6 +375,52 @@ def main() -> None:
                     page.get_by_text("5 nicht per ASR geprüft", exact=False).wait_for()
                     page.get_by_text("ASR ist nicht installiert.", exact=False).wait_for()
                     page.unroute("**/api/projects/*/jobs/*/quality")
+                    # Actual browser download path: file-save picker first,
+                    # authenticated fetch, streamed writes, close and errors.
+                    production_job["status"] = "completed"
+                    production_job["done"] = 6
+                    page.route(
+                        "**/api/projects/*/jobs/*/download",
+                        lambda route: route.fulfill(
+                            status=200,
+                            content_type="audio/mp4",
+                            headers={"Content-Length": "64"},
+                            body=b"x" * 64,
+                        ),
+                    )
+                    page.evaluate("""() => {
+                      window.__fileWritten = 0
+                      window.__fileClosed = false
+                      window.__fileAborted = false
+                      window.showSaveFilePicker = async () => ({
+                        createWritable: async () => ({
+                          write: async part => { window.__fileWritten += part.byteLength },
+                          close: async () => { window.__fileClosed = true },
+                          abort: async () => { window.__fileAborted = true },
+                        }),
+                      })
+                    }""")
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    page.get_by_role("button", name="M4B herunterladen").click()
+                    page.wait_for_function("() => window.__fileClosed === true", timeout=10000)
+                    assert page.evaluate("window.__fileWritten") == 64
+                    assert not page.evaluate("window.__fileAborted")
+                    page.get_by_text("direkt gespeichert", exact=False).wait_for()
+                    # Unsupported browser with a large response fails before
+                    # buffering any of the advertised 97 MiB into a Blob.
+                    page.evaluate("() => { window.showSaveFilePicker = undefined }")
+                    page.unroute("**/api/projects/*/jobs/*/download")
+                    page.route(
+                        "**/api/projects/*/jobs/*/download",
+                        lambda route: route.fulfill(
+                            status=200, content_type="audio/mp4",
+                            headers={"Content-Length": str(97 * 1024 * 1024)},
+                            body=b"x" * 64,
+                        ),
+                    )
+                    page.get_by_role("button", name="M4B herunterladen").click()
+                    page.get_by_text("überschreitet 96 MB", exact=False).wait_for()
+                    page.unroute("**/api/projects/*/jobs/*/download")
                     page.unroute("**/api/projects/*/jobs/*/activity")
                     page.unroute("**/api/projects/*/jobs")
 
