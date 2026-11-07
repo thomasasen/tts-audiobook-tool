@@ -63,6 +63,24 @@ def test_voice_preview_runtime_failure_returns_safe_json(client, monkeypatch):
     assert "private worker exception" not in response.text
 
 
+def test_broken_cuda_host_reports_actionable_web_error(client, monkeypatch):
+    from tts_audiobook_tool.web_studio import production
+
+    def failed_gpu():
+        raise RuntimeError(
+            "GPU nicht für CUDA-Ausführung verfügbar. "
+            "RunPod-Host/GPU-Zuweisung prüfen; runpod/gpu_preflight.py --env both ausführen."
+        )
+
+    monkeypatch.setattr(production, "make_sample", failed_gpu)
+    response = client.post("/api/voices/preview", headers=authorized())
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    message = response.json()["detail"]
+    assert "GPU ist für CUDA nicht betriebsbereit" in message
+    assert "runpod/gpu_preflight.py --env both" in message
+
+
 def test_empty_library(client):
     assert client.get("/api/projects", headers=authorized()).json() == {"projects": []}
 
