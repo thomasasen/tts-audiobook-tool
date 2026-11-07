@@ -141,6 +141,22 @@ export default function Studio() {
   const [jobActivity, setJobActivity] = useState<JobActivity | null>(null)
   const [exportPending, setExportPending] = useState(false)
   const handledPreview = useRef<string | null>(null)
+  const activeObjectUrl = useRef<string | null>(null)
+
+  // URL.createObjectURL resources are browser-owned: never revoke them
+  // inside a React state updater (React may execute updaters more than once).
+  function setOwnedAudioUrl(next: string) {
+    if (activeObjectUrl.current && activeObjectUrl.current !== next) {
+      URL.revokeObjectURL(activeObjectUrl.current)
+    }
+    activeObjectUrl.current = next || null
+    setAudioUrl(next)
+  }
+
+  useEffect(() => () => {
+    if (activeObjectUrl.current) URL.revokeObjectURL(activeObjectUrl.current)
+    activeObjectUrl.current = null
+  }, [])
 
   async function refreshActivity(projectId: string, jobId: string) {
     try {
@@ -168,7 +184,7 @@ export default function Studio() {
       const blob = await response.blob()
       if (blob.size < 100) throw new Error('Die erzeugte Hörprobe ist leer oder unvollständig.')
       const url = URL.createObjectURL(blob)
-      setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return url })
+      setOwnedAudioUrl(url)
       setPreviewAudioValid(false)
       setPreviewPlayed(false)
     } catch (err) {
@@ -181,7 +197,7 @@ export default function Studio() {
     setBusy(true); setError(''); setPreviewAudioError('')
     setPreviewAudioValid(false); setPreviewPlayed(false)
     handledPreview.current = null
-    setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return '' })
+    setOwnedAudioUrl('')
     try {
       const task = await api<PreviewTask>('/api/voices/preview/start', token, {method: 'POST'})
       setPreviewTask(task)
@@ -243,7 +259,7 @@ export default function Studio() {
         throw new Error(`Unerwartete Audio-Antwort (HTTP ${response.status}) bei ${path}. Bitte das RunPod-Webserver-Log prüfen.`)
       }
       const url = URL.createObjectURL(await response.blob())
-      setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return url })
+      setOwnedAudioUrl(url)
       setPreviewPlayed(false)
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
@@ -359,8 +375,7 @@ export default function Studio() {
 
   function signOut() {
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
-    if (audioUrl) URL.revokeObjectURL(audioUrl)
-    setAudioUrl(''); setJob(null); setJobActivity(null); setQuality(null); setPreviewTask(null)
+    setOwnedAudioUrl(''); setJob(null); setJobActivity(null); setQuality(null); setPreviewTask(null)
     setPreviewAudioError(''); setPreviewAudioValid(false); setPreviewPlayed(false); setExportPending(false)
     setNotice(''); setError(''); setView('library')
   }
@@ -426,8 +441,7 @@ export default function Studio() {
     try {
       const catalog = await api<{ready: VoiceCandidate[], candidates: VoiceCandidate[]}>('/api/voices', token)
       setVoices([...catalog.ready, ...catalog.candidates])
-      if (audioUrl) URL.revokeObjectURL(audioUrl)
-      setAudioUrl(''); setPreviewPlayed(false); setPreviewAudioValid(false)
+      setOwnedAudioUrl(''); setPreviewPlayed(false); setPreviewAudioValid(false)
       setPreviewAudioError(''); handledPreview.current = null
       const [caps, task] = await Promise.all([
         api<Capabilities>('/api/capabilities', token),
