@@ -61,7 +61,7 @@ Eine Zeile ist ein eigenständig prüfbares PR-Arbeitspaket; nur nachgewiesene A
 | Erledigt | Paket | Priorität | Voraussetzungen | Umfang | Ziel |
 |---|---|---|---|---|---|
 | [ ] | A01 | P0 | keine | S | ASR-Installation und ehrliche Betriebsanzeige |
-| [ ] | A02 | P0 | keine | S | Kapitel-IDs statt Titel für M4B-Marker |
+| [x] | A02 | P0 | keine | S | Kapitel-IDs statt Titel für M4B-Marker |
 | [ ] | A03 | P1 | keine | M | Reproduzierbare Releases, Abhängigkeiten und Modelle |
 | [ ] | A04 | P2 | keine | M | Speicherfreundliche, authentifizierte Downloads |
 | [ ] | B01 | P1 | keine | M | EPUB-Struktur-/Auslassungs-Audit und Vorschau |
@@ -296,7 +296,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | Paket | Status | PR / Commit | Gezielt ausgeführte Tests und Ergebnis | Offene Risiken / Freigabe |
 |---|---|---|---|---|
 | A01 | OFFEN | — | — | — |
-| A02 | OFFEN | — | — | — |
+| A02 | FERTIG (PR offen, nicht in master) | [PR #16](https://github.com/thomasasen/tts-audiobook-tool/pull/16), [Code-Commit 3a0a731](https://github.com/thomasasen/tts-audiobook-tool/commit/3a0a7310ea2214fbc063cf0f21dcc1e866cc0286) | [Studio CI #42371605004](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42371605004): Backend inkl. echtem AAC/M4B-Decode, Browser, Frontend, isolierte Runtime grün auf Code-Head; plan-only Head separat nachprüfen | Keine echte GPU/Hörabnahme; vor Merge A01-PR #15/plan.md koordinieren |
 | A03 | OFFEN | — | — | — |
 | A04 | OFFEN | — | — | — |
 | B01 | OFFEN | — | — | — |
@@ -313,6 +313,14 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | E03 | OFFEN / GPU- UND HÖRABNAHME VORAUSGESETZT | — | — | — |
 
 Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄLLT (fachliche Begründung). Abhaken nur bei FERTIG; einmalige Statushinweise ändern die Checkbox nicht.
+
+### A02 – technische Umsetzung im offenen PR #16 (07.11.2026)
+
+**Basis:** `master` bei `6e59661d52728b09c7f4d5f3b76e1d5686364782`. `production._manifest()` speichert bereits pro Phrase-Gruppe `chapter` als stabilen book.v3-Abschnittsindex. Beim M4B-Export wurde zuvor ausschließlich der Anzeigetitel als Kapitelidentität verwendet; gleiche Nachbartitel verschmolzen und leere Titel unterdrückten Marker.
+
+**Änderungen:** `tts_audiobook_tool/web_studio/production.py` verwendet `_export_chapter_key` zur Zuordnung über `chapter` bzw. das alte `chapter_index`, nur für ältere Pläne ohne beide Felder bleibt ein Titel-Fallback. Auch bei leeren Titeln werden Marker geschrieben. `tests/web/test_studio_export.py` ergänzt parametrisierten **echten** WAV→AAC/M4B-Encode/Decode und Kapitelmarkentests für doppelte Titel, leere Titel, übersprungene Kapitel und Start am Vorwort; Dauerprüfung gegen ausgelassene oder doppelte WAVs.
+
+**Evidenz:** GitHub Actions `German Audiobook Studio`, Run `42371605004` auf Code-Commit `3a0a7310ea2214fbc063cf0f21dcc1e866cc0286`: Backend, Browser, Frontend und isolierte Web-Runtime bestanden. Keine echte TTS-GPU-Inferenz oder Hörabnahme; diese bleiben Release-Blocker. Die abschließende `plan.md`-Aktualisierung benötigt einen eigenen finalen CI-Nachweis. Wegen unabhängig gestarteter PRs auf `master` enthält PR #16 **nicht** die A01-Fortschrittsänderung aus PR #15; beim späteren genehmigten Merge der beiden PRs `plan.md` abgleichen, nicht überschreiben. Nächstes freies Paket: **A03**.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
