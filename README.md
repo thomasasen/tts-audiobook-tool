@@ -91,6 +91,14 @@ curl -fsS http://127.0.0.1:7860/api/health
 tmux ls
 ```
 
+### Einstellbare Hörprobenlänge und fortlaufende Produktionsprognose
+
+Auf der Seite **Sprecher** kannst du eine ungefähre Hörprobendauer von **5, 15, 30 oder 60 Sekunden** wählen. Dafür verwendet das Studio fertig formulierte deutsche Testsätze aus dem Umfeld eines Fachbuchs. Längere Proben werden satzweise erzeugt und als eine **16-Bit-PCM-WAV** zusammengefügt. Die Auswahl wird dem Server bei jedem neuen Hörprobenauftrag explizit übergeben und streng validiert. Die tatsächliche Audiodauer hängt von Thorstens Sprechtempo ab und kann von den Auswahlwerten abweichen: Die Anwendung schneidet keine gesprochenen Wörter ab.
+
+Unter **Hörbuch und Export** erscheinen ein realer Segmentfortschritt, die **vergangene Zeit** seit dem Auftragseingang (einschließlich Warte- und Pausenzeiten) und eine **fortlaufend aktualisierte Schätzung der Restzeit** für die eigentliche Sprachsynthese. Nach mindestens drei gemessenen Segmenten ermittelt die Anwendung aus den zuletzt tatsächlich angefallenen Bearbeitungszeiten inklusive Qualitätsprüfung und der noch ausstehenden Textmenge eine robuste, gleitende Prognose. Der Server berechnet sie mit jedem weiteren Segment neu; der Client zeigt zwischen den Abfragen einen sekündlich aktualisierten Countdown. Bei Pause wird die Restzeit angehalten, bei Wiederaufnahme erneut ermittelt. Bereits gemessene Laufzeiten stehen in den privaten, persistenten Segmentmetadaten, damit ein Web-Neustart die Grundlage nicht vollständig zurücksetzt. Dies ist eine **Schätzung**, keine verlässliche Deadline; die separate M4B-Exportzeit ist darin nicht enthalten.
+
+**Sprechstil-Prompts:** Für den verwendeten, fest trainierten Thorsten-Sprecher kommt `CosyVoice3.inference_sft(text, "thorsten")` zum Einsatz. Der vom Hersteller dokumentierte CosyVoice3-Instruct-Modus (`inference_instruct2`) erfordert dagegen eine Referenzaufnahme. Da wir keine Referenzaufnahmen oder Benutzer-Stimmklone nutzen und eine Anweisung bei Thorstens SFT-Inferenzpfad nicht nachweislich wirksam wäre, gibt es bewusst **kein freies Sprechstil-Prompt-Feld**. Es wird kein vorgetäuschter Effekt versprochen.
+
 ### Hörprobe und Hörbuchproduktion: Live-Fortschritt und Protokolle
 
 Bei **Sprecher → Echte Hörprobe erzeugen** läuft die Modellinitialisierung und GPU-Synthese als **Hintergrundauftrag**, nicht mehr als blockierende Browseranfrage. Die Oberfläche aktualisiert den Status etwa alle 1,5 Sekunden und zeigt die realen Phasen (GPU-Prüfung, Modellladen, Sprachsynthese, WAV-Prüfung) sowie ein aufklappbares **Protokoll der Hörprobe**. Da CosyVoice3 bei einer einzelnen Hörprobe keine verlässlichen Prozentwerte oder Restzeit liefert, ist die Fortschrittsanzeige dort bewusst **unbestimmt**, bis das fertige WAV tatsächlich geprüft wurde.
