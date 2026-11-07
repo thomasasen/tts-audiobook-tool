@@ -132,15 +132,17 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 
 ### B01 — EPUB-Verlustfreiheit und nachvollziehbare Auslassungen
 
-**Fundstellen:** tts_audiobook_tool/text_ops/epub_extractor.py, epub_section_skip_detector.py, tts_audiobook_tool/web_studio/app.py, tests/text/test_epub_*.py, tests/web/test_real_epub_e2e.py.
+**Fundstellen:** tts_audiobook_tool/text_ops/epub_extractor.py, epub_content_audit.py, epub_section_skip_detector.py, tts_audiobook_tool/web_studio/app.py, web/src/studio.tsx, tests/text/test_epub_*.py, tests/web/test_real_epub_e2e.py.
 
-- [ ] EPUB-Spine, Navigationsanker, Unterabschnitte, Inline-Formatierung, Tabellen, Listen, Fußnoten, Bildunterschriften und literarische Trennelemente anhand selbst verfasster Test-EPUBs auditieren.
-- [ ] Vom Parser automatisch ausgelassene Inhalts-/Metadatenabschnitte samt Grund und kleiner Vorschau sichtbar machen; falsche Auslassungen korrigierbar gestalten, ohne DRM oder Rechteprüfungen zu umgehen.
-- [ ] Gemischte XHTML-Dokumente mit Navigation und Fließtext nicht komplett verwerfen. Lesetext, Vorwort, Kapitelreihenfolge und Zeichengrenzen explizit prüfen.
-- [ ] Für schwer vorlesbare Tabellen/Formeln/Abbildungen eine **optionale** Sprecherfassung mit menschlicher Vorschau spezifizieren; nichts ungefragt erfinden oder ändern.
-- [ ] Quelltext-zu-Sprechtext-Mapping und verlustfreie Segmentabdeckung vorbereiten; Originalprojekt unverändert lesbar.
+- [x] EPUB-Spine, Navigationsanker, Unterabschnitte, Inline-Formatierung, Tabellen, Listen, Fußnoten, Bildunterschriften, MathML und Scene-Break-Markup anhand selbst verfasster Test-EPUBs auditieren.
+- [x] Automatisch ausgelassene Inhalts-/Metadatenabschnitte mit Kategorie, Grund und Vorschau sichtbar machen; freigegebene Publication-Metadata-/TOC-Heuristiken im Entwurfsstatus korrigierbar gestalten. Navigation-only-, fehlende und nicht dekodierbare Ressourcen bleiben geschützt.
+- [x] Gemischte XHTML-Dokumente mit Navigation und Fließtext auch dann erhalten, wenn die Prosa in Nicht-Paragraph-Containern liegt; linkdichte Navigationslisten bleiben ausgeschlossen.
+- [x] Optionale, ausschließlich manuell formulierte und explizit übernommene Sprecherfassungen für Tabellen, MathML, Figures und eigenständige Bilder mit Vorschau; keine automatische Inhaltserfindung, Original-EPUB unverändert.
+- [x] Quelltext-zu-Vorlesetext-Mapping mit Quell-/Output-Zeichenoffsets und Nicht-Leerzeichen-Abdeckung; manuelle Overrides werden beim Project-V5-Import erneut angewendet. Bestehende Projekte bleiben lesbar.
 
-**Akzeptanz:** Synthetische Testbücher und wenigstens ein privat getesteter komplexer EPUB-Typ haben vollständigen, erklärbaren Vorlesetext. Auslassungen sind sichtbar und überprüfbar.
+**Technische Akzeptanz:** Synthetische Regressionen und E2E prüfen Navigation, Quellzuordnung, Heuristik-Wiederaufnahme, Sprecherfassungen und tatsächliche Project-V5-Phrase-Groups. CI-Run [42407963183](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42407963183) auf PR-Head `d1a903db5db81a67d797c2199ffff0d0dca2a028` vollständig erfolgreich.
+
+**Noch ausstehende redaktionelle Abnahme:** Mindestens ein komplexes, rechtmäßig nutzbares privates EPUB muss im Studio gegen das Original geprüft werden. Mapping-Abdeckung von 100 Prozent belegt nur die Zuordnung des übernommenen Textes, nicht die semantische Vollständigkeit von Tabellen, Formeln, Abbildungen und Fußnoten. B01 bleibt bis zu dieser manuellen Prüfung offen.
 
 ### B02 — Deterministische deutsche Textnormalisierung
 
@@ -302,7 +304,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | A02 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #19](https://github.com/thomasasen/tts-audiobook-tool/pull/19) (ersetzt #16) | Fünf CI-Checks auf kombiniertem A01/A02-Stand grün, einschließlich echtem M4B-Decode | Keine menschliche Hörabnahme |
 | A03 | CODE-IMPLEMENTIERUNG IN MASTER · LIVE-ABNAHME OFFEN | [PR #24](https://github.com/thomasasen/tts-audiobook-tool/pull/24), Merge e9085c7 | 79 RunPod-Static-Tests, A03 Lock Generation und German Audiobook Studio auf finalem Head 8a1504e grün | Echte RunPod-GPU, Pod-Neustart/Resume, Live-Upgrade/Rollback und Hörabnahme bleiben in E03 offen |
 | A04 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #20](https://github.com/thomasasen/tts-audiobook-tool/pull/20) (ersetzt #18) | Fünf CI-Checks inklusive Browser-Streaming, 96-MB-Fallback und Range-206 grün | Große echte RunPod-M4B noch nicht heruntergeladen |
-| B01 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22), [PR #26](https://github.com/thomasasen/tts-audiobook-tool/pull/26) | PR #26: strukturierter OPF-/Spine-Quellen-Audit, Tabellen-/Listen-/Bild-/Caption-/MathML-Inventar, sichtbare nicht zugeordnete Quellen; Backend, Browser-E2E, Frontend-Build und Runtime-CI grün | Quell-zu-Sprechtext-Abdeckung, explizite Ausschlusskorrektur, komplexe Fußnoten/Formel-/XHTML-Regressionen und private EPUB-Abnahme fehlen |
+| B01 | TECHNISCH UMGESETZT · PRIVATE EPUB-ABNAHME AUSSTEHEND | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22), [PR #26](https://github.com/thomasasen/tts-audiobook-tool/pull/26), [PR #27](https://github.com/thomasasen/tts-audiobook-tool/pull/27) | OPF-/Spine-Audit, Quell-/Vorlesetext-Mapping, Abdeckungsquote, korrigierbare Heuristik-Auslassungen, manuelle Sprecherfassungen für Tabelle/MathML/Figure/Bild; Backend, Chromium-E2E, Frontend, CPU-ASR und isolierte Runtime auf PR-Head grün | Ein komplexes privates EPUB muss noch manuell im Studio geprüft und redaktionell abgenommen werden; Mapping-Prozent ersetzt keine semantische Vollständigkeitsprüfung |
 | B02 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #23](https://github.com/thomasasen/tts-audiobook-tool/pull/23) | Fünf CI-Checks grün; Golden Cases und rückwärtskompatible Versionierung des Cache-Fingerprints | Umfangreiche Spezialfalltests, Vorschauparität B04 und Hörabnahme fehlen |
 | B03 | OFFEN | — | — | — |
 | B04 | OFFEN | — | — | — |
@@ -392,6 +394,20 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 
 **Grenze:** Der aktuelle Audit weist Ressourcen zu, beweist aber noch keine zeichen-/segmentgenaue Quell-zu-Sprechtext-Abdeckung. Nicht zugeordnete Navigation kann auch in zusammengeführte Abschnitte eingeflossen sein. Es gibt noch keine UI-Funktion, mit der erkannte Auslassungen korrigiert oder eine alternative Sprecherfassung für Tabellen/Formeln/Abbildungen freigegeben werden kann. B01 bleibt offen.
 
+### B01 – Mapping, korrigierbare Auslassungen und Sprecherfassungen in PR #27 (07.11.2026)
+
+**Merge:** PR #27, Merge-Commit 2ecd49255d101d3480e6cf089fb9fb1de33cf930. Getesteter PR-Head: d1a903db5db81a67d797c2199ffff0d0dca2a028.
+
+- Ergänzt Quell-/Output-Zeichenoffsets je Textspanne und eine Abdeckungsquote über alle Nicht-Leerzeichen im übernommenen Vorlesetext.
+- Macht Skip-Kategorie, Grund, Vorschau und sichere Wiederaufnahme von Publication-Metadata-/TOC-Heuristiken sichtbar. Die manuelle Aufnahme ist nur im Status Entwurf erlaubt; nach der Kapitelauswahl ist sie gesperrt.
+- Erhält gemischte XHTML-Navigationsressourcen mit Prosa auch in Nicht-Paragraph-Containern; reine Navigation und linkdichte TOC-Listen bleiben ausgenommen.
+- Ergänzt ausdrücklich manuelle Sprecherfassungen für Tabellen, MathML, Figures und eigenständige Bilder. Diese ersetzen nur das jeweilige Markup, erhalten Ankerpositionen und werden bei der Project-V5-Übernahme erneut angewendet.
+- Dokumentiert Semantik, Grenzen und manuelle Abnahme in `docs-dev/epub-content-audit.md`.
+- Synthetischer E2E-Test: Copyright-Heuristik wieder aufnehmen/zurücksetzen, Quell-Mapping prüfen, Sprecherfassungen anwenden, gespeicherte Project-V5-Phrase-Groups prüfen und nach vorbereiteter Auswahl Änderungen blockieren.
+- CI-Run 42407963183 auf exakt diesem PR-Head vollständig erfolgreich: Backend, Browser/Chromium, Frontend-Build, CPU-ASR-Smoke und isolierte Runtime.
+
+**Grenze:** Mapping-Abdeckung beweist die Zuordnung des übernommenen Textes, nicht semantische Vollständigkeit komplexer Elemente. B01 bleibt bis zur manuellen Abnahme mindestens eines komplexen privaten EPUBs offen.
+
 ### B02 – Versionierte Sprechtext-Normalisierung (Teilimplementierung)
 
 **Code:** `tts_audiobook_tool/text_ops/german_speech_normalizer.py` übernimmt kontrollierte deutsche Umwandlungen von Dezimal-, Euro-, Prozent- und mehrwortigen Glossarbegriffen. Vorhandene generische Prompt-Normalisierung bleibt für allgemeine Interpunktion/Leerraum zuständig; ihre per-Ziffer-Erweiterung wird für deutsche Bücher deaktiviert, um Dezimalbruchwerte nicht versehentlich in zwei ganze Zahlen zu zerlegen. Zeiten, Daten, URLs, Mailadressen, lange Identifikatoren und nicht freigegebene Akronyme werden nicht willkürlich geraten.
@@ -404,11 +420,11 @@ Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄ
 
 ### Integrationsstand auf `master` vom 07.11.2026
 
-**Verifizierter Repository-Stand:** master nach A01, A02, A03-Codeabschluss, A04, B01-Quelleninventur (PR #26, Merge c74acf7), B01-Navigationskorrekturen (PR #22) und B02 Teil 1. Der Standardbranch heißt master, nicht main.
+**Verifizierter Repository-Stand:** master nach A01, A02, A03-Codeabschluss, A04, B01-Navigationskorrekturen (PR #22), B01-Quelleninventur (PR #26) und B01-Mapping-/Review-Steuerung (PR #27, Merge 2ecd492), außerdem B02 Teil 1. Der Standardbranch heißt master, nicht main.
 
-**Wichtig:** A01, A02, A03 (Code-Implementierung) und A04 haben ihren offline prüfbaren technischen Umfang abgeschlossen. Bei A03 bleiben die echte RunPod-Installation, Pod-Neustart/Resume und Live-Rollback Teil der Release-Abnahme E03. B01 und B02 sind **nur teilweise umgesetzt**. B03, B04, C01, C02, D01, D02, D03, E01, E02 und E03 bleiben offen; bei D02/E03 fehlen echte GPU- und menschliche Hörbewertungen. Keine finale Releasefreigabe und keine Behauptung einer echten End-to-End-RunPod-Hörbuchproduktion.
+**Wichtig:** B01 ist technisch umgesetzt; offen bleibt ausschließlich die redaktionelle Abnahme mit einem komplexen privaten EPUB. B02 ist weiterhin teilweise umgesetzt. A01, A02, A03 (Code-Implementierung) und A04 haben ihren offline prüfbaren technischen Umfang abgeschlossen. Bei A03 bleiben echte RunPod-Installation, Pod-Neustart/Resume und Live-Rollback Teil der Release-Abnahme E03. B03, B04, C01, C02, D01, D02, D03, E01, E02 und E03 bleiben offen; bei D02/E03 fehlen echte GPU- und menschliche Hörbewertungen. Keine finale Releasefreigabe und keine Behauptung einer echten End-to-End-RunPod-Hörbuchproduktion.
 
-**Nächster technischer Arbeitsschritt:** B01 vervollständigen: Quell-zu-Sprechtext-Mapping und Segmentabdeckung, Gründe/Aktionen für Auslassungen, komplexe synthetische EPUB-Regressionen für Fußnoten/Formeln/Tabellen/XHTML-Mischdokumente sowie manuelle Vorschaukorrektur. Danach B02 um kontextabhängige Aussprache erweitern und B03 NarrationPlan vorbereiten.
+**Nächster Schritt:** Ein komplexes privates EPUB im Studio manuell abnehmen. Bei bestandener Prüfung B01 schließen und anschließend B02 um kontextabhängige Aussprache erweitern; danach B03 NarrationPlan vorbereiten.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
