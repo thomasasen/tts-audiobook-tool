@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+import wave
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
