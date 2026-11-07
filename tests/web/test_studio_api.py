@@ -7,6 +7,10 @@ from __future__ import annotations
 import io
 import os
 import stat
+import struct
+import threading
+import time
+import wave
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +83,94 @@ def test_broken_cuda_host_reports_actionable_web_error(client, monkeypatch):
     message = response.json()["detail"]
     assert "GPU ist für CUDA nicht betriebsbereit" in message
     assert "runpod/gpu_preflight.py --env both" in message
+
+
+def _test_preview_wav(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(16000)
+        out.writeframes(struct.pack("<" + "h" * 16000, *([500] * 16000)))
+
+
+def _await_preview_status(client, expected: str) -> dict:
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        result = client.get("/api/voices/preview/status", headers=authorized())
+        assert result.status_code == 200
+        state = result.json()
+        if state["status"] == expected:
+            return state
+        threading.Event().wait(0.02)
+    raise AssertionError("Background preview did not reach status: " + expected)
+
+
+def test_preview_progress_activity_is_authenticated_and_duplicate_safe(client, monkeypatch):
+    from tts_audiobook_tool.web_studio import production, app as studio
+    monkeypatch.setattr(production, "_model_identity", lambda: "test-installed-voice")
+    entered = threading.Event()
+    release = threading.Event()
+    seen = []
+
+    def fake_generate(on_progress=None):
+        assert on_progress is not None
+        on_progress("Thorsten-Modell wird in den GPU-Speicher geladen.")
+        entered.set()
+        assert release.wait(4), "Preview test thread was not released"
+        path = studio.data_dir() / "voice-samples" / "thorsten.wav"
+        _test_preview_wav(path)
+        seen.append(True)
+        return path
+
+    monkeypatch.setattr(production, "make_sample", fake_generate)
+    assert client.get("/api/voices/preview/status").status_code == 401
+    assert client.post("/api/voices/preview/start").status_code == 401
+    assert client.get("/api/voices/preview/audio/" + "a" * 32).status_code == 401
+    try:
+        response = client.post("/api/voices/preview/start", headers=authorized())
+        assert response.status_code == 202
+        task = response.json()
+        assert len(task["id"]) == 32
+        assert entered.wait(2)
+        current = client.get("/api/voices/preview/status", headers=authorized()).json()
+        assert current["status"] == "running"
+        assert any("Modell" in entry["message"] for entry in current["events"])
+        assert client.post("/api/voices/preview/start", headers=authorized()).status_code == 409
+        assert client.get("/api/voices/preview/audio/" + task["id"], headers=authorized()).status_code == 404
+    finally:
+        release.set()
+    done = _await_preview_status(client, "ready")
+    assert done["error"] == ""
+    assert seen == [True]
+    assert any("Audiodatei geprüft" in entry["message"] for entry in done["events"])
+    file = client.get("/api/voices/preview/audio/" + task["id"], headers=authorized())
+    assert file.status_code == 200
+    assert file.headers["content-type"].startswith("audio/wav")
+    assert len(file.content) > 1000
+    assert file.headers["cache-control"] == "no-store"
+    assert client.get("/api/voices/preview/audio/" + "b" * 32, headers=authorized()).status_code == 404
+
+    # The UI must not be handed a corrupt file if cached audio is damaged.
+    (studio.data_dir() / "voice-samples" / "thorsten.wav").write_bytes(b"invalid WAV")
+    assert client.get("/api/voices/preview/audio/" + task["id"], headers=authorized()).status_code == 404
+
+
+def test_preview_worker_failure_exposes_safe_summary_and_steps(client, monkeypatch):
+    from tts_audiobook_tool.web_studio import production
+    monkeypatch.setattr(production, "_model_identity", lambda: "test-installed-voice")
+
+    def fail(on_progress=None):
+        on_progress("Sprachsynthese läuft. Die GPU erzeugt die Hörprobe.")
+        raise RuntimeError("private worker diagnostic and user audiobook pathname")
+
+    monkeypatch.setattr(production, "make_sample", fail)
+    response = client.post("/api/voices/preview/start", headers=authorized())
+    assert response.status_code == 202
+    state = _await_preview_status(client, "failed")
+    assert "Worker-Log" in state["error"]
+    assert "private worker diagnostic" not in str(state)
+    assert any("Sprachsynthese" in entry["message"] for entry in state["events"])
 
 
 def test_empty_library(client):
