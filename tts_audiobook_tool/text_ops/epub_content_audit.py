@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import importlib
 import posixpath
 import re
 import zipfile
 from html.parser import HTMLParser
-from pathlib import PurePosixPath
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
 
-_OPF_NS = {"opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
 _CONTAINER = "META-INF/container.xml"
 _MAX_PREVIEW = 180
+_MAX_REVIEW_ELEMENTS = 80
+_INLINE_FORMAT_TAGS = {"abbr", "b", "code", "em", "i", "mark", "q", "s", "small", "strong", "sub", "sup", "u"}
 
 
 def _safe_archive_path(base: str, href: str) -> str:
@@ -26,6 +27,15 @@ def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1].lower()
 
 
+def _normal_path(value: str) -> str:
+    return posixpath.normpath(unquote(value.split("#", 1)[0].split("?", 1)[0])).lstrip("/")
+
+
+def _plain(value: str, limit: int = _MAX_PREVIEW) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip()
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 class _MarkupAuditParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -33,17 +43,33 @@ class _MarkupAuditParser(HTMLParser):
         self.text_parts: list[str] = []
         self._ignored_depth = 0
         self._ignored_tags = {"script", "style", "head", "svg", "noscript"}
-        self._capture_depth = 0
         self.image_alt: list[str] = []
+        self.footnotes = 0
+        self.footnote_refs = 0
+        self.scene_breaks = 0
+        self.inline_formatting = 0
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
         self.counts[tag] = self.counts.get(tag, 0) + 1
-        values = dict(attrs)
+        values = {str(key).lower(): value for key, value in attrs}
         if tag == "img":
             alt = (values.get("alt") or "").strip()
             if alt:
                 self.image_alt.append(alt[:_MAX_PREVIEW])
+        role = str(values.get("role") or "").lower().split()
+        epub_type = str(values.get("epub:type") or values.get("type") or "").lower().split()
+        if "doc-footnote" in role or "footnote" in epub_type:
+            self.footnotes += 1
+        if "doc-noteref" in role or "noteref" in epub_type:
+            self.footnote_refs += 1
+        if tag == "hr":
+            self.scene_breaks += 1
+        classes = str(values.get("class") or "").lower().replace("_", "-").split()
+        if any(token in {"scene-break", "scenebreak", "ornament", "dinkus"} for token in classes):
+            self.scene_breaks += 1
+        if tag in _INLINE_FORMAT_TAGS:
+            self.inline_formatting += 1
         if tag in self._ignored_tags:
             self._ignored_depth += 1
 
@@ -75,22 +101,145 @@ def _markup_stats(payload: bytes) -> dict:
         "images": counts.get("img", 0),
         "images_with_alt": len(parser.image_alt),
         "mathml": counts.get("math", 0),
+        "footnotes": parser.footnotes,
+        "footnote_refs": parser.footnote_refs,
         "footnote_markers": sum(
             1 for value in parser.text_parts
             if re.search(r"(?:\[\d+\]|\(\d+\)|\*{1,3})$", value)
         ),
+        "scene_breaks": parser.scene_breaks,
+        "inline_formatting": parser.inline_formatting,
         "headings": sum(counts.get(f"h{i}", 0) for i in range(1, 7)),
     }
 
 
-def audit_epub_content(epub_path: str, extracted_chapters, warnings: list[str] | None = None) -> dict:
-    """Build a read-only inventory of EPUB spine resources and retained prose.
+def _review_elements(payload: bytes, href: str, overrides: dict[str, str], *, retained: bool) -> list[dict]:
+    try:
+        BeautifulSoup = getattr(importlib.import_module("bs4"), "BeautifulSoup")
+        soup = BeautifulSoup(payload.decode("utf-8-sig", errors="replace"), "html.parser")
+    except Exception:
+        return []
 
-    This audit never changes the EPUB or the canonical extraction result. It is
-    deliberately conservative: source markup counts are evidence for review,
-    not a claim that every image/table/formula must be narrated.
+    counters: dict[str, int] = {}
+    result: list[dict] = []
+    for element in soup.find_all(["table", "math", "figure", "img"]):
+        tag = str(element.name or "").lower()
+        if tag == "img" and element.find_parent("figure") is not None:
+            continue
+        index = counters.get(tag, 0)
+        counters[tag] = index + 1
+        key = f"{tag}:{index}"
+        if tag == "img" and element.find_parent("figure") is not None:
+            continue
+        text = _plain(element.get_text(" ", strip=True), 500)
+        alt = _plain(str(element.get("alt") or ""), 300) if tag == "img" else ""
+        caption_node = element.find(["caption", "figcaption"])
+        caption = _plain(caption_node.get_text(" ", strip=True), 300) if caption_node else ""
+        preview = caption or alt or text or "Kein beschreibender Text im Quell-EPUB."
+        if tag == "table":
+            handling = "Zellinhalte werden derzeit in Lesereihenfolge abgeflacht."
+            kind = "Tabelle"
+        elif tag == "math":
+            handling = "MathML-Inhalt wird derzeit aus seinen Textknoten abgeflacht."
+            kind = "Formel"
+        elif tag == "figure":
+            handling = "Bilddateien werden nicht gesprochen; vorhandene Bildunterschriften bleiben erhalten."
+            kind = "Abbildung"
+        else:
+            handling = "Das Bild selbst wird nicht gesprochen; Alternativtext wird nur als Vorschau angezeigt."
+            kind = "Bild"
+        result.append({
+            "source_href": href,
+            "element_key": key,
+            "kind": kind,
+            "preview": preview,
+            "source_text": text,
+            "alt_text": alt,
+            "caption": caption,
+            "handling": handling,
+            "can_edit": retained,
+            "speaker_text": overrides.get(key, ""),
+            "approved": bool(overrides.get(key, "").strip()),
+        })
+        if len(result) >= _MAX_REVIEW_ELEMENTS:
+            break
+    return result
+
+
+def _mapping_for_chapters(chapters) -> tuple[list[dict], dict[str, dict]]:
+    mapping: list[dict] = []
+    coverage: dict[str, dict] = {}
+    for chapter_index, chapter in enumerate(chapters):
+        text = getattr(chapter, "text", "") or ""
+        total_non_whitespace = sum(not char.isspace() for char in text)
+        intervals: list[tuple[int, int]] = []
+        for span in getattr(chapter, "source_spans", []) or []:
+            start = getattr(span, "output_start", None)
+            end = getattr(span, "output_end", None)
+            source_start = getattr(span, "source_start", None)
+            source_end = getattr(span, "source_end", None)
+            status = getattr(span, "mapping_status", "unresolved")
+            if (
+                status == "mapped" and isinstance(start, int) and isinstance(end, int)
+                and isinstance(source_start, int) and isinstance(source_end, int)
+                and 0 <= start <= end <= len(text)
+            ):
+                intervals.append((start, end))
+            mapping.append({
+                "chapter_index": chapter_index,
+                "chapter_title": getattr(chapter, "title", ""),
+                "source_href": getattr(span, "source_href", ""),
+                "source_start": source_start,
+                "source_end": source_end,
+                "output_start": start,
+                "output_end": end,
+                "navigation_title": getattr(span, "navigation_title", ""),
+                "mapping_status": status,
+            })
+        intervals.sort()
+        merged: list[tuple[int, int]] = []
+        for start, end in intervals:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        mapped_non_whitespace = sum(
+            not char.isspace()
+            for start, end in merged
+            for char in text[start:end]
+        )
+        coverage[str(chapter_index)] = {
+            "total_non_whitespace_characters": total_non_whitespace,
+            "mapped_non_whitespace_characters": mapped_non_whitespace,
+            "unmapped_non_whitespace_characters": max(0, total_non_whitespace - mapped_non_whitespace),
+            "coverage_percent": round(
+                100.0 if total_non_whitespace == 0 else
+                100.0 * mapped_non_whitespace / total_non_whitespace, 2
+            ),
+        }
+    return mapping, coverage
+
+
+def audit_epub_content(
+        epub_path: str,
+        extracted_chapters,
+        warnings: list[str] | None = None,
+        *,
+        skipped_sources: list[dict] | None = None,
+        speaker_overrides: dict[str, dict[str, str]] | None = None,
+        included_source_hrefs: set[str] | None = None,
+) -> dict:
+    """Inventory source XHTML and report explicit source-to-output text mappings.
+
+    Mapping offsets refer to normalized extracted text and output chapter text,
+    never to ZIP byte offsets. Complex markup is inventoried for human review;
+    speaker text is used only when explicitly supplied by the user.
     """
     warnings = list(warnings or [])
+    skipped_sources = list(skipped_sources or [])
+    speaker_overrides = speaker_overrides or {}
+    manual_include_paths = {_normal_path(href) for href in (included_source_hrefs or set())}
+    mapping, chapter_coverage = _mapping_for_chapters(extracted_chapters)
     try:
         with zipfile.ZipFile(epub_path) as archive:
             names = set(archive.namelist())
@@ -125,97 +274,170 @@ def audit_epub_content(epub_path: str, extracted_chapters, warnings: list[str] |
                 for node in spine
                 if _local_name(node.tag) == "itemref"
             ]
-            retained_paths = set()
-            for chapter in extracted_chapters:
-                href = getattr(chapter, "href", "")
-                if not href:
+
+            mapped_by_path: dict[str, list[dict]] = {}
+            for item in mapping:
+                source_href = item.get("source_href") or ""
+                if not source_href:
                     continue
-                # EbookLib item.file_name and navigation hrefs are archive-root
-                # paths; manifest hrefs below are relative to the OPF location.
-                candidate = unquote(href.split("#", 1)[0].split("?", 1)[0])
-                if candidate in names:
-                    retained_paths.add(candidate)
-                else:
-                    retained_paths.add(_safe_archive_path(rootfile, href))
+                candidate = _normal_path(source_href)
+                if candidate not in names:
+                    candidate = _safe_archive_path(rootfile, source_href)
+                mapped_by_path.setdefault(candidate, []).append(item)
+
+            skip_by_path = {
+                _normal_path(item.get("href") or ""): item
+                for item in skipped_sources
+                if item.get("href")
+            }
+            override_paths = {
+                _normal_path(href): values
+                for href, values in speaker_overrides.items()
+                if isinstance(values, dict)
+            }
             resources = []
             skipped = []
+            review_elements = []
             aggregate = {
                 "spine_items": len(spine_ids), "retained_spine_items": 0,
                 "skipped_spine_items": 0, "missing_spine_items": 0,
                 "source_characters": 0, "source_tables": 0, "source_lists": 0,
                 "source_images": 0, "source_captions": 0, "source_mathml": 0,
+                "source_footnotes": 0, "source_footnote_refs": 0,
+                "source_scene_breaks": 0, "source_inline_formatting": 0,
+                "mapped_output_non_whitespace_characters": 0,
+                "total_output_non_whitespace_characters": 0,
             }
+            for chapter_coverage_item in chapter_coverage.values():
+                aggregate["mapped_output_non_whitespace_characters"] += chapter_coverage_item["mapped_non_whitespace_characters"]
+                aggregate["total_output_non_whitespace_characters"] += chapter_coverage_item["total_non_whitespace_characters"]
+
             for index, item_id in enumerate(spine_ids):
                 item = manifest.get(item_id)
                 if item is None:
-                    entry = {"index": index, "id": item_id, "status": "missing",
-                             "reason": "Spine-Eintrag verweist auf keine Manifest-Ressource."}
-                    skipped.append(entry)
+                    skipped.append({
+                        "index": index, "id": item_id, "status": "missing",
+                        "kind": "missing-spine-item",
+                        "reason": "Spine-Eintrag verweist auf keine Manifest-Ressource.",
+                        "preview": "", "can_restore": False, "overridden": False,
+                    })
                     aggregate["missing_spine_items"] += 1
                     continue
                 path = item["path"]
                 if path not in names:
-                    entry = {"index": index, "id": item_id, "href": path,
-                             "status": "missing", "reason": "Manifest-Ressource fehlt im ZIP-Archiv."}
-                    skipped.append(entry)
+                    skipped.append({
+                        "index": index, "id": item_id, "href": path, "status": "missing",
+                        "kind": "missing-resource",
+                        "reason": "Manifest-Ressource fehlt im ZIP-Archiv.",
+                        "preview": "", "can_restore": False, "overridden": False,
+                    })
                     aggregate["missing_spine_items"] += 1
                     continue
                 media_type = item["media_type"]
                 if not (media_type.endswith("xhtml+xml") or media_type.endswith("html")):
-                    resources.append({"index": index, "href": path, "media_type": media_type,
-                                      "status": "non-text", "characters": 0})
+                    resources.append({
+                        "index": index, "href": path, "media_type": media_type,
+                        "status": "non-text", "characters": 0,
+                    })
                     continue
-                stats = _markup_stats(archive.read(path))
-                retained = path in retained_paths
-                entry = {
+                payload = archive.read(path)
+                stats = _markup_stats(payload)
+                mapped_items = mapped_by_path.get(path, [])
+                skip_record = skip_by_path.get(path, {})
+                retained = bool(mapped_items)
+                overridden = bool(skip_record.get("overridden")) or path in manual_include_paths
+                source_status = (
+                    "retained-by-user" if retained and overridden
+                    else "retained" if retained
+                    else skip_record.get("status", "not-retained")
+                )
+                resource_overrides = override_paths.get(path, {})
+                can_edit_elements = retained or skip_record.get("kind") == "non-vocalizable"
+                elements = _review_elements(payload, path, resource_overrides, retained=can_edit_elements)
+                review_elements.extend(elements)
+                resource = {
                     "index": index, "href": path, "media_type": media_type,
-                    "status": "retained" if retained else ("empty" if not stats["characters"] else "not-retained"),
+                    "status": source_status,
+                    "included_by_user": overridden,
+                    "override_reason": skip_record.get("reason", "") if overridden else "",
+                    "mapped_segments": len(mapped_items),
+                    "mapped_output_characters": sum(
+                        max(0, (item.get("output_end") or 0) - (item.get("output_start") or 0))
+                        for item in mapped_items
+                        if item.get("mapping_status") == "mapped"
+                    ),
                     **stats,
                 }
-                resources.append(entry)
+                resources.append(resource)
                 if retained:
                     aggregate["retained_spine_items"] += 1
                 else:
                     aggregate["skipped_spine_items"] += 1
-                    reason = "Kein extrahierter Kapitelabschnitt mit dieser Quellressource verknüpft."
-                    matching_warnings = [
-                        re.sub(r"\x1b\[[0-9;]*m", "", warning)[:500]
-                        for warning in warnings
-                        if path.lower() in warning.lower() or posixpath.basename(path).lower() in warning.lower()
-                    ]
-                    if matching_warnings:
-                        reason = "Parser-Hinweis: " + matching_warnings[0]
-                    elif not stats["characters"]:
-                        reason = "Quellressource enthält nach Markup-Analyse keinen sichtbaren Text."
-                    skipped.append({**entry, "reason": reason})
-                for key in ("characters", "tables", "lists", "images", "captions", "mathml"):
+                    reason = skip_record.get("reason") or (
+                        "Quellressource enthält keinen sichtbaren Text."
+                        if not stats["characters"]
+                        else "Kein extrahierter Vorlesetext ist dieser Quellressource zugeordnet."
+                    )
+                    skipped.append({
+                        "index": index, "id": item_id, "href": path,
+                        "status": skip_record.get("status", "not-retained"),
+                        "kind": skip_record.get("kind", "unmapped-source"),
+                        "reason": reason,
+                        "preview": skip_record.get("preview") or stats["preview"],
+                        "can_restore": bool(skip_record.get("can_restore")),
+                        "overridden": False,
+                    })
+                for key in (
+                    "characters", "tables", "lists", "images", "captions", "mathml",
+                    "footnotes", "footnote_refs", "scene_breaks", "inline_formatting",
+                ):
                     aggregate_key = "source_" + key
                     if aggregate_key in aggregate:
                         aggregate[aggregate_key] += stats[key]
-            warnings_limited = [
-                re.sub(r"\x1b\[[0-9;]*m", "", warning)[:500]
-                for warning in warnings[:100]
-            ]
+
+            total_output = aggregate["total_output_non_whitespace_characters"]
+            mapped_output = aggregate["mapped_output_non_whitespace_characters"]
+            coverage_percent = round(100.0 if total_output == 0 else 100.0 * mapped_output / total_output, 2)
+            aggregate["unmapped_output_non_whitespace_characters"] = max(0, total_output - mapped_output)
+            aggregate["mapping_coverage_percent"] = coverage_percent
+            aggregate["review_elements"] = len(review_elements)
+            clean_warnings = [_plain(re.sub(r"\x1b\[[0-9;]*m", "", warning), 500) for warning in warnings[:100]]
+            restorable = sorted(
+                {
+                    item["href"] for item in skipped_sources
+                    if item.get("href") and item.get("can_restore")
+                } | {
+                    href for href in (included_source_hrefs or set()) if href
+                }
+            )
             return {
-                "version": 1,
-                "status": "review-required" if skipped or warnings_limited else "inventory-only",
+                "version": 2,
+                "status": "review-required" if skipped or clean_warnings or coverage_percent < 100 else "inventory-only",
                 "summary": aggregate,
                 "resources": resources[:500],
                 "skipped": skipped[:200],
-                "warnings": warnings_limited,
+                "source_mapping": mapping[:5000],
+                "chapter_coverage": chapter_coverage,
+                "restorable_source_hrefs": restorable,
+                "review_elements": review_elements[:_MAX_REVIEW_ELEMENTS],
+                "warnings": clean_warnings,
                 "review_notes": [
-                    "Der Audit ist eine Quelleninventur, keine automatische redaktionelle Freigabe.",
-                    "Tabellen, Formeln, Abbildungen und Fußnoten müssen anhand der Vorschau geprüft werden.",
-                    "Eine nicht zugeordnete Quellressource bedeutet nicht automatisch, dass ihr Inhalt fehlt: Navigationsabschnitte können in andere Kapitel zusammengeführt sein.",
+                    "Die Mapping-Abdeckung bezieht sich auf Nicht-Leerzeichen im normalisierten extrahierten Vorlesetext; Quell-Offsets sind keine EPUB-Bytepositionen.",
+                    "Tabellen, Formeln und Abbildungen werden inventarisiert. Eine Sprecherfassung wird nur nach ausdrücklicher Eingabe und Speicherung durch den Nutzer eingesetzt.",
+                    "Nicht zugeordnete Ressourcen können Navigation oder redaktionell entbehrliche Seiten sein. Vor einer Vertonung müssen sie geprüft werden.",
                 ],
             }
     except (OSError, zipfile.BadZipFile, ET.ParseError, KeyError, ValueError) as exc:
         return {
-            "version": 1,
+            "version": 2,
             "status": "audit-error",
             "summary": {},
             "resources": [],
             "skipped": [],
+            "source_mapping": mapping[:5000],
+            "chapter_coverage": chapter_coverage,
+            "restorable_source_hrefs": [],
+            "review_elements": [],
             "warnings": [f"EPUB-Content-Audit konnte nicht vollständig ausgeführt werden: {str(exc)[:400]}"],
             "review_notes": ["Der Import darf nicht als vollständig geprüft gelten."],
         }

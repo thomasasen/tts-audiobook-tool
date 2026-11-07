@@ -138,11 +138,19 @@ def _validate_epub(path: Path) -> None:
         raise ValueError("Das EPUB kann nicht sicher gelesen werden.") from exc
 
 
-def _extract(path: Path):
-    # Use the application's canonical EPUB parser, including spine and
-    # navigation logic. Never parse user-provided HTML in the web layer.
+def _extract(
+        path: Path,
+        include_skipped_hrefs: set[str] | None = None,
+        speaker_overrides: dict[str, dict[str, str]] | None = None,
+):
+    # Use the application's canonical parser, including spine and navigation
+    # logic. Never parse user-provided HTML in the web layer.
     from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
-    result = EpubExtractor.extract_import_chapters(str(path))
+    result = EpubExtractor.extract_import_chapters(
+        str(path),
+        include_skipped_hrefs=include_skipped_hrefs,
+        speaker_overrides=speaker_overrides,
+    )
     if not result.chapters:
         raise ValueError("Das EPUB enthält keine auslesbaren Kapitel.")
     if len(result.chapters) > MAX_CHAPTERS:
@@ -150,8 +158,14 @@ def _extract(path: Path):
     # The audit is read-only and supplements, never replaces, the canonical parser.
     from tts_audiobook_tool.text_ops.epub_content_audit import audit_epub_content
     result.content_audit = audit_epub_content(
-        str(path), result.chapters, result.significant_warnings or result.warnings
+        str(path),
+        result.chapters,
+        result.significant_warnings or result.warnings,
+        skipped_sources=result.skipped_sources,
+        speaker_overrides=speaker_overrides,
+        included_source_hrefs=include_skipped_hrefs,
     )
+    result.speaker_overrides = speaker_overrides or {}
     return result
 
 
@@ -177,11 +191,20 @@ def _catalogue(result) -> dict:
         "suggested_start": start,
         "warnings": (result.significant_warnings or result.warnings)[:50],
         "content_audit": getattr(result, "content_audit", {
-            "version": 1, "status": "unavailable", "summary": {},
-            "resources": [], "skipped": [],
+            "version": 2, "status": "unavailable", "summary": {},
+            "resources": [], "skipped": [], "source_mapping": [],
+            "chapter_coverage": {}, "restorable_source_hrefs": [],
+            "review_elements": [],
             "warnings": ["EPUB-Content-Audit nicht verfügbar."],
             "review_notes": ["Importinhalt manuell kontrollieren."],
         }),
+        "included_source_hrefs": list(getattr(result, "included_source_hrefs", [])),
+        "speaker_overrides": [
+            {"source_href": href, "element_key": key, "speaker_text": value, "approved": True}
+            for href, values in sorted(getattr(result, "speaker_overrides", {}).items())
+            for key, value in sorted(values.items())
+            if isinstance(value, str) and value.strip()
+        ],
     }
 
 
@@ -201,6 +224,61 @@ def _public_project(row: dict, catalogue: dict | None = None) -> dict:
 class ChapterSelection(BaseModel):
     start_index: int = Field(ge=0)
     excluded_indices: list[int] = Field(default_factory=list, max_length=MAX_CHAPTERS)
+
+
+class SourceOverridePayload(BaseModel):
+    include_hrefs: list[str] = Field(default_factory=list, max_length=MAX_CHAPTERS)
+
+
+class SpeakerOverridePayload(BaseModel):
+    source_href: str = Field(min_length=1, max_length=1024)
+    element_key: str = Field(min_length=1, max_length=64)
+    # Empty text removes an existing override; non-empty text is explicit human approval.
+    speaker_text: str = Field(max_length=1000)
+
+
+def _speaker_override_map(catalogue: dict) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for item in catalogue.get("speaker_overrides", []):
+        if not isinstance(item, dict):
+            continue
+        href = item.get("source_href")
+        key = item.get("element_key")
+        text = item.get("speaker_text")
+        if isinstance(href, str) and isinstance(key, str) and isinstance(text, str) and text.strip():
+            result.setdefault(href, {})[key] = text.strip()
+    return result
+
+
+def _write_catalogue(directory: Path, catalogue: dict) -> None:
+    destination = directory / "chapters.json"
+    temporary = directory / f"chapters.{uuid.uuid4().hex}.tmp"
+    try:
+        with temporary.open("x", encoding="utf-8") as target:
+            target.write(json.dumps(catalogue, ensure_ascii=False))
+            target.flush()
+            os.fsync(target.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _refresh_draft_catalogue(project_id: str, catalogue: dict) -> dict:
+    directory = _project_dir(project_id)
+    _write_catalogue(directory, catalogue)
+    now = datetime.now(timezone.utc).isoformat()
+    with _db() as db:
+        db.execute(
+            """UPDATE studio_projects
+               SET title=?, chapter_count=?, selected_start=?, excluded_json=?, status=?, updated_at=?
+               WHERE id=?""",
+            (
+                catalogue["title"], len(catalogue["chapters"]),
+                catalogue["suggested_start"], "[]", "Entwurf", now, project_id,
+            ),
+        )
+    return _public_project(_project(project_id), catalogue)
 
 
 app = FastAPI(
@@ -333,7 +411,80 @@ def get_project(project_id: str):
         catalogue = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise HTTPException(500, "Kapitelinformationen können nicht geladen werden.") from exc
+    # Existing projects created by an earlier Studio build remain readable.
+    catalogue.setdefault("included_source_hrefs", [])
+    catalogue.setdefault("speaker_overrides", [])
+    audit = catalogue.get("content_audit")
+    if isinstance(audit, dict):
+        audit.setdefault("source_mapping", [])
+        audit.setdefault("chapter_coverage", {})
+        audit.setdefault("restorable_source_hrefs", [])
+        audit.setdefault("review_elements", [])
     return _public_project(row, catalogue)
+
+
+@app.put("/api/projects/{project_id}/source-overrides", dependencies=[Depends(require_auth)])
+def update_source_overrides(project_id: str, payload: SourceOverridePayload):
+    row = _project(project_id)
+    if row["status"] != "Entwurf":
+        raise HTTPException(409, "Quellenauslassungen können nur vor dem Speichern der Kapitelauswahl geändert werden.")
+    directory = _project_dir(project_id)
+    try:
+        current = json.loads((directory / "chapters.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, "Kapitelinformationen können nicht geladen werden.") from exc
+    allowed = set(current.get("content_audit", {}).get("restorable_source_hrefs", []))
+    requested = set(payload.include_hrefs)
+    if len(requested) != len(payload.include_hrefs):
+        raise HTTPException(422, "Quellressourcen dürfen nicht doppelt angegeben werden.")
+    if any(not isinstance(href, str) or href not in allowed for href in requested):
+        raise HTTPException(422, "Mindestens eine Quellressource ist nicht als korrigierbare Auslassung freigegeben.")
+    overrides = _speaker_override_map(current)
+    try:
+        result = _extract(directory / "source.epub", requested, overrides)
+        catalogue = _catalogue(result)
+        return _refresh_draft_catalogue(project_id, catalogue)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.put("/api/projects/{project_id}/speaker-overrides", dependencies=[Depends(require_auth)])
+def update_speaker_override(project_id: str, payload: SpeakerOverridePayload):
+    row = _project(project_id)
+    if row["status"] != "Entwurf":
+        raise HTTPException(409, "Sprecherfassungen können nur vor dem Speichern der Kapitelauswahl geändert werden.")
+    directory = _project_dir(project_id)
+    try:
+        current = json.loads((directory / "chapters.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, "Kapitelinformationen können nicht geladen werden.") from exc
+
+    element = next((
+        item for item in current.get("content_audit", {}).get("review_elements", [])
+        if item.get("source_href") == payload.source_href
+        and item.get("element_key") == payload.element_key
+        and item.get("can_edit")
+    ), None)
+    if element is None:
+        raise HTTPException(422, "Das Inhaltselement gehört nicht zu einer aktuell übernommenen EPUB-Quellressource.")
+
+    overrides = _speaker_override_map(current)
+    clean_text = payload.speaker_text.strip()
+    if clean_text:
+        overrides.setdefault(payload.source_href, {})[payload.element_key] = clean_text
+    else:
+        values = overrides.get(payload.source_href, {})
+        values.pop(payload.element_key, None)
+        if not values:
+            overrides.pop(payload.source_href, None)
+
+    include_hrefs = set(current.get("included_source_hrefs", []))
+    try:
+        result = _extract(directory / "source.epub", include_hrefs, overrides)
+        catalogue = _catalogue(result)
+        return _refresh_draft_catalogue(project_id, catalogue)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.put("/api/projects/{project_id}/chapters", dependencies=[Depends(require_auth)])
@@ -361,11 +512,14 @@ def select_chapters(project_id: str, selection: ChapterSelection):
     from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
 
     try:
+        speaker_overrides = _speaker_override_map(catalogue)
         book = EpubExtractor.import_epub(
             str(directory / "source.epub"),
             max_words=Project().max_words,
             segmentation_strategy=Project().segmentation_strategy,
             language_code="de",
+            include_skipped_hrefs=set(catalogue.get("included_source_hrefs", [])),
+            speaker_overrides=speaker_overrides,
         )
         if len(book.chapters) != len(chapters):
             raise ValueError("Die EPUB-Kapitel haben sich seit dem Import verändert.")
