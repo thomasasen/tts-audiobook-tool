@@ -75,10 +75,10 @@ class TestGermanStudioRunPod(unittest.TestCase):
                 if line and not line.startswith("#") and "=" in line:
                     key, value = line.split("=", 1)
                     pins[key] = value.strip('"')
-            (model / ".studio-ready").write_text(pins["MODEL_RELEASE_ID"] + "\\n", encoding="utf-8")
+            (model / ".studio-ready").write_text(pins["MODEL_RELEASE_ID"] + "\n", encoding="utf-8")
             checksums = root / "models/thorsten-model-sha256.txt"
             checksums.write_text("".join(
-                f"{hashlib.sha256((weights / name).read_bytes()).hexdigest()}  {name}\\n"
+                f"{hashlib.sha256((weights / name).read_bytes()).hexdigest()}  {name}\n"
                 for name in names
             ), encoding="utf-8")
 
