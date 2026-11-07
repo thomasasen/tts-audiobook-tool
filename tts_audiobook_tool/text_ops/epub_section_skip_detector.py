@@ -141,6 +141,33 @@ class EpubSectionSkipDetector:
         return False
 
     @staticmethod
+    def detect_technical_translation_attribution_skip(
+            href: str, title: str, html: str
+    ) -> EpubSectionSkipDecision:
+        """Identify short, explicitly labelled translation-tool credit pages.
+
+        Keep the original EPUB untouched. This only decides whether an optional
+        credit page belongs in the spoken text; manual inclusion remains possible.
+        """
+        key = EpubSectionSkipDetector.normalize_key_text(f"{href} {title}")
+        if "attribution" not in key and "translationcredits" not in key:
+            return EpubSectionSkipDecision()
+        text = EpubSectionSkipDetector.normalize_content_text(
+            EpubSectionSkipDetector.html_to_text_preview(html)
+        )
+        if len(text) > 1200:
+            return EpubSectionSkipDecision()
+        signatures = (
+            "übersetzt mit", "translated with", "übersetzt durch",
+            "machine translated using", "automatically translated using",
+        )
+        if any(signature in text for signature in signatures):
+            return EpubSectionSkipDecision(
+                True, "technical translation attribution page (manual inclusion available)",
+            )
+        return EpubSectionSkipDecision()
+
+    @staticmethod
     def detect_publication_metadata_skip(
             readable_spine_index: int,
             readable_spine_count: int,
