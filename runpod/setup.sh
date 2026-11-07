@@ -113,8 +113,13 @@ if [[ ! -x "$UV" ]]; then
   python3 -m venv "$UV_TOOL_DIR"
   "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check "uv==${UV_VERSION}"
 fi
-echo "uv: $("$UV" --version)"
-"$UV" python install 3.12
+actual_uv_version="$("$UV" --version | awk '{print $2}')"
+if [[ "$actual_uv_version" != "$UV_VERSION" ]]; then
+  echo "uv version mismatch: expected $UV_VERSION, got $actual_uv_version." >&2
+  exit 1
+fi
+echo "uv: $actual_uv_version"
+"$UV" python install "$WEB_PYTHON_VERSION" "$THORSTEN_PYTHON_VERSION"
 if (( BOOTSTRAP_ONLY )); then
   echo "RunPod bootstrap-only complete: OS packages, uv and managed Python $WEB_PYTHON_VERSION and $THORSTEN_PYTHON_VERSION ready."
   exit 0
