@@ -22,6 +22,10 @@ OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
 "$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
   --output-file "$OUTPUT_DIR/web/requirements-runtime.lock.txt" \
   "$REPO_DIR/web/requirements-runtime.txt"
+"$UV" pip compile --generate-hashes --no-deps --emit-index-url \
+  --index-url https://download.pytorch.org/whl/cpu --python "$WEB_PYTHON_VERSION" \
+  --python-version 3.12 --output-file "$OUTPUT_DIR/web/torch-cpu.lock.txt" \
+  "$REPO_DIR/web/torch-cpu.in"
 "$UV" lock --project "$REPO_DIR/runpod/locks/thorsten" --python "$THORSTEN_PYTHON_VERSION"
 mkdir -p "$OUTPUT_DIR/runpod/locks/thorsten"
 cp "$REPO_DIR/runpod/locks/thorsten/uv.lock" "$OUTPUT_DIR/runpod/locks/thorsten/uv.lock"

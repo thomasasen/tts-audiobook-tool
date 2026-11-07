@@ -10,6 +10,7 @@ on:
       - "requirements-base.txt"
       - "requirements-moss.txt"
       - "web/requirements-runtime.txt"
+      - "web/torch-cpu.in"
       - "web/requirements.txt"
       - "web/package.json"
       - ".github/workflows/a03-release-locks.yml"
