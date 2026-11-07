@@ -58,6 +58,11 @@ class _MarkupAuditParser(HTMLParser):
             alt = (values.get("alt") or "").strip()
             if alt:
                 self.image_alt.append(alt[:_MAX_PREVIEW])
+            # An explicitly identified decorative scene divider is not spoken,
+            # but must be visible in the structural audit.
+            image_label = f"{alt} {values.get('src') or ''}".lower().replace("_", "-")
+            if re.search(r"(?:scene-break|scenebreak|dinkus|break-ornament)", image_label):
+                self.scene_breaks += 1
         role = str(values.get("role") or "").lower().split()
         epub_type = str(values.get("epub:type") or values.get("type") or "").lower().split()
         if "doc-footnote" in role or "footnote" in epub_type:
@@ -149,8 +154,13 @@ def _review_elements(payload: bytes, href: str, overrides: dict[str, str], *, re
             handling = "Bilddateien werden nicht gesprochen; vorhandene Bildunterschriften bleiben erhalten."
             kind = "Abbildung"
         else:
-            handling = "Das Bild selbst wird nicht gesprochen; Alternativtext wird nur als Vorschau angezeigt."
-            kind = "Bild"
+            marker = f"{alt} {element.get('src') or ''}".lower().replace("_", "-")
+            if re.search(r"(?:scene-break|scenebreak|dinkus|break-ornament)", marker):
+                handling = "Dekorativer Szenentrenner: Abschnittsabstand bleibt erhalten, das Bild wird nicht gesprochen."
+                kind = "Szenentrenner"
+            else:
+                handling = "Das Bild selbst wird nicht gesprochen; Alternativtext wird nur als Vorschau angezeigt."
+                kind = "Bild"
         result.append({
             "source_href": href,
             "element_key": key,
