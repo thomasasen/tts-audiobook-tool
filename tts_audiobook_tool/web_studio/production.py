@@ -558,6 +558,45 @@ def _jobs_dir(job_id: str) -> Path:
     return _studio().data_dir() / "studio-jobs" / job_id
 
 
+def _job_event(job_id: str, message: str) -> None:
+    """Bounded, private per-job activity; never include source text or paths."""
+    if not isinstance(message, str) or not 1 <= len(message) <= 200:
+        raise ValueError("Ungültige Protokollmeldung.")
+    filename = _jobs_dir(job_id) / "activity.json"
+    with _ACTIVITY_LOCK:
+        try:
+            events = json.loads(filename.read_text(encoding="utf-8"))
+            if not isinstance(events, list):
+                events = []
+        except (OSError, ValueError, TypeError):
+            events = []
+        events.append({"at": _now(), "message": message})
+        _atomic_json(filename, events[-60:])
+
+
+def job_activity(project_id: str, job_id: str) -> dict:
+    """Authenticated and project-isolated progress; never return raw worker logs."""
+    job = public_job(project_id, job_id)
+    filename = _jobs_dir(job_id) / "activity.json"
+    with _ACTIVITY_LOCK:
+        try:
+            events = json.loads(filename.read_text(encoding="utf-8"))
+            if not isinstance(events, list):
+                events = []
+        except (OSError, ValueError, TypeError):
+            events = []
+    total = max(0, job["total"])
+    done = max(0, min(job["done"], total))
+    # A completed audio-generation percentage describes segments only.
+    # M4B muxing is a separate step, so do not report a fabricated export ETA.
+    return {
+        "id": job_id, "status": job["status"],
+        "done": done, "total": total,
+        "percent": round(100 * done / total) if total else 0,
+        "events": events[-60:],
+    }
+
+
 def init():
     """Recover interrupted jobs on restart; one worker per persistent data root."""
     global _THREAD, _LOCK_FILE
@@ -683,6 +722,7 @@ def create_job(project_id: str) -> dict:
         # An uncommitted plan must never become a visible orphan job.
         (_jobs_dir(job_id) / "plan.json").unlink(missing_ok=True)
         raise
+    _job_event(job_id, "Hörbuchauftrag wurde in die Warteschlange gestellt.")
     _WAKE.set()
     return public_job(project_id, job_id)
 
@@ -711,6 +751,12 @@ def change_job(project_id: str, job_id: str, action: str) -> dict:
                 "UPDATE studio_projects SET status='Vorbereitet',updated_at=? WHERE id=?",
                 (_now(), project_id),
             )
+    action_labels = {
+        "pause": "Hörbuchproduktion wurde pausiert.",
+        "resume": "Hörbuchproduktion wird fortgesetzt.",
+        "cancel": "Hörbuchproduktion wurde abgebrochen.",
+    }
+    _job_event(job_id, action_labels[action])
     _WAKE.set()
     return public_job(project_id, job_id)
 
@@ -728,12 +774,17 @@ def _loop():
                 db.execute("UPDATE studio_jobs SET status='running',updated_at=? WHERE id=? AND status='queued'", (_now(), row["id"]))
         if row is None:
             continue
+        _job_event(row["id"], "GPU-Auftrag gestartet; Sprecher wird vorbereitet.")
         try:
             _run(row["id"])
         except Exception as exc:
             with _studio()._db() as db:
                 db.execute("UPDATE studio_jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='running'",
                            (str(exc)[:400],_now(),row["id"]))
+            _job_event(row["id"], "Vertonung fehlgeschlagen. Einzelheiten im privaten Server-Log.")
+            logging.getLogger("german-audiobook-studio.engine").exception(
+                "Audiobook production failed, job=%s", row["id"]
+            )
 
 
 def _run(job_id: str):
@@ -766,6 +817,8 @@ def _run(job_id: str):
                 except (ValueError, OSError, wave.Error):
                     seconds = 0.0
             if not seconds:
+                if i == 0 or i % 10 == 0:
+                    _job_event(job_id, f"Sprachsynthese: Segment {i + 1} von {len(segments)} läuft.")
                 path.unlink(missing_ok=True)
                 meta.unlink(missing_ok=True)
                 prompt = _normalize_de(segment["text"], plan["glossary"])
@@ -791,11 +844,12 @@ def _run(job_id: str):
                 return
             duration += seconds
             done += 1
-            if segment["title"] != chapter or done % 5 == 0 or done == len(segments):
-                chapter = segment["title"]
-                with _studio()._db() as db:
-                    db.execute("UPDATE studio_jobs SET done=?,duration=?,chapter=?,updated_at=? WHERE id=?",
-                               (done,duration,chapter,_now(),job_id))
+            chapter = segment["title"]
+            with _studio()._db() as db:
+                db.execute("UPDATE studio_jobs SET done=?,duration=?,chapter=?,updated_at=? WHERE id=?",
+                           (done,duration,chapter,_now(),job_id))
+            if done == 1 or done % 10 == 0 or done == len(segments):
+                _job_event(job_id, f"{done} von {len(segments)} Audiosegmenten fertig.")
         with _studio()._db() as db:
             completed = db.execute(
                 "UPDATE studio_jobs SET status='generated',done=?,duration=?,updated_at=? WHERE id=? AND status='running'",
@@ -804,6 +858,8 @@ def _run(job_id: str):
             if completed == 1:
                 db.execute("UPDATE studio_projects SET status='Audio bereit',updated_at=? WHERE id=?",
                            (_now(), job["project_id"]))
+        if completed == 1:
+            _job_event(job_id, "Alle Audiosegmente wurden erstellt. M4B-Export kann gestartet werden.")
     finally:
         _GPU.release()
 
