@@ -240,7 +240,14 @@ def main() -> None:
                     )
                     page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
                     player = page.locator(".audio-preview audio")
-                    player.wait_for(state="visible", timeout=15000)
+                    try:
+                        player.wait_for(state="visible", timeout=15000)
+                    except Exception:
+                        # Only synthetic test content; safe to emit to CI logs.
+                        print("PCM16 PREVIEW DEBUG: progress=", page.locator(".generation-progress").all_inner_texts())
+                        print("PCM16 PREVIEW DEBUG: errors=", page.locator(".message.error").all_inner_texts())
+                        print("PCM16 PREVIEW DEBUG: audio-count=", page.locator("audio").count())
+                        raise
                     page.wait_for_function(
                         "() => { const audio = document.querySelector('.audio-preview audio');"
                         " return !!audio && Number.isFinite(audio.duration) && audio.duration >= 0.9; }",
