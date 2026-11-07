@@ -439,6 +439,32 @@ def preview_voice():
         ) from exc
 
 
+@app.post("/api/voices/preview/start", dependencies=[Depends(require_auth)], status_code=202)
+def start_preview():
+    """Fast response: model load and inference continue in a single background worker."""
+    try:
+        return production.start_sample()
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/voices/preview/status", dependencies=[Depends(require_auth)])
+def preview_status():
+    return production.preview_status()
+
+
+@app.get("/api/voices/preview/audio/{preview_id}", dependencies=[Depends(require_auth)])
+def preview_audio(preview_id: str):
+    try:
+        path = production.sample_audio(preview_id)
+        return FileResponse(
+            path, media_type="audio/wav", filename="thorsten-probe.wav",
+            headers={"Cache-Control": "no-store"},
+        )
+    except (ValueError, OSError, wave.Error) as exc:
+        raise HTTPException(404, "Keine vollständig erzeugte Hörprobe verfügbar.") from exc
+
+
 @app.post("/api/voices/approve", dependencies=[Depends(require_auth)])
 def approve_voice():
     # Called only after the operator has auditioned the generated sample.
