@@ -24,7 +24,7 @@ spec.loader.exec_module(doctor)
 
 class TestRunPodSupport(unittest.TestCase):
     def test_shell_syntax_and_help_never_install(self):
-        for filename in ("env.sh", "setup.sh", "start.sh"):
+        for filename in ("env.sh", "model-source.sh", "setup.sh", "start.sh", "generate-release-locks.sh"):
             with self.subTest(filename=filename):
                 subprocess.run(
                     ["bash", "-n", str(ROOT / "runpod" / filename)],
