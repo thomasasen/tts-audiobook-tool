@@ -5,6 +5,8 @@ on:
     paths:
       - "tts_audiobook_tool/web_studio/**"
       - "web/**"
+      - "runpod/install-web.sh"
+      - "runpod/start-web.sh"
       - "tests/web/**"
       - "runpod/acceptance*.py"
       - ".github/workflows/german-audiobook-studio.yml"
@@ -27,13 +29,50 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install minimal web dependencies
-        run: python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy EbookLib==0.18 beautifulsoup4==4.12.3 pysbd==0.3.4 num2words==0.5.14 natsort==8.4.0 librosa==0.11.0 sounddevice==0.5.2 mutagen==1.48.1 textual==8.2.8 pyloudnorm==0.1.1 audiotsm==0.1.2 xxhash==3.5.0 watchdog==6.0.0 wakepy text2num==3.0.1 whisper_normalizer==0.1.12 requests psutil loguru==0.7.3 nvidia-ml-py chardet==5.2.0 metaphone==0.6 prompt-toolkit==3.0.52 "huggingface_hub>=0.25,<2"
+        run: python -m pip install -r web/requirements-runtime.txt pytest
       - name: CPU-only Torch for upstream Project-V5 imports
         run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
       - name: Compile Python adapter
         run: python -m compileall -q tts_audiobook_tool/web_studio runpod/acceptance.py runpod/acceptance_epub.py
       - name: Web API tests
         run: python -m pytest tests/web -q --confcutdir=tests/web
+
+  deployed-web-runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare pinned UV binary as in persistent RunPod volume
+        run: |
+          python -m pip install uv==0.9.11
+          mkdir -p "$RUNNER_TEMP/audiobook-data/tools/uv-bootstrap/bin"
+          ln -s "$(command -v uv)" "$RUNNER_TEMP/audiobook-data/tools/uv-bootstrap/bin/uv"
+      - name: Execute actual isolated Web Studio installer
+        run: bash runpod/install-web.sh
+        env:
+          RUNPOD_WORKSPACE: ${{ runner.temp }}
+          AUDIOBOOK_DATA_ROOT: ${{ runner.temp }}/audiobook-data
+      - name: Confirm idempotent cached second installation
+        run: bash runpod/install-web.sh
+        env:
+          RUNPOD_WORKSPACE: ${{ runner.temp }}
+          AUDIOBOOK_DATA_ROOT: ${{ runner.temp }}/audiobook-data
+      - name: Start production FastAPI server and verify HTTP readiness
+        run: |
+          export AUDIOBOOK_STUDIO_DATA_DIR="$RUNNER_TEMP/audiobook-data"
+          export AUDIOBOOK_STUDIO_TOKEN="test-standalone-web-runtime-token-more-than-32-chars"
+          "$RUNNER_TEMP/audiobook-data/venvs/web/bin/python" -m uvicorn tts_audiobook_tool.web_studio.app:app --host 127.0.0.1 --port 7860 --workers 1 >"$RUNNER_TEMP/web.log" 2>&1 &
+          WEB_PID=$!
+          trap 'kill "$WEB_PID" 2>/dev/null || true' EXIT
+          READY=0
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:7860/api/health; then READY=1; break; fi
+            if ! kill -0 "$WEB_PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$READY" -ne 1 ]; then cat "$RUNNER_TEMP/web.log"; exit 1; fi
 
   frontend:
     runs-on: ubuntu-latest
@@ -62,7 +101,7 @@ jobs:
           node-version: "22"
       - name: Install Python, EPUB and headless browser dependencies
         run: |
-          python -m pip install -r web/requirements.txt pytest httpx av==18.1.0 soundfile==0.13.1 numpy EbookLib==0.18 beautifulsoup4==4.12.3 pysbd==0.3.4 num2words==0.5.14 natsort==8.4.0 librosa==0.11.0 sounddevice==0.5.2 mutagen==1.48.1 textual==8.2.8 pyloudnorm==0.1.1 audiotsm==0.1.2 xxhash==3.5.0 watchdog==6.0.0 wakepy text2num==3.0.1 whisper_normalizer==0.1.12 requests psutil loguru==0.7.3 nvidia-ml-py chardet==5.2.0 metaphone==0.6 prompt-toolkit==3.0.52 "huggingface_hub>=0.25,<2" playwright
+          python -m pip install -r web/requirements-runtime.txt pytest playwright
           python -m playwright install --with-deps chromium
       - name: CPU-only Torch for upstream Project-V5 imports
         run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
