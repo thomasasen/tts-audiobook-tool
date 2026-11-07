@@ -222,6 +222,20 @@ def main() -> None:
                     # This was missing from the original acceptance tests:
                     # previously they only checked empty/failed audio cases.
                     playable_id = "e" * 32
+                    page.evaluate("""() => {
+                        window.__wavUrlAudit = {created: [], revoked: []};
+                        const create = URL.createObjectURL.bind(URL);
+                        const revoke = URL.revokeObjectURL.bind(URL);
+                        URL.createObjectURL = blob => {
+                            const url = create(blob);
+                            window.__wavUrlAudit.created.push({url, size: blob.size, type: blob.type});
+                            return url;
+                        };
+                        URL.revokeObjectURL = url => {
+                            window.__wavUrlAudit.revoked.push(url);
+                            return revoke(url);
+                        };
+                    }""")
                     pcm_wav = browser_pcm16_wav()
                     page.route(
                         "**/api/voices/preview/start",
@@ -247,6 +261,7 @@ def main() -> None:
                         print("PCM16 PREVIEW DEBUG: progress=", page.locator(".generation-progress").all_inner_texts())
                         print("PCM16 PREVIEW DEBUG: errors=", page.locator(".message.error").all_inner_texts())
                         print("PCM16 PREVIEW DEBUG: audio-count=", page.locator("audio").count())
+                        print("PCM16 PREVIEW DEBUG: URL audit=", page.evaluate("window.__wavUrlAudit"))
                         print("PCM16 PREVIEW DEBUG: error-link=", page.locator('a[download="thorsten-hoerprobe.wav"]').all_inner_texts())
                         diagnostic = page.evaluate("""async () => {
                             const link = document.querySelector('a[download="thorsten-hoerprobe.wav"]');
