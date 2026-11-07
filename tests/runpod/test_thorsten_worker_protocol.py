@@ -52,8 +52,11 @@ class TestThorstenProtocol(TestCase):
         modules["torch"] = torch
 
         torchaudio = ModuleType("torchaudio")
-        def save(path, data, sample_rate):
+        def save(path, data, sample_rate, **kwargs):
             self.assertEqual((data, sample_rate), ([1, 2, 3], 24000))
+            self.assertEqual(kwargs, {
+                "format": "wav", "encoding": "PCM_S", "bits_per_sample": 16,
+            })
             Path(path).write_bytes(b"fake-audio")
         torchaudio.save = save
         modules["torchaudio"] = torchaudio
