@@ -17,6 +17,7 @@ fi
 LOCK_SHA256="$(sha256sum "$LOCK_PROJECT/uv.lock" | awk '{print $1}')"
 VERSION="${MODEL_RELEASE_ID}-deps-${LOCK_SHA256}-py-${THORSTEN_PYTHON_VERSION}-uv-${UV_VERSION}"
 CHECKSUMS="$AUDIOBOOK_DATA_ROOT/models/thorsten-model-sha256.txt"
+RUNTIME_MANIFEST="$AUDIOBOOK_DATA_ROOT/models/thorsten-runtime-sha256.txt"
 mkdir -p "$AUDIOBOOK_DATA_ROOT/models" "$AUDIOBOOK_VENV_DIR"
 if [[ ! -x "$UV" ]]; then
   echo "Run bash runpod/setup.sh --bootstrap-only before installing Thorsten." >&2
@@ -27,6 +28,10 @@ if [[ "$actual_uv_version" != "$UV_VERSION" ]]; then
   echo "uv version mismatch: expected $UV_VERSION, got $actual_uv_version." >&2
   exit 1
 fi
+runtime_freeze_hash() {
+  "$UV" pip freeze --python "$VENV/bin/python" | LC_ALL=C sort | sha256sum | awk '{print $1}'
+}
+
 # CosyVoice's pinned Lightning 2.2.4 still imports pkg_resources.
 # setuptools 82+ removed that module. Repair *only* the isolated Thorsten
 # runtime, including already verified persistent model installs, so a Pod
@@ -51,10 +56,12 @@ if [[ -f "$MODEL_ROOT/.studio-ready" && "$(cat "$MODEL_ROOT/.studio-ready")" == 
       -x "$VENV/bin/python" && -s "$MODEL_DIR/llm.pt" &&
       -s "$MODEL_DIR/flow.pt" && -s "$MODEL_DIR/spk2info.pt" &&
       -s "$MODEL_DIR/hift.pt" && -s "$MODEL_DIR/infer_thorsten.py" &&
-      -s "$MODEL_ROOT/infer_thorsten.py" && -s "$CHECKSUMS" ]] &&
+      -s "$MODEL_ROOT/infer_thorsten.py" && -s "$CHECKSUMS" &&
+      -s "$RUNTIME_MANIFEST" ]] &&
    verify_cosyvoice_checkout "$MODEL_ROOT" &&
    (cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS") &&
-   cmp -s "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py"; then
+   cmp -s "$MODEL_DIR/infer_thorsten.py" "$MODEL_ROOT/infer_thorsten.py" &&
+   [[ "$(runtime_freeze_hash)" == "$(cat "$RUNTIME_MANIFEST")" ]]; then
   echo "Thorsten CosyVoice3 weights verified against persistent SHA-256 manifest."
   exit 0
 fi
@@ -81,16 +88,15 @@ else
   fi
 fi
 ensure_cosyvoice_checkout "$MODEL_ROOT"
+(
+  source "$VENV/bin/activate"
+  "$UV" sync --project "$LOCK_PROJECT" --locked --no-dev --active
+)
 if command -v apt-get >/dev/null 2>&1 && [[ "$EUID" -eq 0 ]]; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sox libsox-fmt-all
 fi
-# Do not upgrade setuptools: v82+ removes pkg_resources needed by Lightning.
-"$VENV/bin/python" -m pip install --disable-pip-version-check --no-input "setuptools==80.9.0"
-"$VENV/bin/python" -m pip install --disable-pip-version-check --no-input \
-  "openai-whisper==20231117" "huggingface_hub==${HF_HUB_VERSION}"
-grep -v '^openai-whisper' "$MODEL_ROOT/requirements.txt" > "$AUDIOBOOK_DATA_ROOT/cosyvoice-requirements.txt"
-"$VENV/bin/python" -m pip install --disable-pip-version-check -r "$AUDIOBOOK_DATA_ROOT/cosyvoice-requirements.txt"
-# Guard against transitive upgrades that could remove pkg_resources again.
+# The locked project pins setuptools, Whisper, Hugging Face Hub, Torch and all
+# CosyVoice transitive dependencies. Repair only the known pkg_resources issue.
 ensure_thorsten_pkg_resources
 
 # Download into persistent paths and overlay *only* the authored fine-tune
@@ -100,6 +106,12 @@ ensure_thorsten_pkg_resources
 echo "Thorsten model download mode: standard Hugging Face HTTP (HF_HUB_ENABLE_HF_TRANSFER=$HF_HUB_ENABLE_HF_TRANSFER)"
 PREFETCH_VERSION="$MODEL_ROOT/.prefetch-complete"
 PREFETCH_SUMS="$MODEL_ROOT/.prefetch-sha256.txt"
+if [[ ! -f "$PREFETCH_VERSION" ]] && [[ -d "$MODEL_DIR" ]] &&
+   find "$MODEL_DIR" -mindepth 1 -type f -print -quit | grep -q .; then
+  echo "Unmarked model files exist without a verified prefetch marker." >&2
+  echo "Refusing to overwrite or silently rebaseline partial/corrupt model data." >&2
+  exit 1
+fi
 if [[ -f "$PREFETCH_VERSION" ]]; then
   if [[ "$(cat "$PREFETCH_VERSION")" != "$MODEL_RELEASE_ID" || ! -s "$PREFETCH_SUMS" ]] ||
      ! (cd "$MODEL_DIR" && sha256sum --check --status "$PREFETCH_SUMS"); then
@@ -159,6 +171,10 @@ PY
     speech_tokenizer_v3.batch.onnx > "$CHECKSUMS"
 )
 chmod 600 "$CHECKSUMS"
+runtime_hash="$(runtime_freeze_hash)"
+printf '%s\n' "$runtime_hash" > "$RUNTIME_MANIFEST.tmp"
+chmod 600 "$RUNTIME_MANIFEST.tmp"
+mv -f "$RUNTIME_MANIFEST.tmp" "$RUNTIME_MANIFEST"
 (cd "$MODEL_DIR" && sha256sum --check --status "$CHECKSUMS") || {
   echo "Downloaded Thorsten weights failed the local SHA-256 consistency check." >&2
   exit 1
