@@ -86,7 +86,7 @@ class TestGermanStudioRunPod(unittest.TestCase):
 
             runtime_manifest = root / "models/thorsten-runtime-sha256.txt"
             runtime_manifest.write_text(
-                hashlib.sha256(b"fake-package==1.0\\n").hexdigest() + "\\n",
+                hashlib.sha256(b"fake-package==1.0\n").hexdigest() + "\n",
                 encoding="utf-8",
             )
             uv = root / "tools/uv-bootstrap/bin/uv"
