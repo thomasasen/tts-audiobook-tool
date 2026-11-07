@@ -412,7 +412,22 @@ def preview_voice():
         return FileResponse(path, media_type="audio/wav", filename="thorsten-probe.wav")
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-    except (OSError, RuntimeError, TimeoutError) as exc:
+    except RuntimeError as exc:
+        logging.getLogger("german-audiobook-studio").exception("Thorsten preview failed")
+        if str(exc).startswith("GPU nicht für CUDA-Ausführung verfügbar."):
+            raise HTTPException(
+                503,
+                "Die GPU ist für CUDA nicht betriebsbereit. Der RunPod-Host muss "
+                "geprüft oder gewechselt werden. Diagnose: "
+                "python3 /workspace/tts-audiobook-tool/runpod/gpu_preflight.py --env both",
+            ) from exc
+        raise HTTPException(
+            503,
+            "Die Thorsten-Hörprobe konnte nicht erzeugt werden. "
+            "Details stehen im RunPod-Webserver-Log und in "
+            "/workspace/audiobook-data/logs/thorsten-worker.log.",
+        ) from exc
+    except (OSError, TimeoutError) as exc:
         # Inference/loading failures are operational incidents, not JSON parse
         # failures. Preserve the traceback privately and return safe JSON.
         logging.getLogger("german-audiobook-studio").exception("Thorsten preview failed")
