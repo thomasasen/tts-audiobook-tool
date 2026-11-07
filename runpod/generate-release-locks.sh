@@ -16,10 +16,14 @@ actual_uv_version="$("$UV" --version | awk '{print $2}')"
 }
 command -v npm >/dev/null 2>&1 || { echo "npm is required to create the frontend lock." >&2; exit 1; }
 mkdir -p "$OUTPUT_DIR/web" "$OUTPUT_DIR/runpod"
+"$UV" pip compile --generate-hashes --emit-index-url --index-url https://pypi.org/simple \
+  --python "$WEB_PYTHON_VERSION" --python-version 3.12 \
+  --output-file "$OUTPUT_DIR/runpod/uv-bootstrap.lock.txt" \
+  "$REPO_DIR/runpod/uv-bootstrap.in"
 OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd)"
 # Reuse committed lock files as constraints so routine verification does not
 # silently upgrade transitive packages merely because a new version appeared.
-for lock in requirements-qwen3tts.lock.txt requirements-moss.lock.txt web/requirements-runtime.lock.txt web/torch-cpu.lock.txt; do
+for lock in requirements-qwen3tts.lock.txt requirements-moss.lock.txt web/requirements-runtime.lock.txt web/torch-cpu.lock.txt runpod/uv-bootstrap.lock.txt; do
   if [[ -s "$REPO_DIR/$lock" ]]; then
     mkdir -p "$OUTPUT_DIR/$(dirname "$lock")"
     cp "$REPO_DIR/$lock" "$OUTPUT_DIR/$lock"
