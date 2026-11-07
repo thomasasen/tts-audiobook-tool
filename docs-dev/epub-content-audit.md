@@ -71,3 +71,46 @@ Vor dem Abschluss von B01 muss mindestens ein komplexes, rechtmäßig nutzbares 
 6. Nach dem Speichern die Project-V5-Phrase-Groups mit der Projektvorschau vergleichen.
 
 Eine grüne CI oder eine 100-Prozent-Zeichenabdeckung ersetzt diese redaktionelle Abnahme nicht.
+
+
+## B01-Folgeprüfung: dekorative Initialen, XHTML-Inhaltsübersicht und Attribution
+
+Der kanonische BeautifulSoup-Extraktor setzt nachweisbar als Initialen markierte
+Absatzfragmente vor der Text-Extraktion wieder zusammen. Eine Reparatur benötigt
+einen konkreten Layout-Hinweis aus den bestehenden EPUB-CSS-Regeln (große
+Initialschrift oder links gefloateter Container). Bloße Klassennamen und kurze
+Einzelwörter genügen ausdrücklich **nicht**. Fragmente mit unerwarteten
+Wortanfängen bleiben unverändert und erzeugen eine signifikante Warnung zur
+redaktionellen Prüfung. Anker und Inline-Formatierung bleiben an der neuen
+Textposition erhalten.
+
+Falls der EPUB-2-NCX nur Kapitelnummern oder englische Labels enthält, kann die
+mitgelieferte, als Inhaltsverzeichnis erkennbare XHTML-Übersicht eindeutig
+zuordenbare Titel liefern. Nur interne Links mit widerspruchsfreiem Ziel-/Label-
+Mapping dürfen Navigationsbezeichnungen überschreiben. Die Spine-Reihenfolge
+wird nicht geändert; doppelte oder widersprüchliche Zuordnungen bleiben beim
+ursprünglichen Navigationstitel.
+
+Kurze, ausdrücklich als technische Übersetzungs-Attribution erkennbare
+Zusatzseiten werden separat als `technical-attribution` im Skip-Audit
+gekennzeichnet. Die Nutzerin oder der Nutzer kann sie im Entwurfsstatus über
+dieselben bestehenden Include-Overrides wieder aufnehmen. Die Original-EPUB-Datei
+und etwaige rechtliche Hinweise darin bleiben unangetastet. Diese Erkennung
+ist keine allgemeine Erlaubnis, vorgeschriebene Attributionen zu entfernen.
+
+Ein Bild mit klaren Szenentrenner-Merkmalen (z. B. Dinkus in Alternativtext
+oder Dateibezeichnung) erscheint im Content-Audit als `Szenentrenner`.
+Sein Abstand im Quelltext bleibt erhalten; das dekorative Bild selbst wird
+nicht automatisch vertont. Gewöhnliche Logos bleiben als `Bild` klassifiziert.
+
+Das synthetische Test-EPUB enthält eine nicht in der Navigation referenzierte
+technische Attribution. Der CI-Test verwendet den **wirklichen** EPUB-Import
+und prüft Auslassung, Wiederaufnahme und deren Auswirkungen auf den
+Phrase-Group-Text. Das private fachliche EPUB wird nicht auf GitHub gespeichert
+oder in öffentliche CI-Jobs übertragen.
+
+**Abnahmegrenze:** Ohne Ausführung des kanonischen Importers mit dem privaten
+EPUB bleibt dessen tatsächliche Project-V5-Verarbeitung ungeprüft. Ein
+erfolgreicher ZIP-/OPF-/XHTML-Preflight oder synthetische CI-Regressionen
+ersetzen weder diesen Nachweis noch die redaktionelle Prüfung inhaltlich
+wichtiger Grafiken.
