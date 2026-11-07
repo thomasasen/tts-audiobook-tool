@@ -145,5 +145,74 @@ class TestThorstenProtocol(TestCase):
         self.assertNotIn(private_text, str(messages) + errors)
 
 
+
+class TestStudioWorkerIntegration(TestCase):
+    def load_production(self):
+        path = ROOT / "tts_audiobook_tool/web_studio/production.py"
+        spec = importlib.util.spec_from_file_location("production_protocol_test", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_parent_distinguishes_cuda_unavailable_from_model_failure(self):
+        production = self.load_production()
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "infer_thorsten.py"
+            model.write_text("# synthetic model path\\n")
+            worker = SimpleNamespace(
+                poll=lambda: None,
+                terminate=mock.Mock(),
+                wait=mock.Mock(),
+                stdin=io.StringIO(),
+                stdout=io.StringIO(),
+            )
+            studio = SimpleNamespace(data_dir=lambda: Path(tmp))
+            with mock.patch.object(production, "_studio", return_value=studio), \
+                 mock.patch.object(production.subprocess, "Popen", return_value=worker), \
+                 mock.patch.object(production, "_model_message", return_value={
+                     "ready": False, "error_code": "CUDA_UNAVAILABLE",
+                 }):
+                with self.assertRaisesRegex(RuntimeError, "GPU nicht für CUDA-Ausführung verfügbar"):
+                    production._generate_with_worker(
+                        "German sample", Path(tmp) / "voice.wav",
+                        (sys.executable, str(model)),
+                    )
+            worker.terminate.assert_called_once()
+            self.assertIsNone(production._MODEL_PROC)
+
+    def test_parent_sends_id_and_private_text_over_pipe_only(self):
+        production = self.load_production()
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "infer_thorsten.py"
+            model.write_text("# synthetic model path\\n")
+            worker = SimpleNamespace(
+                poll=lambda: None,
+                terminate=mock.Mock(),
+                wait=mock.Mock(),
+                stdin=io.StringIO(),
+                stdout=io.StringIO(),
+            )
+            messages = iter([
+                {"ready": True},
+                {"id": "synthetic-request-id", "ok": True},
+            ])
+            studio = SimpleNamespace(data_dir=lambda: Path(tmp))
+            uid = SimpleNamespace(hex="synthetic-request-id")
+            with mock.patch.object(production, "_studio", return_value=studio), \
+                 mock.patch.object(production.subprocess, "Popen", return_value=worker), \
+                 mock.patch.object(production, "_model_message", side_effect=lambda *args: next(messages)), \
+                 mock.patch.object(production.uuid, "uuid4", return_value=uid):
+                production._generate_with_worker(
+                    "Synthetic private book passage", Path(tmp) / "voice.wav",
+                    (sys.executable, str(model)),
+                )
+            request = json.loads(worker.stdin.getvalue().strip())
+            self.assertEqual(request["id"], "synthetic-request-id")
+            self.assertEqual(request["text"], "Synthetic private book passage")
+            self.assertEqual(request["output"], str(Path(tmp) / "voice.wav"))
+            # Do not leak the model session into other tests.
+            production._MODEL_PROC = None
+
 if __name__ == "__main__":
     main()
