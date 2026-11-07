@@ -89,7 +89,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends espeak-ng
-          python -m pip install faster-whisper==1.2.1 ctranslate2==4.7.1
+          python -m pip install faster-whisper==1.2.1 ctranslate2==4.7.1 'huggingface-hub>=0.25,<2' 'av==18.1.0'
       - name: Cache public Whisper-tiny weights (no private artifacts)
         uses: actions/cache@v4
         with:
