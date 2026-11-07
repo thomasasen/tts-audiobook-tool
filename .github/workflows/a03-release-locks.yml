@@ -1,0 +1,92 @@
+name: A03 release lock generation
+
+on:
+  pull_request:
+    paths:
+      - "runpod/model-pins.env"
+      - "runpod/uv-bootstrap.in"
+      - "runpod/uv-bootstrap.lock.txt"
+      - ".gitignore"
+      - "runpod/locks/thorsten/pyproject.toml"
+      - "runpod/locks/thorsten/uv.lock"
+      - "runpod/locks/SHA256SUMS"
+      - "runpod/generate-release-locks.sh"
+      - "requirements-qwen3tts.txt"
+      - "requirements-base.txt"
+      - "requirements-moss.txt"
+      - "requirements-qwen3tts.lock.txt"
+      - "requirements-moss.lock.txt"
+      - "web/requirements-runtime.txt"
+      - "web/requirements-runtime.lock.txt"
+      - "web/torch-cpu.lock.txt"
+      - "web/package-lock.json"
+      - "web/torch-cpu.in"
+      - "web/requirements.txt"
+      - "web/package.json"
+      - ".github/workflows/a03-release-locks.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: a03-release-locks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.16"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned UV lock compiler
+        run: python -m pip install --disable-pip-version-check "uv==0.13.7"
+      - name: Generate Python hash locks and npm package lock
+        run: bash runpod/generate-release-locks.sh release-locks
+      - name: Commit generated release locks to the PR branch
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          BASE_SHA="$(git rev-parse HEAD)"
+          git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          REMOTE_SHA="$(git rev-parse "origin/$BRANCH")"
+          if [[ "$BASE_SHA" != "$REMOTE_SHA" ]]; then
+            echo "PR branch moved while this workflow was starting; rerun against the new head." >&2
+            exit 1
+          fi
+          cp release-locks/runpod/uv-bootstrap.lock.txt runpod/uv-bootstrap.lock.txt
+          cp release-locks/requirements-qwen3tts.lock.txt requirements-qwen3tts.lock.txt
+          cp release-locks/requirements-moss.lock.txt requirements-moss.lock.txt
+          cp release-locks/runpod/locks/thorsten/uv.lock runpod/locks/thorsten/uv.lock
+          cp release-locks/web/requirements-runtime.lock.txt web/requirements-runtime.lock.txt
+          cp release-locks/web/torch-cpu.lock.txt web/torch-cpu.lock.txt
+          cp release-locks/web/package-lock.json web/package-lock.json
+          sha256sum runpod/uv-bootstrap.lock.txt requirements-qwen3tts.lock.txt requirements-moss.lock.txt runpod/locks/thorsten/uv.lock web/requirements-runtime.lock.txt web/torch-cpu.lock.txt web/package-lock.json > runpod/locks/SHA256SUMS
+          sha256sum -c runpod/locks/SHA256SUMS
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add runpod/uv-bootstrap.lock.txt requirements-qwen3tts.lock.txt requirements-moss.lock.txt runpod/locks/thorsten/uv.lock runpod/locks/SHA256SUMS web/requirements-runtime.lock.txt web/torch-cpu.lock.txt web/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Committed release locks are already current."
+          else
+            git commit -m "chore: update reproducible release locks"
+            # No rebase is attempted: a concurrent PR update must not be
+            # silently combined with a lock set generated from a stale tree.
+            git push origin "HEAD:$BRANCH"
+          fi
+      - name: Upload generated lock files for review and commit
+        uses: actions/upload-artifact@v4
+        with:
+          name: a03-release-locks
+          path: release-locks/
+          if-no-files-found: error
+          retention-days: 7

@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=env.sh
 source "$SCRIPT_DIR/env.sh"
+source "$SCRIPT_DIR/model-pins.env"
 
 usage() {
   cat <<'HELP'
@@ -110,12 +111,21 @@ UV_TOOL_DIR="$AUDIOBOOK_DATA_ROOT/tools/uv-bootstrap"
 UV="$UV_TOOL_DIR/bin/uv"
 if [[ ! -x "$UV" ]]; then
   python3 -m venv "$UV_TOOL_DIR"
-  "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check 'uv==0.9.11'
+  [[ -s "$SCRIPT_DIR/uv-bootstrap.lock.txt" ]] || {
+    echo "Pinned uv bootstrap lock is missing; refusing an unverified tool install." >&2
+    exit 1
+  }
+  "$UV_TOOL_DIR/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes -r "$SCRIPT_DIR/uv-bootstrap.lock.txt"
 fi
-echo "uv: $("$UV" --version)"
-"$UV" python install 3.12
+actual_uv_version="$("$UV" --version | awk '{print $2}')"
+if [[ "$actual_uv_version" != "$UV_VERSION" ]]; then
+  echo "uv version mismatch: expected $UV_VERSION, got $actual_uv_version." >&2
+  exit 1
+fi
+echo "uv: $actual_uv_version"
+"$UV" python install "$WEB_PYTHON_VERSION" "$THORSTEN_PYTHON_VERSION"
 if (( BOOTSTRAP_ONLY )); then
-  echo "RunPod bootstrap-only complete: OS packages, uv and managed Python 3.12 ready."
+  echo "RunPod bootstrap-only complete: OS packages, uv and managed Python $WEB_PYTHON_VERSION and $THORSTEN_PYTHON_VERSION ready."
   exit 0
 fi
 
@@ -136,37 +146,61 @@ else:
 assert torch.__version__.split("+", 1)[0] == expected, (
     f"torch {torch.__version__}; expected {expected}"
 )
-assert sys.version_info[:2] == (3, 12), f"Expected Python 3.12, got {sys.version}"
+assert sys.version_info[:3] == (3, 12, 16), f"Expected Python 3.12.16, got {sys.version}"
 print(f"Verified {model}: Python {sys.version.split()[0]}, torch {torch.__version__}")
 PY
 }
 
+model_runtime_freeze_hash() {
+  local python="$1"
+  "$UV" pip freeze --python "$python" | LC_ALL=C sort | sha256sum | awk '{print $1}'
+}
+
 install_model() {
-  local model="$1" requirements="$2" torch_version="$3"
+  local model="$1" requirements="$2" lock="$3" torch_version="$4"
   local env_dir="$AUDIOBOOK_VENV_DIR/$model"
   local req_path="$REPO_DIR/$requirements"
-  local digest marker signature
-  if [[ ! -f "$req_path" ]]; then
-    echo "Missing requirements: $req_path" >&2; exit 1
+  local lock_path="$REPO_DIR/$lock"
+  local digest marker signature runtime_manifest runtime_hash actual_python_version
+  if [[ ! -f "$req_path" || ! -s "$lock_path" ]]; then
+    echo "Missing source requirements or immutable lock for $model." >&2
+    exit 1
   fi
-  digest="$(sha256sum "$req_path" | awk '{print $1}')"
+  digest="$(sha256sum "$req_path" "$lock_path" | sha256sum | awk '{print $1}')"
   marker="$env_dir/.runpod-ready"
-  signature="python3.12/$model/$torch_version/$digest"
-  if [[ -x "$env_dir/bin/python" && -f "$marker" ]] &&
-     [[ "$(cat "$marker")" == "$signature" ]] &&
+  runtime_manifest="$env_dir/.runpod-packages.sha256"
+  signature="python${LEGACY_PYTHON_VERSION}/$model/$torch_version/uv-${UV_VERSION}/$digest"
+
+  if [[ -x "$env_dir/bin/python" && -f "$marker" &&
+        "$(cat "$marker")" == "$signature" && -s "$runtime_manifest" ]] &&
+     [[ "$(model_runtime_freeze_hash "$env_dir/bin/python")" == "$(cat "$runtime_manifest")" ]] &&
      verify_model_imports "$model" "$env_dir/bin/python" "$torch_version"; then
-    echo "$model: already installed, no changes needed."
+    echo "$model: already installed and verified against the immutable lock."
     return
+  fi
+  if [[ -f "$marker" ]]; then
+    echo "$model environment differs from its recorded lock/package fingerprint." >&2
+    echo "Refusing to mutate it. Preserve the old venv and create a fresh one before retrying." >&2
+    exit 1
   fi
 
   if [[ ! -x "$env_dir/bin/python" ]]; then
-    "$UV" venv --python 3.12 --seed "$env_dir"
+    "$UV" venv --python "$LEGACY_PYTHON_VERSION" --seed "$env_dir"
+  else
+    actual_python_version="$("$env_dir/bin/python" -c 'import platform; print(platform.python_version())')"
+    if [[ "$actual_python_version" != "$LEGACY_PYTHON_VERSION" ]]; then
+      echo "Existing $model venv uses Python $actual_python_version; expected $LEGACY_PYTHON_VERSION." >&2
+      echo "Preserve the old environment and create a fresh venv before retrying." >&2
+      exit 1
+    fi
   fi
-  rm -f "$marker"
-  echo "Installing $model from $requirements (may download large CUDA wheels)."
-  "$env_dir/bin/python" -m pip install --disable-pip-version-check \
-    --requirement "$req_path"
+  echo "Installing $model from immutable lock $lock (may download large CUDA wheels)."
+  "$UV" pip sync --python "$env_dir/bin/python" "$lock_path"
   verify_model_imports "$model" "$env_dir/bin/python" "$torch_version"
+  runtime_hash="$(model_runtime_freeze_hash "$env_dir/bin/python")"
+  printf '%s\n' "$runtime_hash" > "$runtime_manifest.tmp"
+  chmod 600 "$runtime_manifest.tmp"
+  mv -f "$runtime_manifest.tmp" "$runtime_manifest"
   printf '%s\n' "$signature" > "$marker.tmp"
   mv "$marker.tmp" "$marker"
   echo "$model installation complete."
@@ -174,11 +208,11 @@ install_model() {
 
 case "$MODELS" in
   none) echo "No legacy TUI runtime requested; Web Studio uses its own lean venv." ;;
-  qwen) install_model qwen requirements-qwen3tts.txt 2.8.0 ;;
-  moss) install_model moss requirements-moss.txt 2.9.1 ;;
+  qwen) install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0 ;;
+  moss) install_model moss requirements-moss.txt requirements-moss.lock.txt 2.9.1 ;;
   both)
-    install_model qwen requirements-qwen3tts.txt 2.8.0
-    install_model moss requirements-moss.txt 2.9.1
+    install_model qwen requirements-qwen3tts.txt requirements-qwen3tts.lock.txt 2.8.0
+    install_model moss requirements-moss.txt requirements-moss.lock.txt 2.9.1
     ;;
 esac
 
