@@ -22,7 +22,7 @@ import wave
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import asr_quality
+from tts_audiobook_tool.web_studio import asr_quality
 
 VOICE_ID = "thorsten-cosyvoice3"
 SAMPLE_TEXT = "Guten Tag. Dieses Fachbuch erklärt, wie gute Entscheidungen im Vertrieb entstehen."
