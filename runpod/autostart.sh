@@ -96,7 +96,11 @@ echo "Models: $RUNPOD_TTS_MODELS | terminal auto-start: $RUNPOD_TTS_AUTOSTART_MO
 
 if [[ -d "$REPO_DIR/.git" ]]; then
   echo "Existing checkout found; using fast-forward-only updates."
-  if [[ -z "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
+  # Ignore only untracked files during this safety check. Frontend builds
+  # create web/dist/ inside the checkout, which previously caused every
+  # subsequent Pod restart to silently skip all master updates.
+  # Git still refuses a checkout/merge that would overwrite untracked files.
+  if [[ -z "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]]; then
     git -C "$REPO_DIR" fetch --no-tags origin "$RUNPOD_TTS_BRANCH"
     if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$RUNPOD_TTS_BRANCH"; then
       git -C "$REPO_DIR" switch "$RUNPOD_TTS_BRANCH"
@@ -105,11 +109,10 @@ if [[ -d "$REPO_DIR/.git" ]]; then
     fi
     git -C "$REPO_DIR" merge --ff-only FETCH_HEAD
   else
-    echo "WARNING: uncommitted modifications detected; source checkout will not be changed."
-    if [[ "$(git -C "$REPO_DIR" branch --show-current)" != "$RUNPOD_TTS_BRANCH" ]]; then
-      echo "ERROR: dirty checkout is on the wrong branch; refusing to deploy." >&2
-      exit 1
-    fi
+    echo "ERROR: tracked source files have local modifications; refusing to deploy stale code." >&2
+    git -C "$REPO_DIR" status --short --untracked-files=no >&2
+    echo "Inspect the edits and preserve them before retrying. Nothing was overwritten." >&2
+    exit 1
   fi
 elif [[ -e "$REPO_DIR" ]]; then
   echo "ERROR: $REPO_DIR exists but is not a Git checkout. Refusing to overwrite it." >&2
