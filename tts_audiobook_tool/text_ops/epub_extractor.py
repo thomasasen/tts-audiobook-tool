@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import posixpath
 import re
@@ -47,6 +48,8 @@ class EpubSourceChapter:
     # Keep positional constructor compatibility for existing Project-V5 code.
     # EPUB nav resources can also contain prose outside their <nav> elements.
     contains_reading_text_outside_nav: bool = False
+    source_id: str = ""
+    spine_index: int = -1
 
 
 @dataclass
@@ -57,6 +60,61 @@ class EpubTextChapter:
     # Source styles for display formatting; None when the chapter has none.
     # Its words match `text`; whitespace may differ (see text_format.align_masks).
     styled: StyledText | None = None
+    id: str = ""
+
+
+@dataclass(frozen=True)
+class EpubSkippedSection:
+    id: str
+    title: str
+    href: str
+    reason: str
+    preview: str
+    category: str
+    spine_index: int
+    recoverable: bool = True
+    included: bool = False
+
+
+@dataclass(frozen=True)
+class EpubContentReviewItem:
+    id: str
+    kind: str
+    title: str
+    href: str
+    reason: str
+    preview: str
+    count: int = 1
+
+
+@dataclass(frozen=True)
+class EpubChapterCoverage:
+    chapter_id: str
+    title: str
+    href: str
+    source_start: int
+    source_end: int
+    phrase_group_start: int
+    phrase_group_end: int
+    source_characters: int
+    spoken_characters: int
+    complete: bool
+
+
+@dataclass
+class EpubSourceChapterLoad:
+    chapters: list[EpubSourceChapter]
+    book_title: str
+    warnings: list[str]
+    significant_warnings: list[str]
+    skipped_sections: list[EpubSkippedSection] = field(default_factory=list)
+
+    def __iter__(self):
+        # Preserve the historical four-value unpacking contract.
+        yield self.chapters
+        yield self.book_title
+        yield self.warnings
+        yield self.significant_warnings
 
 
 @dataclass
@@ -74,6 +132,7 @@ class EpubTextExtractionResult:
     slices: list[EpubTextSlice] = field(default_factory=list)
     has_unresolved_navigation_target: bool = False
     styled: StyledText | None = None
+    review_items: list[EpubContentReviewItem] = field(default_factory=list)
 
 
 @dataclass
@@ -90,6 +149,9 @@ class EpubImportResult:
     book_title: str = ""
     warnings: list[str] = field(default_factory=list)
     significant_warnings: list[str] = field(default_factory=list)
+    skipped_sections: list[EpubSkippedSection] = field(default_factory=list)
+    review_items: list[EpubContentReviewItem] = field(default_factory=list)
+    coverage: list[EpubChapterCoverage] = field(default_factory=list)
 
 
 @dataclass
@@ -98,6 +160,8 @@ class EpubChapterExtraction:
     book_title: str = ""
     warnings: list[str] = field(default_factory=list)
     significant_warnings: list[str] = field(default_factory=list)
+    skipped_sections: list[EpubSkippedSection] = field(default_factory=list)
+    review_items: list[EpubContentReviewItem] = field(default_factory=list)
 
 
 class EpubChapterTextExtractor(Protocol):
@@ -254,7 +318,97 @@ class BeautifulSoupEpubChapterTextExtractor:
             slices=slices,
             has_unresolved_navigation_target=has_unresolved_navigation_target,
             styled=self.make_styled_text(pieces, piece_styles) if piece_styles else None,
+            review_items=self.make_content_review_items(soup, chapter),
         )
+
+    @classmethod
+    def make_content_review_items(
+            cls,
+            soup: Any,
+            chapter: EpubSourceChapter,
+    ) -> list[EpubContentReviewItem]:
+        """Describe complex source structures without inventing replacement speech."""
+        items: list[EpubContentReviewItem] = []
+        source_id = chapter.source_id or EpubExtractor.make_stable_id("source", chapter.href)
+
+        tables = soup.find_all("table")
+        if tables:
+            first = tables[0]
+            items.append(EpubContentReviewItem(
+                id=EpubExtractor.make_stable_id(source_id, "table"),
+                kind="table",
+                title="Tabelle",
+                href=chapter.href,
+                reason=(
+                    "Tabellenzellen werden in Quellreihenfolge zeilenweise ausgegeben. "
+                    "Spaltenbezüge und Überschriften vor der Vertonung prüfen."
+                ),
+                preview=EpubExtractor.ellipsize_text(first.get_text(" ", strip=True), 220),
+                count=len(tables),
+            ))
+
+        formulas = soup.find_all("math")
+        if formulas:
+            items.append(EpubContentReviewItem(
+                id=EpubExtractor.make_stable_id(source_id, "formula"),
+                kind="formula",
+                title="Mathematische Formel",
+                href=chapter.href,
+                reason=(
+                    "MathML wird nicht mathematisch interpretiert. Die extrahierten "
+                    "Zeichen bleiben sichtbar; eine alternative Sprecherfassung braucht "
+                    "eine menschliche Prüfung und Freigabe."
+                ),
+                preview=EpubExtractor.ellipsize_text(formulas[0].get_text(" ", strip=True), 220),
+                count=len(formulas),
+            ))
+
+        figures = soup.find_all("figure")
+        images = soup.find_all("img")
+        if figures or images:
+            first_figure = figures[0] if figures else None
+            first_image = first_figure.find("img") if first_figure else (images[0] if images else None)
+            caption = first_figure.find("figcaption") if first_figure else None
+            preview = (
+                caption.get_text(" ", strip=True) if caption
+                else (first_image.get("alt", "") if first_image else "")
+            )
+            items.append(EpubContentReviewItem(
+                id=EpubExtractor.make_stable_id(source_id, "figure"),
+                kind="figure",
+                title="Abbildung",
+                href=chapter.href,
+                reason=(
+                    "Bilder werden nicht visuell ausgewertet. Vorhandene Bildunterschriften "
+                    "bleiben Lesetext; Alt-Texte werden nicht ungefragt in den Sprechtext übernommen."
+                ),
+                preview=EpubExtractor.ellipsize_text(str(preview), 220),
+                count=max(len(figures), len(images)),
+            ))
+
+        footnotes = [
+            tag for tag in soup.find_all(True)
+            if (
+                "footnote" in str(tag.get("epub:type", "")).lower()
+                or "doc-footnote" in str(tag.get("role", "")).lower()
+                or any("footnote" in str(value).lower() for value in (tag.get("class") or []))
+            )
+        ]
+        if footnotes:
+            items.append(EpubContentReviewItem(
+                id=EpubExtractor.make_stable_id(source_id, "footnote"),
+                kind="footnote",
+                title="Fußnote",
+                href=chapter.href,
+                reason=(
+                    "Fußnoten werden in ihrer XHTML-Lesereihenfolge übernommen. "
+                    "Position und Bezug zur Fußnotenmarke vor der Vertonung prüfen."
+                ),
+                preview=EpubExtractor.ellipsize_text(footnotes[0].get_text(" ", strip=True), 220),
+                count=len(footnotes),
+            ))
+
+        return items
 
     @classmethod
     def is_likely_non_reading_chapter(cls, chapter: EpubSourceChapter) -> bool:
@@ -315,6 +469,7 @@ class BeautifulSoupEpubChapterTextExtractor:
             piece_styles: dict[int, int] | None = None,
             style: int = 0,
             css: EpubCssResolver | None = None,
+            suppress_block_boundaries: bool = False,
     ) -> None:
         """
         `piece_styles`, when given, receives the display-style mask of each
@@ -341,11 +496,30 @@ class BeautifulSoupEpubChapterTextExtractor:
             self.ensure_block_boundary(pieces)
             pieces.append("* * *\n\n")
             return
+        if name == "tr":
+            self.ensure_block_boundary(pieces)
+            cells = node.find_all(["th", "td"], recursive=False)
+            for index, cell in enumerate(cells):
+                if index:
+                    pieces.append("; ")
+                self.append_node_text(
+                    cell,
+                    pieces,
+                    stats,
+                    target_fragments=target_fragments,
+                    anchor_piece_indices=anchor_piece_indices,
+                    piece_styles=piece_styles,
+                    style=style,
+                    css=css,
+                    suppress_block_boundaries=True,
+                )
+            self.ensure_block_boundary(pieces)
+            return
         is_block = name in self.BLOCK_TAGS
-        if is_block:
+        if is_block and not suppress_block_boundaries:
             self.ensure_block_boundary(pieces)
         if name == "li":
-            pieces.append("- ")
+            pieces.append(self.list_item_prefix(node))
         content_start = len(pieces)
         if piece_styles is not None:
             style = self.get_node_style(node, style, css)
@@ -373,14 +547,40 @@ class BeautifulSoupEpubChapterTextExtractor:
                         piece_styles=piece_styles,
                         style=style,
                         css=css,
+                        suppress_block_boundaries=suppress_block_boundaries,
                     )
 
-        if is_block:
+        if is_block and not suppress_block_boundaries:
             # Empty blocks can be intentional spacers or image-only ornaments.
             # Keep that signal explicit, rather than inferring it from the sum
             # of paragraph boundaries contributed by nested layout wrappers.
             is_spacer = not any(piece.strip() for piece in pieces[content_start:])
             self.ensure_block_boundary(pieces, line_breaks=3 if is_spacer else 2)
+
+    @staticmethod
+    def list_item_prefix(node: Any) -> str:
+        parent = getattr(node, "parent", None)
+        if getattr(parent, "name", None) != "ol":
+            return "- "
+        siblings = parent.find_all("li", recursive=False)
+        step = -1 if parent.has_attr("reversed") else 1
+        try:
+            number = int(parent.get("start")) if parent.get("start") is not None else (
+                len(siblings) if step < 0 else 1
+            )
+        except (TypeError, ValueError):
+            number = len(siblings) if step < 0 else 1
+        for sibling in siblings:
+            value = sibling.get("value")
+            if value is not None:
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    pass
+            if sibling is node:
+                return f"{number}. "
+            number += step
+        return f"{number}. "
 
     @staticmethod
     def get_node_style(node: Any, inherited_style: int, css: EpubCssResolver | None = None) -> int:
@@ -635,6 +835,17 @@ class EpubExtractor:
     DEFAULT_EXTRACTOR = BeautifulSoupEpubChapterTextExtractor()
 
     @staticmethod
+    def make_stable_id(*parts: object) -> str:
+        payload = "\\0".join(str(part) for part in parts)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def normalize_coverage_text(text: str) -> str:
+        # Segmentation may normalize line endings and whitespace, but it must
+        # preserve every non-whitespace source character in the spoken text.
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
     def get_ebook_title(epub_path: str) -> str:
         _, book_title, _, _ = EpubExtractor.load_source_chapters(epub_path)
         return book_title
@@ -646,9 +857,12 @@ class EpubExtractor:
             segmentation_strategy: SegmentationStrategy,
             language_code: str,
             dialog_segmentation: bool = False,
-            extractor: EpubChapterTextExtractor | None = None
+            extractor: EpubChapterTextExtractor | None = None,
+            include_skipped_ids: set[str] | None = None,
     ) -> EpubImportResult:
-        extraction = EpubExtractor.extract_import_chapters(epub_path, extractor)
+        extraction = EpubExtractor.extract_import_chapters(
+            epub_path, extractor, include_skipped_ids=include_skipped_ids
+        )
         warnings = extraction.warnings
         significant_warnings = extraction.significant_warnings
 
@@ -657,9 +871,12 @@ class EpubExtractor:
         raw_text_parts: list[str] = []
         sections: list[BookSection] = []
         format_mismatch_titles: list[str] = []
+        coverage: list[EpubChapterCoverage] = []
+        source_offset = 0
 
         for chapter in extraction.chapters:
             chapter_text = chapter.text
+            group_start = len(phrase_groups)
             chapter_phrase_groups = PhraseGrouper.text_to_groups(
                 chapter_text,
                 max_words=max_words,
@@ -667,6 +884,29 @@ class EpubExtractor:
                 pysbd_lang=language_code,
                 dialog_segmentation=dialog_segmentation,
             )
+            spoken_text = " ".join(group.text for group in chapter_phrase_groups)
+            source_coverage_text = EpubExtractor.normalize_coverage_text(chapter_text)
+            spoken_coverage_text = EpubExtractor.normalize_coverage_text(spoken_text)
+            complete = source_coverage_text == spoken_coverage_text
+            coverage.append(EpubChapterCoverage(
+                chapter_id=chapter.id,
+                title=chapter.title,
+                href=chapter.href,
+                source_start=source_offset,
+                source_end=source_offset + len(chapter_text),
+                phrase_group_start=group_start,
+                phrase_group_end=group_start + len(chapter_phrase_groups),
+                source_characters=len(chapter_text),
+                spoken_characters=len(spoken_text),
+                complete=complete,
+            ))
+            if not complete:
+                warning = EpubExtractor.format_warning(
+                    "EPUB text coverage mismatch:",
+                    f"{chapter.title or chapter.href} (source and segmented text differ)",
+                )
+                warnings.append(warning)
+                significant_warnings.append(warning)
             # Display formatting is attached after segmentation, which only
             # rearranges whitespace (see docs-dev/text-formatting-layer.md)
             if chapter.styled is not None and chapter.styled.has_styles:
@@ -681,6 +921,7 @@ class EpubExtractor:
             )
             phrase_groups.extend(chapter_phrase_groups)
             raw_text_parts.append(chapter_text)
+            source_offset += len(chapter_text) + 2
 
         if format_mismatch_titles:
             # Diagnostic only: formatting is decorative and never blocks import
@@ -704,19 +945,33 @@ class EpubExtractor:
             book_title=extraction.book_title,
             warnings=warnings,
             significant_warnings=significant_warnings,
+            skipped_sections=extraction.skipped_sections,
+            review_items=extraction.review_items,
+            coverage=coverage,
         )
 
     @staticmethod
     def extract_import_chapters(
             epub_path: str,
             extractor: EpubChapterTextExtractor | None = None,
+            include_skipped_ids: set[str] | None = None,
     ) -> EpubChapterExtraction:
         """
         Loads, extracts and assembles the logical sections that EPUB import keeps,
         in order: one per project `BookSection` created by `import_epub`.
         Also used to re-apply formatting to an existing project.
         """
-        source_chapters, book_title, warnings, significant_warnings = EpubExtractor.load_source_chapters(epub_path)
+        if include_skipped_ids:
+            load_result = EpubExtractor.load_source_chapters(
+                epub_path, include_skipped_ids=include_skipped_ids
+            )
+        else:
+            # Preserve compatibility with tests and downstream callers that
+            # replace the historical one-argument loader.
+            load_result = EpubExtractor.load_source_chapters(epub_path)
+        source_chapters, book_title, warnings, significant_warnings = load_result
+        skipped_sections = list(getattr(load_result, "skipped_sections", []))
+        review_items: list[EpubContentReviewItem] = []
         EpubExtractor.log_warnings(warnings)
         EpubExtractor.log_warnings([warning for warning in significant_warnings if warning not in warnings])
         extractor = extractor or EpubExtractor.DEFAULT_EXTRACTOR
@@ -735,12 +990,14 @@ class EpubExtractor:
             EpubExtractor.log_warnings(result_warnings)
             warnings.extend(result_warnings)
             significant_warnings.extend(result_significant_warnings)
+            review_items.extend(result.review_items)
             extracted_chapters.append((source_chapter, result))
 
         text_chapters = EpubExtractor.assemble_text_chapters(
             extracted_chapters,
             warnings,
             significant_warnings,
+            skipped_sections=skipped_sections,
         )
 
         kept_chapters: list[EpubTextChapter] = []
@@ -759,14 +1016,52 @@ class EpubExtractor:
                 warnings.append(warning)
                 significant_warnings.append(warning)
                 EpubExtractor.log_warnings([warning])
+                restored_index = next(
+                    (
+                        index for index, item in enumerate(skipped_sections)
+                        if item.included
+                        and item.href.split("#", 1)[0] == chapter.href.split("#", 1)[0]
+                    ),
+                    None,
+                )
+                if restored_index is not None:
+                    previous = skipped_sections[restored_index]
+                    skipped_sections[restored_index] = EpubSkippedSection(
+                        id=previous.id,
+                        title=previous.title,
+                        href=previous.href,
+                        reason="Restored section contains no vocalizable text after extraction.",
+                        preview=EpubExtractor.ellipsize_text(chapter.text, 240),
+                        category="non-vocalizable",
+                        spine_index=previous.spine_index,
+                        recoverable=False,
+                        included=False,
+                    )
+                else:
+                    skipped_sections.append(EpubSkippedSection(
+                        id=chapter.id or EpubExtractor.make_stable_id("chapter", chapter.href, chapter.title),
+                        title=chapter.title,
+                        href=chapter.href,
+                        reason="Section contains no vocalizable text after extraction",
+                        preview=EpubExtractor.ellipsize_text(chapter.text, 240),
+                        category="non-vocalizable",
+                        spine_index=-1,
+                        recoverable=False,
+                        included=False,
+                    ))
                 continue
             kept_chapters.append(chapter)
 
+        skipped_sections.sort(
+            key=lambda item: item.spine_index if item.spine_index >= 0 else 1_000_000
+        )
         return EpubChapterExtraction(
             chapters=kept_chapters,
             book_title=book_title,
             warnings=warnings,
             significant_warnings=significant_warnings,
+            skipped_sections=skipped_sections,
+            review_items=review_items[:250],
         )
 
     @staticmethod
@@ -774,6 +1069,7 @@ class EpubExtractor:
             extracted_chapters: list[tuple[EpubSourceChapter, EpubTextExtractionResult]],
             warnings: list[str],
             significant_warnings: list[str],
+            skipped_sections: list[EpubSkippedSection] | None = None,
     ) -> list[EpubTextChapter]:
         has_navigation_targets = any(
             source_chapter.navigation_targets
@@ -784,12 +1080,19 @@ class EpubExtractor:
             for _, result in extracted_chapters
         )
         if has_navigation_targets and not has_unresolved_navigation_target:
+            omitted_navigation_targets: list[EpubNavigationTarget] = []
             text_chapters, used_navigation = EpubExtractor.assemble_navigation_text_chapters(
                 extracted_chapters,
                 warnings,
                 significant_warnings,
+                omitted_navigation_targets=omitted_navigation_targets,
             )
             if used_navigation:
+                if skipped_sections is not None:
+                    skipped_sections.extend(
+                        EpubExtractor.make_empty_navigation_skip(target)
+                        for target in omitted_navigation_targets
+                    )
                 return text_chapters
 
         if extracted_chapters:
@@ -809,6 +1112,9 @@ class EpubExtractor:
                 href=source_chapter.href,
                 text=result.text,
                 styled=result.styled,
+                id=EpubExtractor.make_stable_id(
+                    "spine-section", source_chapter.href, source_chapter.title
+                ),
             )
             for source_chapter, result in extracted_chapters
             if result.text.strip()
@@ -819,6 +1125,7 @@ class EpubExtractor:
             extracted_chapters: list[tuple[EpubSourceChapter, EpubTextExtractionResult]],
             warnings: list[str],
             significant_warnings: list[str],
+            omitted_navigation_targets: list[EpubNavigationTarget] | None = None,
     ) -> tuple[list[EpubTextChapter], bool]:
         text_chapters: list[EpubTextChapter] = []
         text_parts: list[str] = []
@@ -847,7 +1154,11 @@ class EpubExtractor:
                     separator,
                 )
             text_chapters.append(EpubTextChapter(
-                title=title, href=href, text=separator.join(text_parts), styled=styled,
+                title=title,
+                href=href,
+                text=separator.join(text_parts),
+                styled=styled,
+                id=EpubExtractor.make_stable_id("navigation-section", href, title),
             ))
             used_navigation = used_navigation or current_target is not None
             text_parts = []
@@ -878,6 +1189,8 @@ class EpubExtractor:
                         )
                         warnings.append(warning)
                         significant_warnings.append(warning)
+                        if omitted_navigation_targets is not None:
+                            omitted_navigation_targets.append(current_target)
                     current_target = text_slice.navigation_target
 
                 if text_slice.text.strip():
@@ -897,6 +1210,8 @@ class EpubExtractor:
                     current_target.title,
                 )
             ):
+                if omitted_navigation_targets is not None:
+                    omitted_navigation_targets.append(current_target)
                 current_target = None
 
         if text_parts:
@@ -905,6 +1220,8 @@ class EpubExtractor:
             warning = f"Omitted empty EPUB navigation section: {current_target.title}"
             warnings.append(warning)
             significant_warnings.append(warning)
+            if omitted_navigation_targets is not None:
+                omitted_navigation_targets.append(current_target)
 
         return text_chapters, used_navigation
 
@@ -949,30 +1266,33 @@ class EpubExtractor:
 
     @staticmethod
     def navigation_has_reading_prose(chapter: EpubSourceChapter) -> bool:
-        """Keep prose in EPUB nav resources; never count link-only TOCs as body text.
+        """Keep short prose outside navigation, but not a TOC heading by itself.
 
-        Reuses the production BeautifulSoup extractor, which already excludes
-        <nav>, so this is not a second XHTML text parser. A substantial prose
-        paragraph outside navigation is the conservative inclusion signal.
+        A vocalizable paragraph or blockquote outside <nav> is sufficient;
+        no arbitrary minimum word count is applied. The canonical extractor
+        remains the source of the actual imported text.
         """
         BeautifulSoup = BeautifulSoupEpubChapterTextExtractor.import_beautiful_soup()
         soup = BeautifulSoup(chapter.html, "html.parser")
-        paragraphs = (
+        prose_blocks = (
             tag for tag in soup.find_all(("p", "blockquote"))
             if tag.find_parent("nav") is None
         )
-        if not any(len(re.findall(r"\w+", tag.get_text(" ", strip=True))) >= 8
-                   for tag in paragraphs):
+        if not any(app_text.is_vocalizable(tag.get_text(" ", strip=True)) for tag in prose_blocks):
             return False
         result = BeautifulSoupEpubChapterTextExtractor().extract_text(chapter)
         return bool(result.text.strip()) and app_text.is_vocalizable(result.text)
 
     @staticmethod
-    def load_source_chapters(epub_path: str) -> tuple[list[EpubSourceChapter], str, list[str], list[str]]:
+    def load_source_chapters(
+            epub_path: str,
+            include_skipped_ids: set[str] | None = None,
+    ) -> EpubSourceChapterLoad:
+        include_skipped_ids = set(include_skipped_ids or ())
         if not os.path.exists(epub_path):
-            return [], "", [], [f"EPUB file does not exist: {epub_path}"]
+            return EpubSourceChapterLoad([], "", [], [f"EPUB file does not exist: {epub_path}"])
         if os.path.splitext(epub_path)[1].lower() != ".epub":
-            return [], "", [], [f"File does not have .epub suffix: {epub_path}"]
+            return EpubSourceChapterLoad([], "", [], [f"File does not have .epub suffix: {epub_path}"])
 
         try:
             epub = importlib.import_module("ebooklib.epub")
@@ -984,7 +1304,7 @@ class EpubExtractor:
         except Exception as e:
             message = f"Error reading EPUB: {e}"
             L.e(message)
-            return [], "", [], [message]
+            return EpubSourceChapterLoad([], "", [], [message])
 
         book_title = EpubExtractor.extract_book_title(book)
         navigation_targets = EpubExtractor.extract_navigation_targets(book)
@@ -993,28 +1313,44 @@ class EpubExtractor:
             navigation_targets_by_path.setdefault(navigation_target.path, []).append(navigation_target)
         warnings: list[str] = []
         significant_warnings: list[str] = []
+        skipped_sections: list[EpubSkippedSection] = []
         source_chapter_candidates: list[EpubSourceChapter] = []
         source_chapters: list[EpubSourceChapter] = []
         stylesheets = EpubExtractor.load_stylesheets(book)
-        # Scan-window position that only counts text-bearing documents, so image-only cover and
-        # insert pages do not consume front/back matter scan budget.
         reading_spine_position = 0
+        known_recoverable_ids: set[str] = set()
 
-        for spine_item in book.spine:
+        for spine_index, spine_item in enumerate(book.spine):
             item_id = spine_item[0] if isinstance(spine_item, tuple) else spine_item
             item = book.get_item_with_id(item_id)
             if item is None:
+                href = str(item_id)
+                source_id = EpubExtractor.make_stable_id("spine-source", spine_index, item_id, href)
                 warning = EpubExtractor.format_warning("EPUB spine item not found:", str(item_id))
                 warnings.append(warning)
                 significant_warnings.append(warning)
+                skipped_sections.append(EpubSkippedSection(
+                    id=source_id, title=str(item_id), href=href,
+                    reason="Spine item is missing from the EPUB package.",
+                    preview="", category="missing-resource", spine_index=spine_index,
+                    recoverable=False, included=False,
+                ))
                 continue
 
             href = getattr(item, "file_name", "") or str(item_id)
+            source_id = EpubExtractor.make_stable_id("spine-source", spine_index, item_id, href)
             media_type = getattr(item, "media_type", "")
             html = EpubExtractor.decode_item_content(item)
             if not html:
                 warning = EpubExtractor.format_warning("EPUB spine item has no decodable content:", str(item_id))
                 warnings.append(warning)
+                significant_warnings.append(warning)
+                skipped_sections.append(EpubSkippedSection(
+                    id=source_id, title=str(item_id), href=href,
+                    reason="Spine item content is empty or could not be decoded.",
+                    preview="", category="unreadable-resource", spine_index=spine_index,
+                    recoverable=False, included=False,
+                ))
                 continue
 
             item_navigation_targets = navigation_targets_by_path.get(EpubExtractor.normalize_toc_href(href), [])
@@ -1029,6 +1365,8 @@ class EpubExtractor:
                 title=title, href=href, media_type=media_type, html=html,
                 navigation_targets=list(item_navigation_targets),
                 css=EpubExtractor.get_document_css(item, href, html, stylesheets),
+                source_id=source_id,
+                spine_index=spine_index,
             )
             preserve_nav_prose = (
                 is_navigation
@@ -1042,12 +1380,21 @@ class EpubExtractor:
                     title=title,
                     html=html,
                 )
+                reason = (
+                    toc_skip_decision.reason
+                    if toc_skip_decision.should_skip
+                    else "navigation document contains navigation metadata but no vocalizable prose outside <nav>"
+                )
+                skipped_sections.append(EpubExtractor.make_skipped_section(
+                    navigation_chapter,
+                    reason,
+                    category="navigation-document",
+                    recoverable=False,
+                    included=False,
+                ))
                 if toc_skip_decision.should_skip:
                     EpubExtractor.append_skipped_section_warning(
-                        warnings,
-                        significant_warnings,
-                        navigation_chapter,
-                        toc_skip_decision.reason,
+                        warnings, significant_warnings, navigation_chapter, reason
                     )
                 else:
                     warning = EpubExtractor.format_warning("Skipped EPUB navigation document:", href)
@@ -1085,8 +1432,6 @@ class EpubExtractor:
             warnings,
             significant_warnings,
         )
-        # Scan-window positions that image-only documents do not consume, so front/back matter is
-        # still recognized when many illustration pages precede or follow it.
         text_bearing_flags = [
             EpubSectionSkipDetector.is_text_bearing_spine_document(source_chapter.html)
             for source_chapter in source_chapter_candidates
@@ -1102,12 +1447,26 @@ class EpubExtractor:
                 source_chapter.html,
             )
             if publication_metadata_skip_decision.should_skip:
-                EpubExtractor.append_skipped_section_warning(
-                    warnings,
-                    significant_warnings,
+                included = source_chapter.source_id in include_skipped_ids
+                skipped_sections.append(EpubExtractor.make_skipped_section(
                     source_chapter,
                     publication_metadata_skip_decision.reason,
-                )
+                    category="publication-metadata",
+                    recoverable=True,
+                    included=included,
+                ))
+                known_recoverable_ids.add(source_chapter.source_id)
+                if not included:
+                    EpubExtractor.append_skipped_section_warning(
+                        warnings,
+                        significant_warnings,
+                        source_chapter,
+                        publication_metadata_skip_decision.reason,
+                    )
+                    continue
+                # Keep heuristic positions independent of the user's restore
+                # choice so the skipped-section inventory remains stable.
+                source_chapters.append(source_chapter)
                 continue
 
             toc_skip_decision = EpubSectionSkipDetector.detect_table_of_contents_skip(
@@ -1118,23 +1477,53 @@ class EpubExtractor:
                 source_chapter.html,
             )
             if toc_skip_decision.should_skip and not source_chapter.contains_reading_text_outside_nav:
-                EpubExtractor.append_skipped_section_warning(
-                    warnings,
-                    significant_warnings,
+                included = source_chapter.source_id in include_skipped_ids
+                skipped_sections.append(EpubExtractor.make_skipped_section(
                     source_chapter,
                     toc_skip_decision.reason,
-                )
+                    category="table-of-contents",
+                    recoverable=True,
+                    included=included,
+                ))
+                known_recoverable_ids.add(source_chapter.source_id)
+                if not included:
+                    EpubExtractor.append_skipped_section_warning(
+                        warnings,
+                        significant_warnings,
+                        source_chapter,
+                        toc_skip_decision.reason,
+                    )
+                    continue
+                source_chapters.append(source_chapter)
+                if is_text_bearing:
+                    reading_spine_position += 1
                 continue
 
             source_chapters.append(source_chapter)
             if is_text_bearing:
                 reading_spine_position += 1
 
+        unknown_ids = include_skipped_ids - known_recoverable_ids
+        if unknown_ids:
+            raise ValueError(
+                "One or more selected EPUB sections are no longer available for restoration. "
+                "Please re-import the EPUB and review the current skipped-section list."
+            )
+
         if not source_chapters:
             warning = "No readable EPUB spine documents found."
             significant_warnings.append(warning)
 
-        return source_chapters, book_title, warnings, significant_warnings
+        skipped_sections.sort(
+            key=lambda item: item.spine_index if item.spine_index >= 0 else 1_000_000
+        )
+        return EpubSourceChapterLoad(
+            chapters=source_chapters,
+            book_title=book_title,
+            warnings=warnings,
+            significant_warnings=significant_warnings,
+            skipped_sections=skipped_sections,
+        )
 
     @staticmethod
     def load_stylesheets(book: Any) -> EpubStylesheets:
@@ -1433,6 +1822,43 @@ class EpubExtractor:
             if title:
                 return title
         return ""
+
+    @staticmethod
+    def make_empty_navigation_skip(target: EpubNavigationTarget) -> EpubSkippedSection:
+        return EpubSkippedSection(
+            id=EpubExtractor.make_stable_id("empty-navigation-section", target.href, target.title),
+            title=target.title,
+            href=target.href,
+            reason="Navigation anchor has no readable text in the retained spine content.",
+            preview="",
+            category="empty-navigation-section",
+            spine_index=-1,
+            recoverable=False,
+            included=False,
+        )
+
+    @staticmethod
+    def make_skipped_section(
+            source_chapter: EpubSourceChapter,
+            reason: str,
+            category: str,
+            recoverable: bool,
+            included: bool = False,
+    ) -> EpubSkippedSection:
+        preview = EpubSectionSkipDetector.html_to_text_preview(source_chapter.html)
+        return EpubSkippedSection(
+            id=source_chapter.source_id or EpubExtractor.make_stable_id(
+                "spine-source", source_chapter.spine_index, source_chapter.href
+            ),
+            title=source_chapter.title or source_chapter.href,
+            href=source_chapter.href,
+            reason=reason,
+            preview=EpubExtractor.ellipsize_text(preview, 240),
+            category=category,
+            spine_index=source_chapter.spine_index,
+            recoverable=recoverable,
+            included=included,
+        )
 
     @staticmethod
     def append_skipped_section_warning(

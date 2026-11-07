@@ -273,6 +273,7 @@ def test_upload_uses_existing_extractor_and_suggests_preface(client, monkeypatch
     assert saved["suggested_start"] == 1
     assert saved["chapters"][0]["is_toc"] is True
     assert saved["chapters"][1]["preview"].startswith("Willkommen")
+    assert 0 in saved["excluded_indices"]
     project_id = saved["id"]
     loaded = client.get(f"/api/projects/{project_id}", headers=authorized()).json()
     assert loaded["chapters"] == saved["chapters"]
@@ -299,6 +300,17 @@ def test_preface_fallback_and_toc_exclusion():
     assert result["suggested_start"] == 1
     assert result["chapters"][0]["is_toc"]
     assert result["title"] == "Unbenanntes Buch"
+
+
+def test_catalogue_all_toc_sections_remains_reviewable():
+    chapters = [
+        SimpleNamespace(title="Inhaltsverzeichnis", text="Kapitel eins und Kapitel zwei."),
+    ]
+    result = studio._catalogue(SimpleNamespace(
+        chapters=chapters, book_title="Ein Buch", warnings=[], significant_warnings=[]
+    ))
+    assert result["suggested_start"] == 0
+    assert result["chapters"][0]["is_toc"] is True
 
 
 def test_no_token_configuration_fails_closed(monkeypatch):

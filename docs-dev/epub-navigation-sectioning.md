@@ -17,7 +17,7 @@ EbookLib reads the EPUB package. The importer prefers an EPUB 3 navigation docum
 
 The selected table is flattened in navigation order while retaining each entry's label and target. Nested entries are valid boundaries; nesting describes the publication's hierarchy but does not create a second hierarchy in the current project model.
 
-The importer does not use the visible navigation document itself as reading content. It uses the document's links as metadata and continues to obtain readable content from retained spine items.
+The navigation document's links are used as metadata. When that XHTML resource is also present in the spine, the importer excludes its `<nav>` subtree but retains any vocalizable paragraph or blockquote outside navigation, without an arbitrary minimum word count. A TOC heading by itself is not treated as prose. A navigation-only resource remains metadata and is not read aloud. This behavior is covered by synthetic mixed-navigation regression tests.
 
 ## Spine Order and Logical Sections
 

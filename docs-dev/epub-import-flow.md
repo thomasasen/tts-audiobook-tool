@@ -6,7 +6,7 @@ The app now supports importing an EPUB directly into an audiobook project throug
 
 The implemented import path is intentionally conservative: it converts EPUB reading content into polished plain text, derives logical section boundaries from EPUB navigation while retaining spine reading order, segments each logical section with the same project settings used by ordinary text import, and commits the result through the existing project persistence model.
 
-The section-boundary algorithm is documented in [Navigation-Defined EPUB Sectioning](epub-navigation-sectioning.md).
+The section-boundary algorithm is documented in [Navigation-Defined EPUB Sectioning](epub-navigation-sectioning.md). Structured omissions, manual recovery, complex-source review items, and source-to-segment coverage are described in [EPUB Content Audit and Recovery](epub-content-audit.md).
 
 This keeps EPUB import aligned with the app's pre-existing design constraints:
 
@@ -148,10 +148,12 @@ It is intentionally more deliberate than raw `BeautifulSoup.get_text()`:
 
 - removes non-reading tags such as `script`, `style`, `nav`, `img`, `svg`, and form/media elements,
 - ignores HTML comments (BeautifulSoup yields them as nameless string nodes; e.g. publishers often leave a commented-out duplicate `<img>` that would otherwise appear as literal text),
-- treats paragraphs, headings, lists, blockquotes, tables, and other block elements as paragraph-like text blocks,
+- treats paragraphs, headings, lists, blockquotes, tables, and other block elements as structured reading text,
+- emits table cells in source row order with explicit separators and preserves ordered-list ordinals,
 - preserves `<br>` line breaks where appropriate,
 - renders `<hr>` as a scene-break-like `* * *`,
-- keeps list items readable,
+- keeps captions and footnote content in XHTML reading order,
+- reports tables, MathML, figures, and footnotes for manual review without inventing speaker text,
 - coalesces ordinary block boundaries, so nesting a paragraph inside layout containers does not manufacture a scene break,
 - preserves empty/spacer blocks (including image-only ornaments) as extra spacing, explicit `<br>` runs, and `<hr>` ornaments; CSS-only visual spacing is not interpreted,
 - normalizes whitespace and blank lines,
@@ -480,3 +482,7 @@ Micro-HTML / SimpleBook HTML or reader_document.v1 blocks
 Inscriptis remains a plausible tool here because it is built for HTML-to-text rendering and annotations. A custom extractor may also be appropriate if the app needs stricter control over the subset of supported reader markup.
 
 Phase 2b should build on the current importer boundaries where practical, especially the separation between EPUB orchestration and extraction/serialization implementation. It does not have to wait for Phase 2a if the first goal is to evaluate conversion fidelity, and Phase 2a does not have to wait for Phase 2b if the first goal is to define the ereader storage/rendering contract.
+
+## Content Audit and Recovery
+
+The Web Studio import catalogue exposes structured skipped-section records and bounded previews. Recoverable TOC/publication-metadata resources can be explicitly restored before chapter selection. The source EPUB remains immutable; see [EPUB Content Audit and Recovery](epub-content-audit.md) for the API, coverage mapping, and optional human-reviewed speaker-version design.

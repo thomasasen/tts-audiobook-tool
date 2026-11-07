@@ -13,3 +13,9 @@ In practice, the documents may include:
 - focused references for implementation details that are useful outside the main README
 
 The main README remains the primary entry point for installation and user-facing guidance.
+
+## EPUB import and content integrity
+
+- [EPUB Import Architecture](epub-import-flow.md)
+- [Navigation-Defined EPUB Sectioning](epub-navigation-sectioning.md)
+- [EPUB Content Audit and Recovery](epub-content-audit.md)

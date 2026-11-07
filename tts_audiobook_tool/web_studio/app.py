@@ -138,40 +138,125 @@ def _validate_epub(path: Path) -> None:
         raise ValueError("Das EPUB kann nicht sicher gelesen werden.") from exc
 
 
-def _extract(path: Path):
+def _extract(path: Path, include_skipped_ids: set[str] | None = None):
     # Use the application's canonical EPUB parser, including spine and
     # navigation logic. Never parse user-provided HTML in the web layer.
+    from tts_audiobook_tool.project import Project
     from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
-    result = EpubExtractor.extract_import_chapters(str(path))
-    if not result.chapters:
-        raise ValueError("Das EPUB enthält keine auslesbaren Kapitel.")
-    if len(result.chapters) > MAX_CHAPTERS:
-        raise ValueError("Das EPUB enthält zu viele Kapitel.")
+
+    project = Project(language_code="de")
+    result = EpubExtractor.import_epub(
+        str(path),
+        max_words=project.max_words,
+        segmentation_strategy=project.segmentation_strategy,
+        language_code="de",
+        include_skipped_ids=include_skipped_ids,
+    )
+    if not result.chapters and not result.skipped_sections:
+        raise ValueError("Das EPUB enthält keine auslesbaren Kapitel oder prüfbaren ausgelassenen Abschnitte.")
+    if len(result.chapters) + len(result.skipped_sections) > MAX_CHAPTERS:
+        raise ValueError("Das EPUB enthält zu viele Kapitel und ausgelassene Abschnitte.")
     return result
 
 
 def _catalogue(result) -> dict:
+    included_hrefs = {
+        item.href.split("#", 1)[0]
+        for item in getattr(result, "skipped_sections", [])
+        if item.included
+    }
     chapters = [
         {
+            "id": getattr(chapter, "id", "") or f"chapter-{i}",
             "index": i,
             "title": (chapter.title or f"Abschnitt {i + 1}")[:250],
             "preview": chapter.text[:FIRST_TEXT_CHARS],
             "characters": len(chapter.text),
-            "is_toc": bool(TOC.fullmatch((chapter.title or "").strip())),
+            "is_toc": (
+                bool(TOC.fullmatch((chapter.title or "").strip()))
+                and getattr(chapter, "href", "").split("#", 1)[0] not in included_hrefs
+            ),
         }
         for i, chapter in enumerate(result.chapters)
     ]
     candidates = [c["index"] for c in chapters if not c["is_toc"]]
-    if not candidates:
-        raise ValueError("Nur Inhaltsverzeichnisse gefunden. Kein Vorlesetext vorhanden.")
+    skipped_sections = [
+        {
+            "id": item.id,
+            "title": (item.title or item.href or "Ausgelassener Abschnitt")[:250],
+            "href": item.href[:500],
+            "reason": item.reason[:500],
+            "preview": item.preview[:240],
+            "category": item.category,
+            "spine_index": item.spine_index,
+            "recoverable": bool(item.recoverable),
+            "included": bool(item.included),
+        }
+        for item in getattr(result, "skipped_sections", [])
+    ]
+    effective_included_ids = sorted(
+        item["id"] for item in skipped_sections if item["included"]
+    )
+    if not chapters and not skipped_sections:
+        raise ValueError("Nur nicht lesbare oder nicht wiederherstellbare Abschnitte gefunden.")
     prefaces = [i for i in candidates if PREFACE.match(chapters[i]["title"])]
-    start = prefaces[0] if prefaces else candidates[0]
+    start = prefaces[0] if prefaces else (candidates[0] if candidates else 0)
+    coverage_items = list(getattr(result, "coverage", []))
+    review_items = [
+        {
+            "id": item.id,
+            "kind": item.kind,
+            "title": item.title,
+            "href": item.href[:500],
+            "reason": item.reason[:500],
+            "preview": item.preview[:240],
+            "count": item.count,
+        }
+        for item in getattr(result, "review_items", [])[:250]
+    ]
     return {
         "title": (result.book_title or "Unbenanntes Buch")[:250],
         "chapters": chapters,
         "suggested_start": start,
-        "warnings": (result.significant_warnings or result.warnings)[:50],
+        "warnings": [
+            warning for warning in (result.significant_warnings or result.warnings)
+            if not warning.startswith(("Skipped EPUB section:", "Skipped EPUB navigation document:"))
+        ][:50],
+        "skipped_sections": skipped_sections,
+        "included_skipped_ids": effective_included_ids,
+        "content_review_items": review_items,
+        "coverage": {
+            "complete": bool(coverage_items) and all(item.complete for item in coverage_items),
+            "sections_checked": len(coverage_items),
+            "sections_total": len(result.chapters),
+            "phrase_groups": len(getattr(result, "phrase_groups", [])),
+            "source_characters": sum(item.source_characters for item in coverage_items),
+            "spoken_characters": sum(item.spoken_characters for item in coverage_items),
+            "sections": [
+                {
+                    "chapter_id": item.chapter_id,
+                    "title": item.title,
+                    "href": item.href,
+                    "source_start": item.source_start,
+                    "source_end": item.source_end,
+                    "phrase_group_start": item.phrase_group_start,
+                    "phrase_group_end": item.phrase_group_end,
+                    "source_characters": item.source_characters,
+                    "spoken_characters": item.spoken_characters,
+                    "complete": item.complete,
+                }
+                for item in coverage_items
+            ],
+        } if coverage_items else None,
     }
+
+
+def _write_catalogue(directory: Path, catalogue: dict) -> None:
+    path = directory / "chapters.json"
+    temporary = directory / "chapters.json.tmp"
+    temporary.write_text(json.dumps(catalogue, ensure_ascii=False), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
 
 
 def _public_project(row: dict, catalogue: dict | None = None) -> dict:
@@ -190,6 +275,10 @@ def _public_project(row: dict, catalogue: dict | None = None) -> dict:
 class ChapterSelection(BaseModel):
     start_index: int = Field(ge=0)
     excluded_indices: list[int] = Field(default_factory=list, max_length=MAX_CHAPTERS)
+
+
+class SkippedSectionSelection(BaseModel):
+    included_ids: list[str] = Field(default_factory=list, max_length=MAX_CHAPTERS)
 
 
 app = FastAPI(
@@ -290,9 +379,7 @@ async def create_project(file: UploadFile = File(...)):
         _validate_epub(path)
         result = _extract(path)
         catalogue = _catalogue(result)
-        (directory / "chapters.json").write_text(
-            json.dumps(catalogue, ensure_ascii=False), encoding="utf-8"
-        )
+        _write_catalogue(directory, catalogue)
         now = datetime.now(timezone.utc).isoformat()
         with _db() as db:
             db.execute(
@@ -300,7 +387,12 @@ async def create_project(file: UploadFile = File(...)):
                 (
                     project_id, catalogue["title"], "Entwurf",
                     Path(file.filename).name[:255], len(catalogue["chapters"]),
-                    catalogue["suggested_start"], "[]", now, now,
+                    catalogue["suggested_start"],
+                    json.dumps(
+                        [c["index"] for c in catalogue["chapters"] if c["is_toc"]]
+                        if any(not c["is_toc"] for c in catalogue["chapters"]) else []
+                    ),
+                    now, now,
                 ),
             )
         return _public_project(_project(project_id), catalogue)
@@ -325,6 +417,91 @@ def get_project(project_id: str):
     return _public_project(row, catalogue)
 
 
+@app.put("/api/projects/{project_id}/skipped-sections", dependencies=[Depends(require_auth)])
+def update_skipped_sections(project_id: str, selection: SkippedSectionSelection):
+    row = _project(project_id)
+    if row["status"] not in {"Entwurf", "Vorbereitet"}:
+        raise HTTPException(409, "Ausgelassene Abschnitte können nach Produktionsbeginn nicht mehr geändert werden.")
+    directory = _project_dir(project_id)
+    try:
+        catalogue = json.loads((directory / "chapters.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, "Kapitelinformationen können nicht geladen werden.") from exc
+
+    if len(set(selection.included_ids)) != len(selection.included_ids):
+        raise HTTPException(422, "Die Auswahl enthält doppelte Abschnittskennungen.")
+    if any(
+        len(section_id) != 24
+        or any(character not in "0123456789abcdef" for character in section_id)
+        for section_id in selection.included_ids
+    ):
+        raise HTTPException(422, "Die Auswahl enthält eine ungültige Abschnittskennung.")
+    recoverable_ids = {
+        item["id"] for item in catalogue.get("skipped_sections", [])
+        if item.get("recoverable")
+    }
+    requested_ids = set(selection.included_ids)
+    if not requested_ids.issubset(recoverable_ids):
+        raise HTTPException(422, "Mindestens ein Abschnitt kann nicht wieder aufgenommen werden.")
+
+    old_chapters = catalogue.get("chapters", [])
+    old_start = row["selected_start"]
+    old_start_id = (
+        old_chapters[old_start]["id"]
+        if 0 <= old_start < len(old_chapters) else None
+    )
+    old_excluded = set(json.loads(row["excluded_json"]))
+    old_excluded_ids = {
+        old_chapters[index]["id"]
+        for index in old_excluded
+        if 0 <= index < len(old_chapters)
+    }
+
+    try:
+        updated_catalogue = _catalogue(
+            _extract(directory / "source.epub", requested_ids)
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    new_chapters = updated_catalogue["chapters"]
+    new_indices = {chapter["id"]: chapter["index"] for chapter in new_chapters}
+    old_chapter_ids = {chapter["id"] for chapter in old_chapters}
+    newly_added_toc_ids = {
+        chapter["id"] for chapter in new_chapters
+        if chapter["is_toc"] and chapter["id"] not in old_chapter_ids
+    } if any(not chapter["is_toc"] for chapter in new_chapters) else set()
+    excluded_ids = old_excluded_ids | newly_added_toc_ids
+    excluded_indices = sorted(
+        new_indices[chapter_id]
+        for chapter_id in excluded_ids
+        if chapter_id in new_indices
+    )
+    selected_start = new_indices.get(old_start_id, updated_catalogue["suggested_start"])
+    if selected_start in excluded_indices:
+        selected_start = updated_catalogue["suggested_start"]
+        if selected_start in excluded_indices and new_chapters:
+            selected_start = next(
+                (chapter["index"] for chapter in new_chapters
+                 if chapter["index"] not in excluded_indices),
+                selected_start,
+            )
+
+    _write_catalogue(directory, updated_catalogue)
+    now = datetime.now(timezone.utc).isoformat()
+    with _db() as db:
+        db.execute(
+            """UPDATE studio_projects
+               SET chapter_count=?, selected_start=?, excluded_json=?, status='Entwurf', updated_at=?
+               WHERE id=?""",
+            (
+                len(new_chapters), selected_start,
+                json.dumps(excluded_indices), now, project_id,
+            ),
+        )
+    return get_project(project_id)
+
+
 @app.put("/api/projects/{project_id}/chapters", dependencies=[Depends(require_auth)])
 def select_chapters(project_id: str, selection: ChapterSelection):
     row = _project(project_id)
@@ -333,12 +510,37 @@ def select_chapters(project_id: str, selection: ChapterSelection):
     directory = _project_dir(project_id)
     catalogue = json.loads((directory / "chapters.json").read_text(encoding="utf-8"))
     chapters = catalogue["chapters"]
-    if selection.start_index >= len(chapters) or chapters[selection.start_index]["is_toc"]:
-        raise HTTPException(422, "Ungültiger Vorlesebeginn: Ein Inhaltsverzeichnis ist nicht zulässig.")
-    excluded = set(selection.excluded_indices)
+    legacy_toc_defaults: set[int] = set()
+    if any(not chapter.get("id") for chapter in chapters):
+        # Upgrade catalogues created before stable logical-chapter IDs were
+        # introduced. Preserve the user's index-based selection only when the
+        # current parser still produces the same chapter count.
+        try:
+            refreshed_catalogue = _catalogue(_extract(directory / "source.epub"))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if len(refreshed_catalogue["chapters"]) != len(chapters):
+            raise HTTPException(
+                409,
+                "Die alte Kapitelübersicht ist nicht mehr deckungsgleich. Bitte das EPUB neu importieren.",
+            )
+        catalogue = refreshed_catalogue
+        chapters = catalogue["chapters"]
+        if not json.loads(row["excluded_json"]) and any(
+            not chapter["is_toc"] for chapter in chapters
+        ):
+            legacy_toc_defaults = {
+                chapter["index"] for chapter in chapters if chapter["is_toc"]
+            }
+        _write_catalogue(directory, catalogue)
+    if selection.start_index >= len(chapters):
+        raise HTTPException(422, "Ungültiger Vorlesebeginn.")
+    legacy_toc_defaults.discard(selection.start_index)
+    excluded = set(selection.excluded_indices) | legacy_toc_defaults
     if any(i < 0 or i >= len(chapters) for i in excluded):
         raise HTTPException(422, "Ungültige Kapitelauswahl.")
-    excluded.update(i for i, chapter in enumerate(chapters) if chapter["is_toc"])
+    if selection.start_index in excluded:
+        raise HTTPException(422, "Der erste vorgelesene Abschnitt darf nicht ausgeschlossen sein.")
     included = [i for i in range(selection.start_index, len(chapters)) if i not in excluded]
     if not included or included[0] != selection.start_index:
         raise HTTPException(422, "Mindestens das Startkapitel muss enthalten sein.")
@@ -350,13 +552,16 @@ def select_chapters(project_id: str, selection: ChapterSelection):
     from tts_audiobook_tool.text_ops.epub_extractor import EpubExtractor
 
     try:
+        project_defaults = Project(language_code="de")
+        included_skipped_ids = set(catalogue.get("included_skipped_ids", []))
         book = EpubExtractor.import_epub(
             str(directory / "source.epub"),
-            max_words=Project().max_words,
-            segmentation_strategy=Project().segmentation_strategy,
+            max_words=project_defaults.max_words,
+            segmentation_strategy=project_defaults.segmentation_strategy,
             language_code="de",
+            include_skipped_ids=included_skipped_ids,
         )
-        if len(book.chapters) != len(chapters):
+        if [chapter.id for chapter in book.chapters] != [chapter["id"] for chapter in chapters]:
             raise ValueError("Die EPUB-Kapitel haben sich seit dem Import verändert.")
         bounds = [0] + book.section_start_indices + [len(book.phrase_groups)]
         selected_groups = []
