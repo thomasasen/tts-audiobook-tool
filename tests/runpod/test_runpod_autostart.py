@@ -140,6 +140,38 @@ class TestRunPodAutostart(unittest.TestCase):
             (repository / "README.md").write_text("modified\n", encoding="utf-8")
             self.assertIn("README.md", status("--untracked-files=no"))
 
+    def test_web_is_launched_before_optional_thorsten_download(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        # A live pod's browser must come up before optional voice weights are
+        # downloaded, especially on reused volumes with slow model access.
+        start = source.index("tmux new-session -d -s audiobook-web")
+        health = source.index('if (( WEB_HEALTHY )); then')
+        voice = source.index('echo "Installing German voice (optional until GPU acceptance)."')
+        self.assertLess(start, health)
+        self.assertLess(health, voice)
+        self.assertEqual(source.count("tmux new-session -d -s audiobook-web"), 1)
+        self.assertIn("Stale audiobook-web tmux session", source)
+        self.assertIn('tmux kill-session -t audiobook-web', source)
+        self.assertIn("tmux capture-pane -pt audiobook-web", source)
+
+    def test_web_recovery_skips_new_voice_downloads(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        self.assertIn(': "${RUNPOD_TTS_SKIP_VOICE_INSTALL:=0}"', source)
+        self.assertIn('if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then', source)
+        self.assertIn("No new model weights are downloaded", source)
+        self.assertLess(
+            source.index('if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then'),
+            source.index('bash "$REPO_DIR/runpod/install-thorsten.sh"')
+        )
+        self.assertIn("Trying existing web/base Python environment", source)
+
+    def test_invalid_skip_voice_flag_is_rejected(self):
+        result = self.call("--check-only", extra_env={
+            "RUNPOD_TTS_SKIP_VOICE_INSTALL": "unsafe",
+        })
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Invalid RUNPOD_TTS_SKIP_VOICE_INSTALL", result.stderr)
+
     def test_invalid_model_is_rejected_without_side_effects(self):
         result = self.call(
             "--check-only",
