@@ -295,7 +295,7 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 
 | Paket | Status | PR / Commit | Gezielt ausgeführte Tests und Ergebnis | Offene Risiken / Freigabe |
 |---|---|---|---|---|
-| A01 | OFFEN | — | — | — |
+| A01 | IN ARBEIT | [PR #15](https://github.com/thomasasen/tts-audiobook-tool/pull/15) | Unit/API/Browser und echter CPU-ASR-Smoke implementiert; aktuelle CI-Ergebnisse noch abzuwarten | Kein echter RunPod-/GPU-/Hörtest; CPU-Smoke muss auf PR-Head bestehen |
 | A02 | OFFEN | — | — | — |
 | A03 | OFFEN | — | — | — |
 | A04 | OFFEN | — | — | — |
@@ -313,6 +313,15 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | E03 | OFFEN / GPU- UND HÖRABNAHME VORAUSGESETZT | — | — | — |
 
 Statuswerte: OFFEN, IN ARBEIT, BLOCKIERT (Grund angeben), FERTIG (Beleg), ENTFÄLLT (fachliche Begründung). Abhaken nur bei FERTIG; einmalige Statushinweise ändern die Checkbox nicht.
+
+### A01 – technische Umsetzung im offenen PR #15 (07.11.2026)
+
+**Geprüfter Ausgangsstand:** `master` bei `6e59661d52728b09c7f4d5f3b76e1d5686364782`. PR #6 und #1 sind unabhängig offen; PR #14 ist gemergt. Der Web-Venv deklarierte ASR nicht, während `start-web.sh` `small` anforderte.
+
+**Änderungen auf `fix/a01-asr-quality-readiness`:**
+`tts_audiobook_tool/web_studio/asr_quality.py` (Laufzeitstatus, CPU-Inferenz, Metriken), `production.py` (Sicherheits- und Prüfbericht-Integration), `app.py` (authentifizierte Capabilities), `web/requirements-runtime.txt`, `runpod/install-web.sh`, `runpod/start-web.sh`, `web/src/studio.tsx`, `tests/web/test_asr_quality.py`, `tests/web/test_studio_production.py`, `tests/web/browser_smoke.py`, `runpod/asr_cpu_smoke.py`, `.github/workflows/german-audiobook-studio.yml` und `docs-dev/asr-quality-checks.md`.
+
+**Vertrag/Risiken:** Keine Änderung am Project-V5-Schema oder Originaltext. ASR bleibt nur Verdachtsprüfung, bei Fehler `not_checked`. Bereits gespeicherte Beta-Segmentprüfungen sind abwärtskompatibel lesbar; frühere private Transkripte werden nicht migriert. `small` wird erst beim echten Einsatz geladen. Vor dem Abhaken: **aktuelle** PR-Head-CI inklusive echter CPU-Inferenz prüfen; Audio-/RunPod-/Hörabnahme bleibt ein eigenständiges Gate. Ohne diese Evidenz bleibt A01 **IN ARBEIT**.
 
 ## 7. Übergabeformat für jeden neuen GPT-Chat
 
