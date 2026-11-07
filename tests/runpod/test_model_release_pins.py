@@ -31,9 +31,8 @@ class TestPinnedModelRelease(unittest.TestCase):
         for script in (installer, prefetch):
             self.assertIn('source "$SCRIPT_DIR/model-pins.env"', script)
             self.assertIn('source "$SCRIPT_DIR/model-source.sh"', script)
-            self.assertIn('"$BASE_MODEL_ID" --revision "$BASE_MODEL_REVISION"', script)
-            self.assertIn('"$THORSTEN_MODEL_ID"', script)
-            self.assertIn('--revision "$THORSTEN_MODEL_REVISION"', script)
+            self.assertIn("download-hf-models.py", script)
+            self.assertIn("verify-hf-models.py", script)
         self.assertIn('VERSION="${MODEL_RELEASE_ID}-deps-${LOCK_SHA256}-py-${THORSTEN_PYTHON_VERSION}-uv-${UV_VERSION}"', installer)
         self.assertIn('"$UV" sync --project "$LOCK_PROJECT" --locked --no-dev --active', installer)
         self.assertIn("runtime_freeze_hash", installer)
@@ -47,6 +46,18 @@ class TestPinnedModelRelease(unittest.TestCase):
         self.assertIn('git -C "$model_root" checkout --detach "$COSYVOICE_REVISION"', source)
         self.assertIn('git -C "$model_root" submodule update --init --recursive', source)
         self.assertIn('[[ "$submodule_head" == "$MATCHA_TTS_REVISION" ]]', source)
+
+    def test_model_release_uses_verified_minimal_asset_set(self):
+        downloader = (ROOT / "runpod/download-hf-models.py").read_text(encoding="utf-8")
+        verifier = (ROOT / "runpod/verify-hf-models.py").read_text(encoding="utf-8")
+        self.assertIn('allow_patterns=list(BASE_ALLOW_PATTERNS)', downloader)
+        self.assertIn('allow_patterns=list(THORSTEN_ALLOW_PATTERNS)', downloader)
+        self.assertIn('"CosyVoice-BlankEN/**"', downloader)
+        self.assertIn('files_metadata=True', verifier)
+        self.assertIn('lfs.sha256', verifier)
+        self.assertIn('_git_blob_sha1', verifier)
+        self.assertIn('BASE_PREFIXES', verifier)
+        self.assertIn('-v2"', self.pins_text)
 
     def test_installer_refuses_to_trust_unmarked_or_wrong_revision_cache(self):
         installer = (ROOT / "runpod/install-thorsten.sh").read_text(encoding="utf-8")
