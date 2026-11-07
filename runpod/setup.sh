@@ -9,9 +9,10 @@ source "$SCRIPT_DIR/env.sh"
 
 usage() {
   cat <<'HELP'
-Usage: bash runpod/setup.sh [--models qwen|moss|both] [--check-only]
+Usage: bash runpod/setup.sh [--models qwen|moss|both] [--check-only] [--bootstrap-only]
   --models       Install selected local TTS environments (default: both).
   --check-only   Print diagnostics without installing anything.
+  --bootstrap-only Prepare system packages, uv, and Python without large TTS dependencies.
   --help         Show this message.
 
 Requires an NVIDIA GPU Pod, a mounted persistent /workspace volume, and root
@@ -22,12 +23,14 @@ HELP
 
 MODELS="both"
 CHECK_ONLY=0
+BOOTSTRAP_ONLY=0
 while (( $# > 0 )); do
   case "$1" in
     --models)
       if (( $# < 2 )); then echo "Missing --models value" >&2; exit 2; fi
       MODELS="$2"; shift 2 ;;
     --check-only) CHECK_ONLY=1; shift ;;
+    --bootstrap-only) BOOTSTRAP_ONLY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -110,6 +113,10 @@ if [[ ! -x "$UV" ]]; then
 fi
 echo "uv: $("$UV" --version)"
 "$UV" python install 3.12
+if (( BOOTSTRAP_ONLY )); then
+  echo "RunPod bootstrap-only complete: OS packages, uv and managed Python 3.12 ready."
+  exit 0
+fi
 
 verify_model_imports() {
   local model="$1" python="$2" version="$3"
