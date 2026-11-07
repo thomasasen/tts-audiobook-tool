@@ -5,7 +5,11 @@ No GPU, model downloads, or network required.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
+import sys
+from types import SimpleNamespace
+from unittest import mock
 from pathlib import Path
 import subprocess
 import tempfile
@@ -119,6 +123,56 @@ exit 99
             script.index("ensure_thorsten_pkg_resources\n"),
             script.index('if [[ -f "$MODEL_ROOT/.studio-ready"'),
         )
+
+    def test_worker_only_redirects_v3_speech_tokenizer_onnx_to_cpu(self):
+        worker_path = ROOT / "tts_audiobook_tool/web_studio/thorsten_worker.py"
+        spec = importlib.util.spec_from_file_location("thorsten_worker_test", worker_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        calls = []
+
+        def fake_onnx_session(path, **kwargs):
+            calls.append((path, kwargs["providers"].copy()))
+            if kwargs["providers"] == ["CUDAExecutionProvider"]:
+                raise RuntimeError("CUDA failure 46: GPU is busy or unavailable")
+            return object()
+
+        fake_onnx = SimpleNamespace(InferenceSession=fake_onnx_session)
+        with mock.patch.dict(sys.modules, {"onnxruntime": fake_onnx}):
+            with module._cpu_speech_tokenizer_frontend():
+                fake_onnx.InferenceSession(
+                    "/model/speech_tokenizer_v3.onnx",
+                    providers=["CUDAExecutionProvider"],
+                )
+                fake_onnx.InferenceSession(
+                    "/model/campplus.onnx",
+                    providers=["CPUExecutionProvider"],
+                )
+                self.assertIsNot(fake_onnx.InferenceSession, fake_onnx_session)
+                with self.assertRaisesRegex(RuntimeError, "CUDA failure 46"):
+                    fake_onnx.InferenceSession(
+                        "/model/unrelated.onnx",
+                        providers=["CUDAExecutionProvider"],
+                    )
+            self.assertIs(fake_onnx.InferenceSession, fake_onnx_session)
+            with self.assertRaisesRegex(ValueError, "test constructor failure"):
+                with module._cpu_speech_tokenizer_frontend():
+                    raise ValueError("test constructor failure")
+            self.assertIs(fake_onnx.InferenceSession, fake_onnx_session)
+
+        self.assertEqual(calls[0][1], ["CPUExecutionProvider"])
+        self.assertEqual(calls[1][1], ["CPUExecutionProvider"])
+        self.assertEqual(calls[2][1], ["CUDAExecutionProvider"])
+
+    def test_autostart_is_web_only_unless_tui_explicitly_enabled(self):
+        script = (ROOT / "runpod/autostart.sh").read_text(encoding="utf-8")
+        self.assertIn(': "${RUNPOD_TTS_START_TUI:=0}"', script)
+        self.assertIn('if [[ "$RUNPOD_TTS_START_TUI" == 1 ]]; then', script)
+        self.assertIn("no legacy TUI started; GPU reserved", script)
+        self.assertIn('tmux has-session -t audiobook-web', script)
+        self.assertIn('bash "$REPO_DIR/runpod/install-thorsten.sh"', script)
 
     def test_readme_command_points_to_exact_integrated_autostart(self):
         root = (ROOT / "README.md").read_text(encoding="utf-8")
