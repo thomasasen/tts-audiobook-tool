@@ -103,7 +103,8 @@ def main() -> None:
                     page.unroute("**/api/capabilities")
 
                     page.get_by_role("button", name="Sprecher").click()
-                    page.get_by_text("Freigabe offen").wait_for()
+                    page.get_by_text("Nicht installiert", exact=True).wait_for()
+                    page.get_by_text("Thorsten noch nicht betriebsbereit", exact=True).wait_for()
                     assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_disabled()
 
                     # Reproduce the actual RunPod error when native Thorsten
@@ -115,7 +116,8 @@ def main() -> None:
                             status=200, content_type="application/json",
                             body='{"epub_import":true,"chapter_selection":true,'
                                  '"tts_generation":false,"audio_export":true,'
-                                 '"voice_preview_available":true,"reason":"Test"}',
+                                 '"voice_preview_available":true,"voice_installed":true,"voice_approved":false,'
+                                 '"reason":"Thorsten-CosyVoice3 ist installiert. Bitte die Hörprobe freigeben."}',
                         ),
                     )
                     page.route(
@@ -126,6 +128,10 @@ def main() -> None:
                         ),
                     )
                     page.get_by_role("button", name="Sprecher").click()
+                    page.get_by_text("Thorsten installiert – Hörfreigabe noch offen", exact=True).wait_for()
+                    page.get_by_text("Installiert · Freigabe offen", exact=True).wait_for()
+                    assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_enabled()
+                    assert page.get_by_text("Thorsten-CosyVoice3 muss lokal installiert werden").count() == 0
                     page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
                     page.get_by_text("Serverfehler (HTTP 500) bei /api/voices/preview", exact=False).wait_for()
                     assert "Unexpected token" not in page.locator(".message.error").inner_text()
