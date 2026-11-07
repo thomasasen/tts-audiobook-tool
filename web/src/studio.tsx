@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from 'react'
 import {
-  ArrowLeft, BookOpen, Check, ChevronRight, CloudUpload, FileAudio,
+  ArrowLeft, BookOpen, Check, ChevronRight, CloudUpload, FileAudio, LoaderCircle,
   FolderOpen, Headphones, LockKeyhole, Moon, ShieldCheck, Sun,
   Volume2, AlertCircle, RotateCcw, Trash2, PlayCircle, PauseCircle, StopCircle
 } from 'lucide-react'
@@ -45,6 +45,9 @@ type Job = {
   duration: number
   error: string
 }
+type ActivityEvent = {at: string; message: string}
+type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string}
+type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]}
 type QualityIssue = {index: number; status: string; warnings: string[]; asr_similarity?: number | null}
 type QualityReport = {checked: number; total: number; issues: QualityIssue[]}
 const STATUS_LABELS: Record<string, string> = {
@@ -132,10 +135,67 @@ export default function Studio() {
   const [audioUrl, setAudioUrl] = useState('')
   const [previewPlayed, setPreviewPlayed] = useState(false)
   const [sampleIndex, setSampleIndex] = useState(0)
+  const [previewTask, setPreviewTask] = useState<PreviewTask | null>(null)
+  const [previewAudioValid, setPreviewAudioValid] = useState(false)
+  const [previewAudioError, setPreviewAudioError] = useState('')
+  const [jobActivity, setJobActivity] = useState<JobActivity | null>(null)
+  const [exportPending, setExportPending] = useState(false)
+  const handledPreview = useRef<string | null>(null)
+
+  async function refreshActivity(projectId: string, jobId: string) {
+    try {
+      const activity = await api<JobActivity>(
+        `/api/projects/${projectId}/jobs/${jobId}/activity`, token
+      )
+      setJobActivity(activity)
+    } catch {
+      // Older pre-update jobs or a transient activity error must not stop
+      // polling the canonical persisted job state.
+    }
+  }
+
+  async function loadPreviewAudio(taskId: string) {
+    const path = `/api/voices/preview/audio/${taskId}`
+    try {
+      const response = await fetch(path, {
+        headers: { Authorization: `Bearer ${token}` }, cache: 'no-store',
+      })
+      if (!response.ok) throw await apiResponseError(response, path)
+      const type = response.headers.get('content-type') ?? ''
+      if (!type.startsWith('audio/wav') && !type.startsWith('audio/x-wav')) {
+        throw new Error('Der Server hat keine WAV-Hörprobe zurückgegeben.')
+      }
+      const blob = await response.blob()
+      if (blob.size < 100) throw new Error('Die erzeugte Hörprobe ist leer oder unvollständig.')
+      const url = URL.createObjectURL(blob)
+      setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return url })
+      setPreviewAudioValid(false)
+      setPreviewPlayed(false)
+    } catch (err) {
+      setPreviewAudioError((err as Error).message)
+      setPreviewAudioValid(false)
+    }
+  }
+
+  async function startPreview() {
+    setBusy(true); setError(''); setPreviewAudioError('')
+    setPreviewAudioValid(false); setPreviewPlayed(false)
+    handledPreview.current = null
+    setAudioUrl(previous => { if (previous) URL.revokeObjectURL(previous); return '' })
+    try {
+      const task = await api<PreviewTask>('/api/voices/preview/start', token, {method: 'POST'})
+      setPreviewTask(task)
+    } catch (err) {
+      setPreviewAudioError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function refreshJob(id: string, projectId: string) {
     const latest = await api<Job>(`/api/projects/${projectId}/jobs/${id}`, token)
     setJob(latest)
+    void refreshActivity(projectId, id)
     if (['generated','completed'].includes(latest.status)) {
       const report = await api<QualityReport>('/api/projects/' + projectId + '/jobs/' + id + '/quality', token)
       setQuality(report)
@@ -146,12 +206,32 @@ export default function Studio() {
   }
 
   useEffect(() => {
-    if (!token || !active || !job || !['queued', 'running', 'exporting'].includes(job.status)) return
+    if (!token || !active || !job || (!['queued', 'running', 'exporting'].includes(job.status) && !exportPending)) return
     const interval = window.setInterval(() => {
       void refreshJob(job.id, active.id).catch(err => setError((err as Error).message))
     }, 3000)
     return () => window.clearInterval(interval)
-  }, [token, active?.id, job?.id, job?.status])
+  }, [token, active?.id, job?.id, job?.status, exportPending])
+
+  useEffect(() => {
+    if (!token || view !== 'voices' || !previewTask?.id) return
+    if (previewTask.status !== 'running') {
+      if (previewTask.status === 'ready' && handledPreview.current !== previewTask.id) {
+        handledPreview.current = previewTask.id
+        void loadPreviewAudio(previewTask.id)
+      }
+      return
+    }
+    let cancelled = false
+    const interval = window.setInterval(() => {
+      void api<PreviewTask>('/api/voices/preview/status', token)
+        .then(task => { if (!cancelled && task.id === previewTask.id) setPreviewTask(task) })
+        .catch(err => {
+          if (!cancelled) setPreviewAudioError((err as Error).message)
+        })
+    }, 1500)
+    return () => { cancelled = true; window.clearInterval(interval) }
+  }, [token, view, previewTask?.id, previewTask?.status])
 
   async function loadAudio(path: string, method = 'GET') {
     setBusy(true); setError('')
