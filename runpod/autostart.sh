@@ -268,6 +268,7 @@ fi
 
 echo "Step 5/5: Finalize Thorsten installation only after prefetch has finished."
 THORSTEN_INSTALL_OK=0
+CUDA_THORSTEN_READY=0
 if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then
   echo "Skipping Thorsten installation as requested. No new model weights are downloaded."
 elif (( ! CUDA_SYSTEM_READY )); then
@@ -285,7 +286,9 @@ if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 && "$CUDA_SYSTEM_READY" == 1 && "$PR
   if [[ -s "$DATA_ROOT/models/CosyVoice/.studio-ready" || "$NEED_PREFETCH" == 1 ]]; then
     if bash "$REPO_DIR/runpod/install-thorsten.sh"; then
       THORSTEN_INSTALL_OK=1
-      if ! python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
+      if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
+        CUDA_THORSTEN_READY=1
+      else
         echo "WARNING: Model installed, but Thorsten CUDA allocation failed; inspect host."
       fi
     else
@@ -316,11 +319,49 @@ fi
 if [[ "$RUNPOD_TTS_START_TUI" == 1 && "$RUNPOD_TTS_MODELS" == none ]]; then
   echo "WARNING: Legacy TUI requested without its model; TUI not started."
 fi
-exec 3>&-
-if (( THORSTEN_INSTALL_OK )); then
-  echo "=== Web Studio healthy; Thorsten weights installed (real listening acceptance still required) ==="
+# Recheck HTTP after lengthy TTS installation, otherwise a server crash could
+# misleadingly be reported as a complete and successful startup.
+FINAL_WEB_STATUS=failed
+if curl -fsS --max-time 5 "http://127.0.0.1:$WEB_PORT/api/health" >/dev/null 2>&1; then
+  FINAL_WEB_STATUS=ready
 else
-  echo "=== Web Studio healthy; Thorsten not ready, narration disabled ==="
+  echo "ERROR: Web server became unreachable before final completion. Inspect audiobook-web." >&2
 fi
-echo "RunPod → Connect → HTTP $WEB_PORT; web logs: tmux attach -t audiobook-web"
-echo "Volume data: $DATA_ROOT"
+
+VOICE_STATUS=not-ready
+if (( THORSTEN_INSTALL_OK )); then VOICE_STATUS=installed; fi
+SYS_CUDA_STATUS=failed
+if (( CUDA_SYSTEM_READY )); then SYS_CUDA_STATUS=passed; fi
+VOICE_CUDA_STATUS=not-tested
+if (( THORSTEN_INSTALL_OK )); then VOICE_CUDA_STATUS=failed; fi
+if (( CUDA_THORSTEN_READY )); then VOICE_CUDA_STATUS=passed; fi
+TUI_STATUS="nicht gestartet (Standard)"
+if [[ "$RUNPOD_TTS_START_TUI" == 1 ]] && tmux has-session -t audiobook 2>/dev/null; then
+  TUI_STATUS="gestartet ($RUNPOD_TTS_AUTOSTART_MODEL)"
+fi
+GPU_LABEL="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+GPU_LABEL="${GPU_LABEL:-nicht ermittelbar}"
+
+# Non-secret completion marker goes to the persistent autostart log.
+echo "RunPod start steps complete: web=$FINAL_WEB_STATUS, Thorsten=$VOICE_STATUS, Thorsten CUDA=$VOICE_CUDA_STATUS."
+echo "Access: RunPod -> Connect -> HTTP $WEB_PORT. Private final summary follows in CONTAINER logs."
+
+# Full summary INCLUDING GENERATED TOKEN goes directly to the original Pod
+# stdout (fd 3). It MUST NOT pass through the tee writing autostart-*.log.
+RUNPOD_SUMMARY_WEB="$FINAL_WEB_STATUS" \
+RUNPOD_SUMMARY_THORSTEN="$VOICE_STATUS" \
+RUNPOD_SUMMARY_CUDA_SYSTEM="$SYS_CUDA_STATUS" \
+RUNPOD_SUMMARY_CUDA_THORSTEN="$VOICE_CUDA_STATUS" \
+RUNPOD_SUMMARY_GPU="$GPU_LABEL" \
+RUNPOD_SUMMARY_COMMIT="$(git -C "$REPO_DIR" rev-parse --short HEAD)" \
+RUNPOD_SUMMARY_PORT="$WEB_PORT" \
+RUNPOD_SUMMARY_DATA_ROOT="$DATA_ROOT" \
+RUNPOD_SUMMARY_WORKSPACE="$RUNPOD_WORKSPACE" \
+RUNPOD_SUMMARY_TUI="$TUI_STATUS" \
+  bash "$REPO_DIR/runpod/print-start-summary.sh" >&3
+exec 3>&-
+
+if [[ "$FINAL_WEB_STATUS" != ready ]]; then
+  echo "ERROR: RunPod bootstrap incomplete: Web Studio is not reachable." >&2
+  exit 1
+fi
