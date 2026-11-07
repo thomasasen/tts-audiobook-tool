@@ -40,7 +40,7 @@ class TestPinnedModelRelease(unittest.TestCase):
         self.assertIn('torch = { index = "pytorch-cu121" }', pyproject)
         self.assertIn('onnxruntime-gpu = { index = "onnxruntime-cuda-12" }', pyproject)
         self.assertIn('explicit = true', pyproject)
-        self.assertIn('uv lock --project', (ROOT / "runpod/generate-release-locks.sh").read_text(encoding="utf-8"))
+        self.assertIn('"$UV" lock --project', (ROOT / "runpod/generate-release-locks.sh").read_text(encoding="utf-8"))
         self.assertIn('git -C "$model_root" checkout --detach "$COSYVOICE_REVISION"', source)
         self.assertIn('git -C "$model_root" submodule update --init --recursive', source)
         self.assertIn('[[ "$submodule_head" == "$MATCHA_TTS_REVISION" ]]', source)
