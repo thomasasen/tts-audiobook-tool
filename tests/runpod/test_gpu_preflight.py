@@ -123,6 +123,25 @@ def ones(count, device):
                 result = gpu.check_runtime("qwen", work)
             self.assertFalse(result["cuda_operational"])
 
+    def test_system_python_cuda_preflight_does_not_require_tts_venvs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            self.create_fake_torch(work)
+            with patch.dict(os.environ, {
+                "PYTHONPATH": str(work),
+                "FAKE_GPU_ERROR": "0",
+                "AUDIOBOOK_DATA_ROOT": str(work),
+            }):
+                result = subprocess.run(
+                    [sys.executable, str(PATH), "--env", "system", "--json"],
+                    capture_output=True, text=True, timeout=20,
+                )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["runtimes"][0]["name"], "system")
+            self.assertTrue(payload["runtimes"][0]["cuda_operational"])
+            self.assertTrue(payload["ready"])
+
     def test_cli_returns_nonzero_for_broken_gpu(self):
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)
