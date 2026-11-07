@@ -1509,7 +1509,14 @@ class TestEpubExtractor(unittest.TestCase):
             with open(dest_path, "wb") as f:
                 f.write(b"saved epub bytes")
             linked_path = os.path.join(project_dir, "linked.epub")
-            os.symlink(dest_path, linked_path)
+            try:
+                os.symlink(dest_path, linked_path)
+            except OSError as exc:
+                # Windows can require Developer Mode or SeCreateSymbolicLinkPrivilege.
+                # The environment cannot exercise the symlink behavior in that case.
+                if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                    self.skipTest("Windows user lacks permission to create symbolic links")
+                raise
 
             err = EpubExtractor.copy_epub_to_project(linked_path, project_dir)
 
