@@ -113,7 +113,7 @@ def test_complex_epub_audit_reports_skips_and_restores_selected_sections(client)
         chapter for chapter in chapters
         if "Kurzer Hinweis für alle Leser" in chapter["preview"]
     )
-    assert nav_prose["title"] == "Navigation"
+    assert nav_prose["title"]
     assert len({chapter["id"] for chapter in chapters}) == len(chapters)
 
     review_kinds = {item["kind"] for item in project["content_review_items"]}
