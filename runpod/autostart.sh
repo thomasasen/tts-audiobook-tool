@@ -11,6 +11,7 @@ Usage: bash runpod/autostart.sh [--check-only] [--help]
 Environment variables:
   RUNPOD_WORKSPACE            Mounted network volume (default: /workspace)
   RUNPOD_TTS_BRANCH           Git branch to deploy (default: master)
+  RUNPOD_TTS_COMMIT           Optional immutable 40-hex commit on master (release mode)
   RUNPOD_TTS_MODELS           none | qwen | moss | both (default: none; web-only)
   RUNPOD_TTS_AUTOSTART_MODEL  qwen | moss | menu (default: qwen)
   RUNPOD_TTS_START_TUI       0 (web only) | 1 (also launch legacy TUI); default: 0
@@ -34,6 +35,7 @@ done
 
 : "${RUNPOD_WORKSPACE:=/workspace}"
 : "${RUNPOD_TTS_BRANCH:=master}"
+: "${RUNPOD_TTS_COMMIT:=}"
 : "${RUNPOD_TTS_MODELS:=none}"
 : "${RUNPOD_TTS_AUTOSTART_MODEL:=qwen}"
 : "${RUNPOD_TTS_START_TUI:=0}"
@@ -62,6 +64,15 @@ case "$RUNPOD_TTS_BRANCH" in
   master|feature/german-audiobook-release-hardening|feature/german-audiobook-release-validation|feature/german-audiobook-studio-runpod) ;; # Explicit audited source allowlist.
   *) printf 'Unsupported deployment branch: %s\n' "$RUNPOD_TTS_BRANCH" >&2; exit 2 ;;
 esac
+if [[ -n "$RUNPOD_TTS_COMMIT" ]]; then
+  if [[ ! "$RUNPOD_TTS_COMMIT" =~ ^[[:xdigit:]]{40}$ ]]; then
+    echo "RUNPOD_TTS_COMMIT must be a full 40-character Git SHA." >&2; exit 2
+  fi
+  if [[ "$RUNPOD_TTS_BRANCH" != master ]]; then
+    echo "Immutable release mode requires RUNPOD_TTS_BRANCH=master." >&2; exit 2
+  fi
+  RUNPOD_TTS_COMMIT="${RUNPOD_TTS_COMMIT,,}"
+fi
 if [[ "$RUNPOD_TTS_START_TUI" == 1 && "$RUNPOD_TTS_MODELS" != "both" && "$RUNPOD_TTS_AUTOSTART_MODEL" != "menu"
    && "$RUNPOD_TTS_MODELS" != "$RUNPOD_TTS_AUTOSTART_MODEL" ]]; then
   printf 'Startup model %s must be installed by RUNPOD_TTS_MODELS=%s\n' \
@@ -81,6 +92,7 @@ if (( CHECK_ONLY )); then
   printf 'RunPod workspace: %s\nRepo: %s\nPersistent data: %s\nBranch: %s\nInstall: %s\nAutostart: %s\n' \
     "$RUNPOD_WORKSPACE" "$REPO_DIR" "$DATA_ROOT" "$RUNPOD_TTS_BRANCH" \
     "$RUNPOD_TTS_MODELS" "$RUNPOD_TTS_AUTOSTART_MODEL"
+  printf 'Source mode: %s\n' "$(if [[ -n $RUNPOD_TTS_COMMIT ]]; then printf 'immutable %s' "$RUNPOD_TTS_COMMIT"; else printf 'development (floating branch)'; fi)"
   exit 0
 fi
 
@@ -114,19 +126,21 @@ echo "Persistent data: $DATA_ROOT | log: $LOG_FILE"
 echo "Models: $RUNPOD_TTS_MODELS | terminal auto-start: $RUNPOD_TTS_AUTOSTART_MODEL"
 
 if [[ -d "$REPO_DIR/.git" ]]; then
-  echo "Existing checkout found; using fast-forward-only updates."
+  echo "Existing checkout found; enforcing clean source before deployment."
   # Ignore only untracked files during this safety check. Frontend builds
   # create web/dist/ inside the checkout, which previously caused every
   # subsequent Pod restart to silently skip all master updates.
   # Git still refuses a checkout/merge that would overwrite untracked files.
   if [[ -z "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]]; then
     git -C "$REPO_DIR" fetch --no-tags origin "$RUNPOD_TTS_BRANCH"
+    if [[ -z "$RUNPOD_TTS_COMMIT" ]]; then
     if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$RUNPOD_TTS_BRANCH"; then
       git -C "$REPO_DIR" switch "$RUNPOD_TTS_BRANCH"
     else
       git -C "$REPO_DIR" switch -c "$RUNPOD_TTS_BRANCH" FETCH_HEAD
     fi
     git -C "$REPO_DIR" merge --ff-only FETCH_HEAD
+    fi
   else
     echo "ERROR: tracked source files have local modifications; refusing to deploy stale code." >&2
     git -C "$REPO_DIR" status --short --untracked-files=no >&2
@@ -139,6 +153,26 @@ elif [[ -e "$REPO_DIR" ]]; then
 else
   git clone --single-branch --branch "$RUNPOD_TTS_BRANCH" \
     https://github.com/thomasasen/tts-audiobook-tool.git "$REPO_DIR"
+fi
+
+if [[ -n "$RUNPOD_TTS_COMMIT" ]]; then
+  # This ref is immutable. A restart must never float to a new master.
+  # Reject arbitrary/external commits: only verified master history is allowed.
+  git -C "$REPO_DIR" fetch --no-tags origin master
+  if ! git -C "$REPO_DIR" cat-file -e "${RUNPOD_TTS_COMMIT}^{commit}" 2>/dev/null; then
+    echo "ERROR: pinned release commit not found in the checked-out repository." >&2
+    exit 1
+  fi
+  if ! git -C "$REPO_DIR" merge-base --is-ancestor "$RUNPOD_TTS_COMMIT" FETCH_HEAD; then
+    echo "ERROR: pinned release commit is not in the fetched master history." >&2
+    exit 1
+  fi
+  git -C "$REPO_DIR" switch --detach "$RUNPOD_TTS_COMMIT"
+  if [[ "$(git -C "$REPO_DIR" rev-parse HEAD)" != "$RUNPOD_TTS_COMMIT" ]]; then
+    echo "ERROR: source checkout differs from pinned release SHA." >&2
+    exit 1
+  fi
+  echo "Immutable source release selected; no source upgrade on Pod restart."
 fi
 
 echo "Source commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
