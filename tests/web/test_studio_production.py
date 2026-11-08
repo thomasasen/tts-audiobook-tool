@@ -1171,3 +1171,136 @@ def test_glossary_revision_survives_interruption_mid_migration(env, monkeypatch)
     assert not production._glossary_pending_path(project_id).exists()
     assert production._job(job_id)["status"] == "queued"
     assert production.project_glossary(project_id)["ARR"] == "A A R"
+
+
+def test_opt_in_parallel_commits_ordered_wavs_and_reuses_checkpoints(env, monkeypatch, tmp_path):
+    """Actual NarrationPlan, fake concurrent pool; no CUDA or licensed text."""
+    from concurrent.futures import Future
+
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_TTS_WORKERS", "2")
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_config", lambda: ("fake-python", "fake-infer"))
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+    monkeypatch.setattr(production, "_assemble_chapter_audio", lambda *_: False)
+
+    calls = []
+    class FakePool:
+        count = 2
+        def __init__(self, config, count, data_root):
+            assert count == 2
+            self.closed = False
+        def submit(self, text, partial, speed):
+            assert partial.name.endswith(".partial.wav")
+            assert speed == 1.0
+            calls.append(text)
+            _glossary_mock_audio(text, partial)
+            ready = Future()
+            ready.set_result(0.125)
+            return ready
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(production, "ParallelWorkerPool", FakePool)
+    job = production.create_job(project_id)
+    job_id = job["id"]
+    plan_path = production._jobs_dir(job_id) / "plan.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["parallel_worker_count"] == 2
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert production._job(job_id)["status"] == "generated"
+    assert len(calls) == 3
+    root = production._jobs_dir(job_id) / "audio"
+    assert not list(root.glob("*.partial.wav"))
+    for index, segment in enumerate(plan["segments"]):
+        wav = root / f"{index:07d}.wav"
+        meta = json.loads(wav.with_suffix(".json").read_text(encoding="utf-8"))
+        assert production._valid_audio(wav) == pytest.approx(1.0)
+        assert meta["audio_sha256"] == production._audio_digest(wav)
+        assert meta["unit_id"] == segment["unit_id"]
+        assert meta["prompt"] == segment["speech_text"]
+        assert meta["inference_seconds"] == pytest.approx(0.125, abs=.01)
+
+    # Resume/re-run must not resynthesize matching frozen-plan checkpoints.
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert len(calls) == 3
+    assert production._job(job_id)["status"] == "generated"
+
+
+def test_parallel_pause_keeps_only_committed_segments(env, monkeypatch):
+    from concurrent.futures import Future
+
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_TTS_WORKERS", "2")
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_config", lambda: ("fake-python", "fake-infer"))
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+    monkeypatch.setattr(production, "_assemble_chapter_audio", lambda *_: False)
+    job_id = production.create_job(project_id)["id"]
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+
+    class PausingPool:
+        count = 2
+        def __init__(self, *_):
+            self.calls = 0
+        def submit(self, text, partial, speed):
+            self.calls += 1
+            _glossary_mock_audio(text, partial)
+            ready = Future()
+            ready.set_result(0.2)
+            if self.calls == 1:
+                production.change_job(project_id, job_id, "pause")
+            return ready
+        def close(self):
+            pass
+
+    monkeypatch.setattr(production, "ParallelWorkerPool", PausingPool)
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert production._job(job_id)["status"] == "paused"
+    root = production._jobs_dir(job_id) / "audio"
+    assert (root / "0000000.wav").is_file()
+    assert (root / "0000000.json").is_file()
+    assert not (root / "0000001.wav").exists()
+    assert not list(root.glob("*.partial.wav"))
+
+
+def test_existing_plan_stays_serial_after_parallel_toggle(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job_id = production.create_job(project_id)["id"]
+    plan = json.loads((production._jobs_dir(job_id) / "plan.json").read_text())
+    assert plan["parallel_worker_count"] == 1
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_TTS_WORKERS", "4")
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+    monkeypatch.setattr(production, "_assemble_chapter_audio", lambda *_: False)
+    monkeypatch.setattr(production, "ParallelWorkerPool",
+                        lambda *_: pytest.fail("Existing serial jobs must not create worker pools"))
+    monkeypatch.setattr(production, "_synthesize", _glossary_mock_audio)
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert production._job(job_id)["status"] == "generated"
