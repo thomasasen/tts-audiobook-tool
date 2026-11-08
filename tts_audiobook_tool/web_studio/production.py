@@ -54,6 +54,10 @@ _GPU = threading.Lock()
 _THREAD: threading.Thread | None = None
 _LOCK_FILE = None
 _MODEL_PROC = None
+_MODEL_READY = False
+_WARMUP_ATTEMPTED = False
+_WARMUP_STATE = "waiting"
+_WARMUP_ACTIVE = threading.Event()
 _ASR_MODEL = None
 _PREVIEW_LOCK = threading.Lock()
 _PREVIEW_STATE: dict = {
@@ -64,9 +68,10 @@ _ACTIVITY_LOCK = threading.Lock()
 
 
 def _close_model() -> None:
-    global _MODEL_PROC
+    global _MODEL_PROC, _MODEL_READY
     proc = _MODEL_PROC
     _MODEL_PROC = None
+    _MODEL_READY = False
     if proc is None:
         return
     try:
@@ -100,38 +105,67 @@ def _model_message(proc, timeout: int) -> dict:
     return data
 
 
+def _model_loaded() -> bool:
+    """Only advertise a live worker after its successful readiness handshake."""
+    return bool(_MODEL_READY and _MODEL_PROC is not None and _MODEL_PROC.poll() is None)
+
+
+def voice_warmup_state() -> str:
+    """Safe status only; no paths, model logs, credentials or private text."""
+    if os.environ.get("AUDIOBOOK_STUDIO_PRELOAD_VOICE", "1") == "0":
+        return "disabled"
+    if _model_loaded():
+        return "ready"
+    if _WARMUP_ACTIVE.is_set():
+        return "loading"
+    return _WARMUP_STATE if _WARMUP_STATE == "failed" else "waiting"
+
+
+def _ensure_model_loaded(config: tuple[str, str], on_progress=None) -> None:
+    """Start ONE persistent Thorsten worker and wait for a real model handshake.
+
+    Caller must hold _GPU. The exact same worker serves preview and production;
+    preloading never launches a disposable second process.
+    """
+    global _MODEL_PROC, _MODEL_READY
+    if _model_loaded():
+        return
+    if _MODEL_PROC is not None:
+        _close_model()
+    if on_progress is not None:
+        on_progress("Thorsten-Modell wird in den GPU-Speicher geladen.")
+    script = Path(__file__).with_name("thorsten_worker.py")
+    if not script.is_file():
+        raise RuntimeError("Der Thorsten-Langzeitworker ist nicht installiert.")
+    log_dir = _studio().data_dir() / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "thorsten-worker.log"
+    with log_path.open("ab") as log:
+        os.chmod(log_path, 0o600)
+        _MODEL_PROC = subprocess.Popen(
+            [config[0], "-u", str(script)],
+            cwd=str(Path(config[1]).parent),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=log, text=True, bufsize=1,
+        )
+    response = _model_message(_MODEL_PROC, 300)
+    if response.get("ready") is not True:
+        if response.get("error_code") == "CUDA_UNAVAILABLE":
+            raise RuntimeError(
+                "GPU nicht für CUDA-Ausführung verfügbar. "
+                "RunPod-Host/GPU-Zuweisung prüfen; "
+                "runpod/gpu_preflight.py --env both ausführen."
+            )
+        raise RuntimeError("Thorsten-Modell konnte nicht geladen werden.")
+    _MODEL_READY = True
+
+
 def _generate_with_worker(text: str, output: Path, config: tuple[str, str],
                           on_progress=None) -> None:
-    """The only active worker lives inside the exclusive GPU critical section."""
-    global _MODEL_PROC
+    """Synthesize through the already warm persistent worker (or load once)."""
     try:
-        if _MODEL_PROC is None or _MODEL_PROC.poll() is not None:
-            if on_progress is not None:
-                on_progress("Thorsten-Modell wird in den GPU-Speicher geladen.")
-            script = Path(__file__).with_name("thorsten_worker.py")
-            if not script.is_file():
-                raise RuntimeError("Der Thorsten-Langzeitworker ist nicht installiert.")
-            log_dir = _studio().data_dir() / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / "thorsten-worker.log"
-            with log_path.open("ab") as log:
-                os.chmod(log_path, 0o600)
-                _MODEL_PROC = subprocess.Popen(
-                    [config[0], "-u", str(script)],
-                    cwd=str(Path(config[1]).parent),
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                    stderr=log, text=True, bufsize=1,
-                )
-            response = _model_message(_MODEL_PROC, 300)
-            if response.get("ready") is not True:
-                if response.get("error_code") == "CUDA_UNAVAILABLE":
-                    raise RuntimeError(
-                        "GPU nicht für CUDA-Ausführung verfügbar. "
-                        "RunPod-Host/GPU-Zuweisung prüfen; "
-                        "runpod/gpu_preflight.py --env both ausführen."
-                    )
-                raise RuntimeError("Thorsten-Modell konnte nicht geladen werden.")
-        if _MODEL_PROC.stdin is None:
+        _ensure_model_loaded(config, on_progress=on_progress)
+        if _MODEL_PROC is None or _MODEL_PROC.stdin is None:
             raise RuntimeError("Thorsten-Worker ist nicht schreibbar.")
         if on_progress is not None:
             on_progress("Sprachsynthese läuft. Die GPU erzeugt die Hörprobe.")
@@ -147,6 +181,45 @@ def _generate_with_worker(text: str, output: Path, config: tuple[str, str],
         _close_model()
         raise
 
+
+def _prewarm_idle_voice() -> None:
+    """Proactively load Thorsten as soon as the installer marks it ready.
+
+    Runs on the already existing background production thread, so web startup
+    and API responses remain responsive even if model initialization is slow.
+    Never preempts a preview or queued book job, and never retries a failed
+    preload indefinitely on a paid GPU host.
+    """
+    global _WARMUP_ATTEMPTED, _WARMUP_STATE
+    if (_WARMUP_ATTEMPTED or _STOP.is_set()
+            or os.environ.get("AUDIOBOOK_STUDIO_PRELOAD_VOICE", "1") == "0"):
+        return
+    config = _config()
+    if config is None or _model_identity() is None:
+        return
+    if not _GPU.acquire(blocking=False):
+        return
+    _WARMUP_ACTIVE.set()
+    try:
+        if _STOP.is_set():
+            return
+        _WARMUP_ATTEMPTED = True
+        _WARMUP_STATE = "loading"
+        _ensure_model_loaded(config)
+        if not _STOP.is_set():
+            _WARMUP_STATE = "ready"
+            logging.getLogger("german-audiobook-studio.engine").info(
+                "Thorsten preloaded into GPU memory; persistent worker ready."
+            )
+    except Exception:
+        _WARMUP_STATE = "failed"
+        _close_model()
+        logging.getLogger("german-audiobook-studio.engine").exception(
+            "Thorsten background preload failed; on-demand preview remains available."
+        )
+    finally:
+        _WARMUP_ACTIVE.clear()
+        _GPU.release()
 
 def _studio():
     from tts_audiobook_tool.web_studio import app
@@ -379,7 +452,14 @@ def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
         raise ValueError("Hörprobenlänge muss 5, 15, 30 oder 60 Sekunden sein.")
     if _model_identity() is None:
         raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig und geprüft installiert werden.")
-    if not _GPU.acquire(blocking=False):
+    acquired = _GPU.acquire(blocking=False)
+    if not acquired and _WARMUP_ACTIVE.is_set():
+        # A background preload is initialization, not a competing audiobook
+        # job. Let this preview wait for the same worker rather than fail busy.
+        if on_progress is not None:
+            on_progress("Thorsten wird bereits im Hintergrund in den GPU-Speicher geladen.")
+        acquired = _GPU.acquire(timeout=315)
+    if not acquired:
         raise ValueError("Die GPU ist durch einen anderen Auftrag belegt.")
     try:
         from .app import _db, data_dir
@@ -733,7 +813,7 @@ def job_activity(project_id: str, job_id: str) -> dict:
 
 def init():
     """Recover interrupted jobs on restart; one worker per persistent data root."""
-    global _THREAD, _LOCK_FILE
+    global _THREAD, _LOCK_FILE, _WARMUP_ATTEMPTED, _WARMUP_STATE
     if _THREAD and _THREAD.is_alive():
         return
     # Acquire the process lock *before* touching running job statuses: an
@@ -764,6 +844,9 @@ def init():
     for staged in (_studio().data_dir() / "studio-jobs").glob("*/audiobook.m4b.partial"):
         staged.unlink(missing_ok=True)
     _STOP.clear()
+    _WARMUP_ATTEMPTED = False
+    _WARMUP_STATE = "waiting"
+    _WARMUP_ACTIVE.clear()
     _WAKE.set()
     _THREAD = threading.Thread(target=_loop, name="studio-gpu-worker", daemon=True)
     _THREAD.start()
@@ -919,6 +1002,7 @@ def _loop():
             if row is not None:
                 db.execute("UPDATE studio_jobs SET status='running',updated_at=? WHERE id=? AND status='queued'", (_now(), row["id"]))
         if row is None:
+            _prewarm_idle_voice()
             continue
         try:
             _job_event(row["id"], "GPU-Auftrag gestartet; Sprecher wird vorbereitet.")
