@@ -321,6 +321,9 @@ def test_legacy_hashing_is_byte_identical_and_not_migrated():
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("AUDIOBOOK_STUDIO_TOKEN", "unit-test-" + "x" * 48)
     monkeypatch.setenv("AUDIOBOOK_STUDIO_DATA_DIR", str(tmp_path / "storage"))
+    # Narration-plan regression tests intentionally exercise the existing serial adapter.
+    # New-job two-worker defaults are verified separately in test_studio_production.
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_TTS_WORKERS", "1")
     with TestClient(studio.app) as client:
         production.stop()
         yield client

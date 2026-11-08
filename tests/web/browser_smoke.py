@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from runpod.acceptance_epub import build_epub
 
 
@@ -247,7 +247,9 @@ def main() -> None:
                     page.get_by_role("button", name="Sprecher").click()
                     page.get_by_text("Thorsten installiert – Hörfreigabe noch offen", exact=True).wait_for()
                     page.get_by_text("Installiert · Freigabe offen", exact=True).wait_for()
-                    assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_enabled()
+                    # showVoices() updates capabilities before finally clearing busy.
+                    # Wait for the final UI state instead of racing the enablement.
+                    expect(page.get_by_role("button", name="Echte Hörprobe erzeugen")).to_be_enabled(timeout=15000)
                     assert page.get_by_text("Thorsten-CosyVoice3 muss lokal installiert werden").count() == 0
                     page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
                     page.get_by_text("Serverfehler (HTTP 500) bei /api/voices/preview/start", exact=False).wait_for()
