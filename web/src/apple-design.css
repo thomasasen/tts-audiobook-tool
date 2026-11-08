@@ -778,3 +778,75 @@ button:disabled { box-shadow: none; }
   .voice-config-actions { align-items: stretch; flex-direction: column; }
   .voice-config-actions > button { width: 100%; }
 }
+
+/* Early chapter delivery: completed audio is distinct from whole-book export. */
+.completed-chapters {
+  max-width: 1080px;
+  margin-top: 20px;
+  padding: clamp(20px, 2.5vw, 30px);
+}
+.completed-chapters .panel-head h2 { font-size: 1.14rem; letter-spacing: -.02em; }
+.chapter-empty {
+  font-size: .85rem;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  line-height: 1.55;
+}
+.chapter-files { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 12px; }
+.chapter-file {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 17px 20px;
+  background: var(--input);
+}
+.chapter-file-header { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.chapter-file-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  color: var(--soft-text);
+}
+.chapter-file-info { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.chapter-file-info strong {
+  font-size: .91rem;
+  font-weight: 690;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.chapter-file-info small { font-size: .74rem; line-height: 1.45; color: var(--muted); }
+.chapter-file-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: 14px 0 0 58px; }
+.chapter-file-actions .outline-btn { min-width: 134px; }
+.chapter-file-player {
+  display: block;
+  width: calc(100% - 58px);
+  max-width: 640px;
+  margin: 14px 0 0 58px;
+}
+.chapter-file-download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: .8rem;
+  color: var(--muted);
+  padding: 12px 0 0 58px;
+}
+.chapter-file-download progress { flex: 1; min-width: 140px; accent-color: #3478f6; }
+@media (max-width: 560px) {
+  .completed-chapters { padding: 18px; }
+  .chapter-file { padding: 14px; }
+  .chapter-file-header { align-items: flex-start; gap: 11px; }
+  .chapter-file-header .audit-status { flex: none; font-size: .67rem; }
+  .chapter-file-icon { width: 37px; height: 37px; }
+  .chapter-file-actions { margin-left: 0; flex-direction: column; }
+  .chapter-file-actions > button { width: 100%; }
+  .chapter-file-player { width: 100%; margin-left: 0; }
+  .chapter-file-download { padding-left: 0; }
+}
