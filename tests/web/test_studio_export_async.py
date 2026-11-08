@@ -180,6 +180,9 @@ def test_chapter_archive_streams_complete_named_zip_without_temp_file(client):
     result = client.get(url, headers=AUTH)
     assert result.status_code == 200
     assert result.headers["content-type"].startswith("application/zip")
+    # Streaming ZIP cannot know its final size; clients must show an
+    # indeterminate bar and actual transferred bytes, never a fake 0%.
+    assert "content-length" not in result.headers
     assert result.headers["cache-control"] == "no-store"
     with zipfile.ZipFile(io.BytesIO(result.content)) as archive:
         names = archive.namelist()
