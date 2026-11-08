@@ -719,23 +719,291 @@ def project_glossary(project_id: str) -> dict[str, str]:
         return {}
 
 
-def save_glossary(project_id: str, entries: dict[str, str]) -> None:
+def _glossary_pending_path(project_id: str) -> Path:
+    return _studio()._project_dir(project_id) / "glossary-pending.json"
+
+
+def _glossary_result_path(project_id: str) -> Path:
+    return _studio()._project_dir(project_id) / "glossary-update-result.json"
+
+
+def glossary_update_status(project_id: str) -> dict:
+    _studio()._project(project_id)
+    pending_path = _glossary_pending_path(project_id)
+    if pending_path.is_file():
+        try:
+            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+            result = json.loads(_glossary_result_path(project_id).read_text(encoding="utf-8"))
+            if (result.get("request_id") == pending.get("id")
+                    and result.get("status") == "failed"):
+                return result
+        except (OSError, ValueError, TypeError):
+            pass
+        return {"status": "pending", "message": "Glossar wird an der nächsten sicheren Segmentgrenze übernommen."}
+    try:
+        result = json.loads(_glossary_result_path(project_id).read_text(encoding="utf-8"))
+        if isinstance(result, dict) and result.get("status") == "applied":
+            return result
+    except (OSError, ValueError, TypeError):
+        pass
+    return {"status": "idle"}
+
+
+def save_glossary(project_id: str, entries: dict[str, str]) -> dict:
+    """Stage production-aware glossary revisions instead of invalidating all WAVs.
+
+    Production takes the same GPU lock for the lifetime of _run(). A running
+    job is paused in a DB transaction and its persistent request is handled
+    by the existing worker after it reaches the next safe segment boundary.
+    The HTTP request itself never waits for an expensive in-flight TTS call.
+    """
     from tts_audiobook_tool.text_ops.german_speech_normalizer import validate_german_glossary
     _studio()._project(project_id)
     validate_german_glossary(entries)
-    with _studio()._db() as db:
-        busy = db.execute(
-            "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('queued','running','exporting','paused')",
-            (project_id,),
-        ).fetchone()
-    if busy:
-        raise ValueError("Das Glossar ist während der Produktion gesperrt.")
     path = _studio()._project_dir(project_id) / "engine" / "project.json"
     if not path.is_file():
         raise ValueError("Bitte zuerst die Kapitelauswahl speichern.")
-    obj = json.loads(path.read_text(encoding="utf-8"))
-    obj["word_substitutions"] = entries  # Existing Project V5 glossary, no parallel model.
-    _atomic_json(path, obj)
+    old = project_glossary(project_id)
+    requested = dict(entries)
+    if _glossary_pending_path(project_id).is_file():
+        raise ValueError("Eine Glossaraktualisierung wird bereits verarbeitet.")
+    if old == requested:
+        return {"entries": old, "update": {"status": "unchanged"}}
+    with _studio()._db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if _glossary_pending_path(project_id).is_file():
+            raise ValueError("Eine Glossaraktualisierung wird bereits verarbeitet.")
+        project = db.execute(
+            "SELECT status FROM studio_projects WHERE id=?", (project_id,)
+        ).fetchone()
+        if project is None:
+            raise ValueError("Das Projekt wurde zwischenzeitlich gelöscht.")
+        jobs = db.execute(
+            "SELECT id, status FROM studio_jobs WHERE project_id=? "
+            "AND status IN ('running','queued','paused','failed','exporting','generated','completed') "
+            "ORDER BY CASE WHEN status IN ('running','queued','paused','failed','exporting') "
+            "THEN 0 ELSE 1 END, created_at DESC LIMIT 1", (project_id,)
+        ).fetchone()
+        if jobs is None:
+            obj = json.loads(path.read_text(encoding="utf-8"))
+            obj["word_substitutions"] = requested
+            _atomic_json(path, obj)
+            db.execute("UPDATE studio_projects SET updated_at=? WHERE id=?", (_now(), project_id))
+            return {"entries": requested, "update": {"status": "applied", "affected": 0,
+                                                     "preserved": 0, "message": "Glossar gespeichert."}}
+        if jobs["status"] == "exporting":
+            raise ValueError("Während des M4B-Exports bitte warten, bis er abgeschlossen ist.")
+        plan_path = _jobs_dir(jobs["id"]) / "plan.json"
+        try:
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ValueError("Der gespeicherte Produktionsplan ist nicht verfügbar.") from exc
+        if not narration_plan.validate_narration_plan(plan) or plan["glossary"] != old:
+            raise ValueError("Das Glossar kann für diesen historischen oder abweichenden Auftrag nicht sicher angepasst werden.")
+        request = {
+            "id": uuid.uuid4().hex, "job_id": jobs["id"],
+            "project_id": project_id, "old_entries": old, "entries": requested,
+            "old_plan_fingerprint": plan["plan_fingerprint"],
+            "previous_status": jobs["status"],
+            "previous_project_status": project["status"],
+            "created_at": _now(),
+        }
+        _atomic_json(_glossary_pending_path(project_id), request)
+        try:
+            updated = db.execute(
+                "UPDATE studio_jobs SET status='paused',updated_at=? "
+                "WHERE id=? AND status=?", (_now(), jobs["id"], jobs["status"])
+            ).rowcount
+            if updated != 1:
+                raise ValueError("Der Produktionsauftrag hat seinen Zustand geändert.")
+        except Exception:
+            _glossary_pending_path(project_id).unlink(missing_ok=True)
+            raise
+    _WAKE.set()
+    return {"entries": requested, "update": {
+        "status": "pending", "message": "Glossar wird am nächsten sicheren Segmentübergang übernommen.",
+    }}
+
+
+_GLOSSARY_APPLY_FAILED: set[str] = set()
+
+
+def _apply_pending_glossary_revision(project_id: str) -> None:
+    """Recoverable, idempotent glossary migration under the single GPU lock.
+
+    The request remains durable until *after* plan, checkpoint rebase, source
+    glossary, SQLite status and result have been committed. A crash in the
+    middle is resolved by reconstructing the previous plan from the pending
+    old glossary. Unchanged audio is never synthesized again merely because
+    the global config digest changed.
+    """
+    request_path = _glossary_pending_path(project_id)
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request_id = request["id"]
+    result_path = _glossary_result_path(project_id)
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        if result.get("request_id") == request_id and result.get("status") == "applied":
+            request_path.unlink(missing_ok=True)
+            return
+    except (OSError, ValueError, TypeError):
+        pass
+    job_id = request["job_id"]
+    _GPU.acquire()
+    try:
+        job = public_job(project_id, job_id)
+        if job["status"] not in ("paused", "queued", "generated", "completed"):
+            raise ValueError("Der Auftrag ist nicht sicher zur Glossarübernahme angehalten.")
+        plan_path = _jobs_dir(job_id) / "plan.json"
+        current = json.loads(plan_path.read_text(encoding="utf-8"))
+        if not narration_plan.validate_narration_plan(current):
+            raise ValueError("Glossarübernahme benötigt NarrationPlan v3.")
+        old_entries = request["old_entries"]
+        new_entries = request["entries"]
+        if current["glossary"] == old_entries:
+            old_plan = current
+            new_plan, changed = narration_plan.revise_narration_glossary(
+                current, new_entries, _narration_prompt
+            )
+        elif current["glossary"] == new_entries:
+            new_plan = current
+            old_plan, _ = narration_plan.revise_narration_glossary(
+                current, old_entries, _narration_prompt
+            )
+            changed = [
+                i for i, (old_seg, new_seg) in
+                enumerate(zip(old_plan["segments"], new_plan["segments"]))
+                if old_seg["speech_text"] != new_seg["speech_text"]
+            ]
+        else:
+            raise ValueError("Die Glossarfassung im Produktionsplan stimmt nicht mehr überein.")
+        if old_plan["plan_fingerprint"] != request["old_plan_fingerprint"]:
+            raise ValueError("Der ursprüngliche Produktionsplan hat sich unzulässig verändert.")
+        narration_plan.assert_book_unchanged(_studio()._project_dir(project_id), new_plan)
+        # Commit revised plan first. Until pending disappears, the worker never
+        # queues this job, and any crash will reconstruct old_plan from it.
+        _atomic_json(plan_path, new_plan)
+        changed_set = set(changed)
+        preserved = 0
+        for i, (old_seg, new_seg) in enumerate(
+            zip(old_plan["segments"], new_plan["segments"])
+        ):
+            audio = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
+            meta = audio.with_suffix(".json")
+            if i in changed_set:
+                meta.unlink(missing_ok=True)
+                audio.unlink(missing_ok=True)
+                continue
+            if not meta.is_file() or not audio.is_file():
+                continue
+            try:
+                sidecar = json.loads(meta.read_text(encoding="utf-8"))
+                new_fp = _segment_fingerprint(new_seg, new_plan)
+                if (sidecar.get("fingerprint") == new_fp
+                        and sidecar.get("prompt") == new_seg["speech_text"]
+                        and sidecar.get("audio_sha256") == _audio_digest(audio)):
+                    preserved += 1
+                    continue
+                if (sidecar.get("fingerprint") != _segment_fingerprint(old_seg, old_plan)
+                        or sidecar.get("prompt") != old_seg["speech_text"]
+                        or sidecar.get("unit_id") != old_seg["unit_id"]
+                        or sidecar.get("plan_schema") != narration_plan.SCHEMA
+                        or sidecar.get("audio_sha256") != _audio_digest(audio)):
+                    continue
+                _valid_audio(audio)
+                sidecar["fingerprint"] = new_fp
+                sidecar["config_fingerprint"] = new_plan["config_fingerprint"]
+                _atomic_json(meta, sidecar)
+                preserved += 1
+            except (OSError, ValueError, TypeError, wave.Error):
+                # Never relabel an invalid checkpoint: the normal TTS resume
+                # logic will verify and regenerate it if required.
+                continue
+        old_chapters = _chapter_ranges(old_plan)
+        new_chapters = _chapter_ranges(new_plan)
+        for before, after in zip(old_chapters, new_chapters):
+            file, meta = _chapter_audio_paths(job_id, after["index"])
+            preview = _chapter_preview_path(job_id, after["index"])
+            if any(before["start"] <= i < before["end"] for i in changed_set):
+                meta.unlink(missing_ok=True)
+                file.unlink(missing_ok=True)
+                preview.unlink(missing_ok=True)
+            elif _ready_chapter_audio(job_id, before) is not None:
+                item = json.loads(meta.read_text(encoding="utf-8"))
+                item["fingerprint"] = after["fingerprint"]
+                _atomic_json(meta, item)
+        _atomic_json(_jobs_dir(job_id) / "chapters" / "index.json", {
+            "version": CHAPTER_AUDIO_CACHE_VERSION,
+            "chapters": new_chapters,
+        })
+        project_file = _studio()._project_dir(project_id) / "engine" / "project.json"
+        project_data = json.loads(project_file.read_text(encoding="utf-8"))
+        project_data["word_substitutions"] = new_entries
+        _atomic_json(project_file, project_data)
+        old_status = request["previous_status"]
+        # Previously paused/failed work stays paused for explicit resumption.
+        # Work running/queued or already completed is requeued if any spoken
+        # segment needs resynthesis. Otherwise its former status is restored.
+        if changed:
+            next_status = ("paused" if old_status in ("paused", "failed") else "queued")
+        else:
+            next_status = "paused" if old_status == "failed" else old_status
+            if next_status == "running":
+                next_status = "queued"
+        if next_status in ("queued", "paused") and changed:
+            next_project_status = "Warteschlange"
+        else:
+            next_project_status = request["previous_project_status"]
+        with _studio()._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "UPDATE studio_jobs SET status=?,done=?,duration=?,chapter=?,error='',updated_at=? WHERE id=?",
+                (next_status, 0 if changed else job["done"], 0 if changed else job["duration"],
+                 "" if changed else job["chapter"], _now(), job_id),
+            )
+            db.execute(
+                "UPDATE studio_projects SET status=?,updated_at=? WHERE id=?",
+                (next_project_status, _now(), project_id),
+            )
+        result = {
+            "request_id": request_id, "status": "applied",
+            "affected": len(changed), "preserved": preserved,
+            "total": len(new_plan["segments"]),
+            "message": (f"{len(changed)} Segmente betroffen; {preserved} vorhandene "
+                        "Audio-Checkpoints weiterverwendet."),
+        }
+        _atomic_json(result_path, result)
+        request_path.unlink(missing_ok=True)
+        _job_event(job_id, "Glossar aktualisiert: " + result["message"])
+        _WAKE.set()
+    finally:
+        _GPU.release()
+
+
+def _process_pending_glossary() -> bool:
+    """Process one durable revision before resuming any queued TTS job."""
+    base = _studio().data_dir() / "studio-projects"
+    for pending in sorted(base.glob("*/glossary-pending.json")):
+        project_id = pending.parent.name
+        if project_id in _GLOSSARY_APPLY_FAILED:
+            continue
+        try:
+            _apply_pending_glossary_revision(project_id)
+        except Exception:
+            _GLOSSARY_APPLY_FAILED.add(project_id)
+            logging.getLogger("german-audiobook-studio.engine").exception(
+                "Glossary revision failed for project %s; job stays paused.", project_id
+            )
+            try:
+                _atomic_json(_glossary_result_path(project_id), {
+                    "request_id": json.loads(pending.read_text(encoding="utf-8"))["id"],
+                    "status": "failed",
+                    "message": "Glossarübernahme fehlgeschlagen. Der Auftrag bleibt pausiert; Server-Log prüfen.",
+                })
+            except (OSError, ValueError, KeyError):
+                pass
+        return True
+    return False
 
 
 def _normalize_de(text: str, glossary: dict[str, str]) -> str:
@@ -927,6 +1195,7 @@ def init():
     for staged in (_studio().data_dir() / "studio-jobs").glob("*/audiobook.m4b.partial"):
         staged.unlink(missing_ok=True)
     _STOP.clear()
+    _GLOSSARY_APPLY_FAILED.clear()
     _WARMUP_ATTEMPTED = False
     _WARMUP_STATE = "waiting"
     _WARMUP_ACTIVE.clear()
@@ -1085,6 +1354,10 @@ def _loop():
         _WAKE.clear()
         if _STOP.is_set():
             break
+        # Durable glossary edits have priority over queued TTS. A running
+        # _run() has already reached its safe boundary before this loop.
+        if _process_pending_glossary():
+            continue
         with _studio()._db() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT id FROM studio_jobs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
