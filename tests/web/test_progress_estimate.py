@@ -45,9 +45,9 @@ def test_export_eta_requires_four_real_checkpoints():
 def test_export_eta_adapts_to_recent_real_processing_speed():
     points = [(25, 25.0), (50, 50.0), (75, 75.0),
               (100, 76.0), (125, 77.0), (150, 78.0),
-              (175, 79.0)]
-    assert export_remaining_seconds(points, 175, 200) == 1
-    assert export_remaining_seconds(points, 200, 200) is None
+              (175, 79.0), (200, 80.0)]
+    assert export_remaining_seconds(points, 200, 225) == 1
+    assert export_remaining_seconds(points, 225, 225) is None
 
 
 def test_export_eta_rejects_impossible_progress_or_time():
