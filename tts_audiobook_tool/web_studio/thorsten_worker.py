@@ -111,13 +111,21 @@ def main() -> None:
             request = json.loads(line)
             output = Path(request["output"])
             text = request["text"]
+            speed = request.get("speed", 1.0)
+            # Only the speed parameter documented by the official Thorsten SFT
+            # script is configurable. Never accept arbitrary model instructions.
+            if type(speed) not in (float, int) or not any(
+                abs(speed - allowed) < 1e-6
+                for allowed in (0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15)
+            ):
+                raise ValueError("Invalid verified speaking speed")
             if not output.is_absolute() or not isinstance(text, str) or not 1 <= len(text) <= 12000:
                 raise ValueError("Invalid generation input")
             with redirect_stdout(sys.stderr), torch.inference_mode():
                 chunks = [
                     result["tts_speech"]
                     for result in model.inference_sft(
-                        text, "thorsten", stream=False, speed=1.0
+                        text, "thorsten", stream=False, speed=speed
                     )
                 ]
                 if not chunks:
