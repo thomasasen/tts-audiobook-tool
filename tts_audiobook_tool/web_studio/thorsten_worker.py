@@ -99,10 +99,19 @@ def main() -> None:
             "You are a helpful assistant.<|endofprompt|>"
         )
 
+        uncached_fixed_prompt = False
+
         def patched_frontend_sft(tts_text, spk_id):
             payload = original_frontend(tts_text, spk_id)
-            payload["prompt_text"] = prompt_token
-            payload["prompt_text_len"] = prompt_token_len
+            # Benchmark-only reproduction of the previous implementation.
+            if uncached_fixed_prompt:
+                fixed_token, fixed_len = model.frontend._extract_text_token(
+                    "You are a helpful assistant.<|endofprompt|>"
+                )
+            else:
+                fixed_token, fixed_len = prompt_token, prompt_token_len
+            payload["prompt_text"] = fixed_token
+            payload["prompt_text_len"] = fixed_len
             return payload
 
         model.frontend.frontend_sft = patched_frontend_sft
@@ -127,6 +136,7 @@ def main() -> None:
             # Benchmark mode is opt-in. Its CUDA synchronizations are not
             # introduced into normal narration and cannot change TTS settings.
             benchmark = request.get("benchmark") is True
+            uncached_fixed_prompt = benchmark and request.get("uncached_fixed_prompt") is True
             with redirect_stdout(sys.stderr), torch.inference_mode():
                 if benchmark and hasattr(torch.cuda, "reset_peak_memory_stats"):
                     torch.cuda.reset_peak_memory_stats()
