@@ -607,13 +607,41 @@ def preview_voice():
 
 class PreviewOptions(BaseModel):
     duration_seconds: Literal[5, 15, 30, 60] = 5
+    speed: float = 1.0
+    preview_text: str = Field(default="", max_length=600)
+    project_id: str | None = None
+
+
+class VoiceSettingsOptions(BaseModel):
+    speed: float = 1.0
+    preview_text: str = Field(default="", max_length=600)
+
+
+@app.get("/api/projects/{project_id}/voice-settings", dependencies=[Depends(require_auth)])
+def get_voice_settings(project_id: str):
+    try:
+        return production.project_voice_settings(project_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.put("/api/projects/{project_id}/voice-settings", dependencies=[Depends(require_auth)])
+def put_voice_settings(project_id: str, options: VoiceSettingsOptions):
+    try:
+        return production.save_project_voice_settings(project_id, options.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/voices/preview/start", dependencies=[Depends(require_auth)], status_code=202)
 def start_preview(options: PreviewOptions = Body(default=PreviewOptions())):
     """Fast response: model load and inference continue in a single background worker."""
     try:
-        return production.start_sample(duration_seconds=options.duration_seconds)
+        return production.start_sample(
+            duration_seconds=options.duration_seconds,
+            speed=options.speed, preview_text=options.preview_text,
+            project_id=options.project_id,
+        )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
