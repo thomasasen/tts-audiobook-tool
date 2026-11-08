@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tts_audiobook_tool.web_studio import asr_quality, narration_plan
+from tts_audiobook_tool.web_studio.parallel_narration import ParallelWorkerPool
 from tts_audiobook_tool.web_studio.voice_controls import (
     DEFAULT_SETTINGS, verified_settings, verified_speed, verified_preview_text,
 )
@@ -58,6 +59,7 @@ _THREAD: threading.Thread | None = None
 _LOCK_FILE = None
 _MODEL_PROC = None
 _MODEL_READY = False
+_PARALLEL_POOL: ParallelWorkerPool | None = None
 _WARMUP_ATTEMPTED = False
 _WARMUP_STATE = "waiting"
 _WARMUP_ACTIVE = threading.Event()
@@ -246,6 +248,17 @@ def _atomic_json(path: Path, obj: object) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _parallel_worker_count() -> int:
+    """Explicit opt-in; preserve all existing jobs' single-worker default."""
+    raw = os.environ.get("AUDIOBOOK_STUDIO_TTS_WORKERS", "1")
+    if raw not in ("1", "2", "3", "4"):
+        raise ValueError("AUDIOBOOK_STUDIO_TTS_WORKERS muss 1, 2, 3 oder 4 sein.")
+    count = int(raw)
+    if count > 1 and os.environ.get("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "1") != "1":
+        raise ValueError("Parallelmodus benötigt den persistenten Thorsten-Worker.")
+    return count
 
 
 def _config() -> tuple[str, str] | None:
@@ -1236,6 +1249,8 @@ def stop():
     with _studio()._db() as db:
         db.execute("UPDATE studio_jobs SET status='queued', updated_at=? WHERE status='running'", (_now(),))
     _close_model()
+    if _PARALLEL_POOL is not None:
+        _PARALLEL_POOL.close()
     if _THREAD:
         _THREAD.join(timeout=2)
     if _THREAD and _THREAD.is_alive():
@@ -1430,7 +1445,10 @@ def _segment_fingerprint(segment: dict, plan: dict) -> str:
 def _run(job_id: str):
     # Export and manual previews may briefly own the GPU lock. Waiting must
     # not permanently fail a queued job that has not started inference yet.
+    global _PARALLEL_POOL
     _GPU.acquire()
+    parallel_pool: ParallelWorkerPool | None = None
+    pending: dict[int, tuple[object, Path]] = {}
     try:
         job = _job(job_id)
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
@@ -1448,12 +1466,50 @@ def _run(job_id: str):
             raise ValueError("Die Modellgewichte oder der Inferenzcode haben sich seit Auftragsbeginn geändert.")
         chapter_ranges = _chapter_index(job_id, plan)
         chapter_by_last_segment = {item["end"] - 1: item for item in chapter_ranges}
+        workers = _parallel_worker_count()
+        # V3 plans have frozen speech_text and exact fingerprints. Legacy plans
+        # retain the original serial path; parallel prefetch never re-normalizes.
+        if workers > 1 and is_narration_plan:
+            config = _config()
+            if config is None:
+                raise RuntimeError("Thorsten-Modell für Parallelverarbeitung fehlt.")
+            # Release the idle prewarmed worker before independent model copies
+            # are loaded. The Studio GPU lock still excludes all other jobs.
+            _close_model()
+            parallel_pool = ParallelWorkerPool(config, workers, _studio().data_dir())
+            _PARALLEL_POOL = parallel_pool
+            _job_event(job_id, f"Parallelverarbeitung mit {workers} Thorsten-Workern gestartet.")
+        def schedule_ahead(index: int) -> None:
+            if parallel_pool is None:
+                return
+            # At most N in-flight futures and N temporary outputs. Never
+            # enqueue the entire book or overwrite a committed WAV/sidecar.
+            for j in range(index, min(len(segments), index + parallel_pool.count)):
+                if len(pending) >= parallel_pool.count:
+                    break
+                if j in pending:
+                    continue
+                candidate = _jobs_dir(job_id) / "audio" / f"{j:07d}.wav"
+                if candidate.is_file() and candidate.with_suffix(".json").is_file():
+                    continue
+                speech_text = segments[j]["speech_text"]
+                if not speech_text:
+                    raise ValueError("Leeres Sprachsegment im eingefrorenen NarrationPlan.")
+                partial = candidate.with_name(candidate.stem + "." + uuid.uuid4().hex + ".partial.wav")
+                future = parallel_pool.submit(
+                    speech_text, partial,
+                    verified_speed(plan.get("voice_settings", {"speed": 1.0})["speed"]),
+                )
+                pending[j] = (future, partial)
+
         chapter = ""
         duration = 0.0
         done = 0
+        last_commit = time.perf_counter()
         for i, segment in enumerate(segments):
             if _STOP.is_set() or _job(job_id)["status"] != "running":
                 return
+            schedule_ahead(i)
             path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
             normalizer_version = plan.get("normalizer_version")
             fingerprint = _segment_fingerprint(segment, plan)
@@ -1487,17 +1543,44 @@ def _run(job_id: str):
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
                 infer_started = time.perf_counter()
                 voice_speed = verified_speed(plan.get("voice_settings", {"speed": 1.0})["speed"])
+                worker_seconds = None
                 for attempt in range(3):
+                    partial = None
                     try:
-                        seconds = _synthesize_with_speed(prompt, path, voice_speed)
+                        if parallel_pool is None:
+                            seconds = _synthesize_with_speed(prompt, path, voice_speed)
+                        else:
+                            task = pending.pop(i, None)
+                            if task is None:
+                                partial = path.with_name(path.stem + "." + uuid.uuid4().hex + ".partial.wav")
+                                task = (parallel_pool.submit(prompt, partial, voice_speed), partial)
+                            future, partial = task
+                            worker_seconds = future.result()
+                            seconds = _valid_audio(partial)
+                            os.chmod(partial, 0o600)
+                            os.replace(partial, path)
                         break
-                    except (RuntimeError, ValueError, subprocess.TimeoutExpired, wave.Error):
+                    except (OSError, RuntimeError, ValueError, TimeoutError,
+                            subprocess.TimeoutExpired, wave.Error):
                         if attempt == 2:
                             raise
+                        if _STOP.is_set() or _job(job_id)["status"] != "running":
+                            return
                         time.sleep(1)
-                inference_seconds = round(time.perf_counter() - infer_started, 3)
+                    finally:
+                        if partial is not None:
+                            partial.unlink(missing_ok=True)
+                inference_seconds = round(
+                    worker_seconds if worker_seconds is not None
+                    else time.perf_counter() - infer_started, 3,
+                )
                 quality = _audio_quality(path, prompt)
-                processing_seconds = round(time.perf_counter() - infer_started, 3)
+                # For parallel synthesis use real interval between ordered
+                # segment commits, not future.result() wait alone. That is the
+                # quantity the ETA estimator uses for end-to-end throughput.
+                processing_seconds = round(
+                    time.perf_counter() - (last_commit if parallel_pool else infer_started), 3,
+                )
                 sidecar = {"fingerprint": fingerprint, "text": segment["text"],
                            "prompt": prompt, "duration": seconds,
                            "inference_seconds": inference_seconds,
@@ -1520,6 +1603,7 @@ def _run(job_id: str):
             duration += seconds
             done += 1
             chapter = segment["title"]
+            last_commit = time.perf_counter()
             with _studio()._db() as db:
                 db.execute("UPDATE studio_jobs SET done=?,duration=?,chapter=?,updated_at=? WHERE id=?",
                            (done,duration,chapter,_now(),job_id))
@@ -1551,6 +1635,11 @@ def _run(job_id: str):
         if completed == 1:
             _job_event(job_id, "Alle Audiosegmente wurden erstellt. M4B-Export kann gestartet werden.")
     finally:
+        if parallel_pool is not None:
+            parallel_pool.close()
+            for _, partial in pending.values():
+                partial.unlink(missing_ok=True)
+            _PARALLEL_POOL = None
         _GPU.release()
 
 
