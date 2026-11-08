@@ -24,7 +24,8 @@ from pathlib import Path
 
 from tts_audiobook_tool.web_studio import asr_quality
 # Keep the module load lightweight for offline RunPod protocol tests.
-DE_NORMALIZER_VERSION = "de-narration-v2"
+DE_V2_NORMALIZER_VERSION = "de-narration-v2"
+DE_NORMALIZER_VERSION = "de-narration-v3"
 
 VOICE_ID = "thorsten-cosyvoice3"
 SAMPLE_TEXT = "Guten Tag. Dieses Fachbuch erklärt, wie gute Entscheidungen im Vertrieb entstehen."
@@ -385,7 +386,8 @@ def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
         sample = data_dir() / "voice-samples" / "thorsten.wav"
         phrases = SAMPLE_SENTENCES[:SAMPLE_LENGTHS[duration_seconds]]
         if len(phrases) == 1:
-            _synthesize(phrases[0], sample, on_progress=on_progress)
+            _synthesize(_narration_prompt(phrases[0], {}, DE_NORMALIZER_VERSION), sample,
+                        on_progress=on_progress)
         else:
             # Joining individual sentences keeps each model call short and
             # produces one complete, browser-safe PCM-16 WAV for listening.
@@ -400,7 +402,8 @@ def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
                     if on_progress is not None:
                         on_progress(f"Hörprobe: Satz {index + 1} von {len(phrases)} wird erzeugt.")
                     item = fragments_dir / f"{index:02d}.wav"
-                    _synthesize(sentence, item, on_progress=on_progress)
+                    _synthesize(_narration_prompt(sentence, {}, DE_NORMALIZER_VERSION), item,
+                                on_progress=on_progress)
                     _valid_browser_preview(item)
                     fragments.append(item)
                 with wave.open(str(staged), "wb") as joined:
@@ -550,14 +553,9 @@ def project_glossary(project_id: str) -> dict[str, str]:
 
 
 def save_glossary(project_id: str, entries: dict[str, str]) -> None:
+    from tts_audiobook_tool.text_ops.german_speech_normalizer import validate_german_glossary
     _studio()._project(project_id)
-    if len(entries) > MAX_GLOSSARY or any(
-        not isinstance(k, str) or not isinstance(v, str)
-        or not 1 <= len(k) <= 100 or not 1 <= len(v) <= 180
-        or "\n" in k or "\n" in v or "<" in v or ">" in v
-        for k, v in entries.items()
-    ):
-        raise ValueError("Das Glossar darf höchstens 500 gültige Begriffe enthalten.")
+    validate_german_glossary(entries)
     with _studio()._db() as db:
         busy = db.execute(
             "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('queued','running','exporting','paused')",
@@ -574,11 +572,35 @@ def save_glossary(project_id: str, entries: dict[str, str]) -> None:
 
 
 def _normalize_de(text: str, glossary: dict[str, str]) -> str:
-    """Versioned v2 German prompt normalization; never changes Project V5 text."""
-    from tts_audiobook_tool.text_ops.german_speech_normalizer import VERSION, normalize_german_speech
+    """New v3 prompts; only speech text is transformed, never Project V5."""
+    from tts_audiobook_tool.text_ops.german_speech_normalizer import (
+        VERSION, normalize_german_speech_v3,
+    )
     if VERSION != DE_NORMALIZER_VERSION:
         raise RuntimeError("Versionskonflikt in der deutschen Sprachnormalisierung.")
+    return normalize_german_speech_v3(text, glossary)
+
+
+def _normalize_de_v2(text: str, glossary: dict[str, str]) -> str:
+    """Frozen v2 for saved jobs; intentionally never upgraded in place."""
+    from tts_audiobook_tool.text_ops.german_speech_normalizer import (
+        V2_VERSION, normalize_german_speech,
+    )
+    if V2_VERSION != DE_V2_NORMALIZER_VERSION:
+        raise RuntimeError("Versionskonflikt in der deutschen Sprachnormalisierung.")
     return normalize_german_speech(text, glossary)
+
+
+def _narration_prompt(text: str, glossary: dict[str, str],
+                      normalizer_version: str | None) -> str:
+    """Single version dispatch for production and neutral voice audition."""
+    if normalizer_version is None:
+        return _normalize_de_legacy(text, glossary)
+    if normalizer_version == DE_V2_NORMALIZER_VERSION:
+        return _normalize_de_v2(text, glossary)
+    if normalizer_version == DE_NORMALIZER_VERSION:
+        return _normalize_de(text, glossary)
+    raise ValueError("Unbekannte Normalisierungsversion im gespeicherten Auftrag.")
 
 
 def _normalize_de_legacy(text: str, glossary: dict[str, str]) -> str:
@@ -898,7 +920,7 @@ def _loop():
 
 def _segment_fingerprint(segment: dict, plan: dict) -> str:
     version = plan.get("normalizer_version")
-    if version not in (None, DE_NORMALIZER_VERSION):
+    if version not in (None, DE_V2_NORMALIZER_VERSION, DE_NORMALIZER_VERSION):
         raise ValueError("Unbekannte Normalisierungsversion im gespeicherten Auftrag.")
     # Legacy plans must retain byte-for-byte their original cache hash.
     source = (
@@ -942,8 +964,7 @@ def _run(job_id: str):
                     _job_event(job_id, f"Sprachsynthese: Segment {i + 1} von {len(segments)} läuft.")
                 path.unlink(missing_ok=True)
                 meta.unlink(missing_ok=True)
-                normalizer = _normalize_de if normalizer_version else _normalize_de_legacy
-                prompt = normalizer(segment["text"], plan["glossary"])
+                prompt = _narration_prompt(segment["text"], plan["glossary"], normalizer_version)
                 if not prompt:
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
                 infer_started = time.perf_counter()
@@ -958,11 +979,13 @@ def _run(job_id: str):
                 inference_seconds = round(time.perf_counter() - infer_started, 3)
                 quality = _audio_quality(path, prompt)
                 processing_seconds = round(time.perf_counter() - infer_started, 3)
-                _atomic_json(meta, {"fingerprint": fingerprint, "text": segment["text"],
-                                    "prompt": prompt, "duration": seconds,
-                                    "inference_seconds": inference_seconds,
-                                    "processing_seconds": processing_seconds,
-                                    "quality": quality})
+                sidecar = {"fingerprint": fingerprint, "text": segment["text"],
+                           "prompt": prompt, "duration": seconds,
+                           "inference_seconds": inference_seconds,
+                           "processing_seconds": processing_seconds, "quality": quality}
+                if normalizer_version == DE_NORMALIZER_VERSION:
+                    sidecar["normalizer_version"] = normalizer_version
+                _atomic_json(meta, sidecar)
             # Pause/cancel/shutdown may have arrived during a long GPU call.
             # Preserve the valid segment, but never overwrite the new status.
             if _STOP.is_set() or _job(job_id)["status"] != "running":
