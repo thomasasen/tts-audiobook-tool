@@ -622,11 +622,14 @@ def _preview_background(task_id: str, duration_seconds: int, speed: float,
                         preview_text: str, project_id: str | None) -> None:
     try:
         _preview_update(task_id, stage="GPU und Sprecherinstallation werden geprüft.")
-        generated = make_sample(
-            on_progress=lambda message: _preview_update(task_id, stage=message),
-            duration_seconds=duration_seconds, speed=speed,
-            preview_text=preview_text, project_id=project_id,
-        )
+        kwargs = {
+            "on_progress": lambda message: _preview_update(task_id, stage=message),
+            "duration_seconds": duration_seconds,
+        }
+        # Backward-compatible entry point for existing 1× preview callers.
+        if speed != 1.0 or preview_text or project_id is not None:
+            kwargs.update(speed=speed, preview_text=preview_text, project_id=project_id)
+        generated = make_sample(**kwargs)
         # make_sample checks the audio file, but verify again just before
         # publishing a ready state. Never publish an empty/truncated WAV.
         _valid_browser_preview(generated)
