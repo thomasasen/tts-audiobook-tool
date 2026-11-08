@@ -146,7 +146,7 @@ _PROTECTED_V3 = re.compile(
     r"\d{4}-\d{2}-\d{2}|"
     r"[A-Za-zÄÖÜäöüß][\w.-]*\d[\w.-]*|"
     r"\d+[A-Za-zÄÖÜäöüß][\w.-]*|"
-    r"\d{1,2}:\d{2})\b)",
+    r"\d{1,2}:\d{2}(?!\s*Uhr\b))\b)",
     re.IGNORECASE | re.UNICODE,
 )
 _V3_UNIT = re.compile(
@@ -210,7 +210,7 @@ def _spoken_decimal_v3(value: str) -> str:
     plain = value.lstrip("-−")
     whole, fraction = plain.split(",", 1)
     spoken_whole = _spoken_integer_v3(whole)
-    if not 1 <= len(fraction) <= 4 or spoken_whole == whole and len(whole) > 8:
+    if not 1 <= len(fraction) <= 4 or (spoken_whole == whole and (len(whole) > 8 or len(whole) > 1 and whole.startswith("0"))):
         return value
     return ("minus " if negative else "") + spoken_whole + " Komma " + " ".join(
         num2words(int(digit), lang="de") for digit in fraction
@@ -233,7 +233,7 @@ def _spoken_unit_v3(match: re.Match[str]) -> str:
     else:
         euros, cents = amount, "00"
     euro_num = _spoken_integer_v3(euros)
-    if euro_num == euros and len(euros.replace(".", "")) > 8:
+    if euro_num == euros and (len(euros.replace(".", "")) > 8 or len(euros) > 1 and euros.startswith("0")):
         return match.group(0)
     euro_word = "ein" if int(euros.replace(".", "")) == 1 else euro_num
     cents_int = int(cents)
@@ -303,7 +303,7 @@ def _transform_with_glossary_v3(text: str, glossary: dict[str, str],
         else:
             # Do not recursively process a pronunciation override, including
             # number-like replacement text.
-            result.append(value)
+            result.append(value[0].upper() + value[1:] if match.group()[0].isupper() and value[0].islower() else value)
         cursor = match.end()
     result.append(_transform_plain_v3(text[cursor:]))
     return "".join(result)
@@ -321,7 +321,7 @@ def normalize_german_speech_v3(text: str, glossary: dict[str, str]) -> str:
     if not text:
         return ""
     text = text.replace("\u00ad", "").replace("\u00a0", " ")
-    pattern = _compiled_glossary_v3(tuple(glossary))
+    pattern = _compiled_glossary_v3(tuple(sorted(glossary)))
     pieces: list[str] = []
     cursor = 0
     for protected in _PROTECTED_V3.finditer(text):
