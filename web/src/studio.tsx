@@ -101,6 +101,8 @@ type Capabilities = {
   audio_export: boolean
   voice_preview_available: boolean
   voice_installed: boolean
+  voice_model_loaded?: boolean
+  voice_warmup_state?: 'waiting' | 'loading' | 'ready' | 'failed' | 'disabled' | 'unavailable'
   voice_install_state?: string
   voice_approved: boolean
   reason: string
@@ -630,7 +632,8 @@ export default function Studio() {
   // brings up the web UI BEFORE the Thorsten model download is complete.
   // Keep existing preview audio and listening confirmation untouched.
   useEffect(() => {
-    if (!token || view !== 'voices' || !active || capabilities?.voice_installed) return
+    if (!token || view !== 'voices' || !active) return
+    if (capabilities?.voice_installed && !['waiting', 'loading'].includes(capabilities.voice_warmup_state ?? 'disabled')) return
     let cancelled = false
     const interval = window.setInterval(() => {
       void api<Capabilities>('/api/capabilities', token)
@@ -638,7 +641,7 @@ export default function Studio() {
         .catch(() => { /* manual page reload still available on transient failure */ })
     }, 5000)
     return () => { cancelled = true; window.clearInterval(interval) }
-  }, [token, view, active?.id, capabilities?.voice_installed])
+  }, [token, view, active?.id, capabilities?.voice_installed, capabilities?.voice_warmup_state])
 
   const allChapters = active?.chapters ?? []
   const readChapters = allChapters.filter(c => c.index >= start && !c.is_toc && !excluded.includes(c.index))
@@ -810,7 +813,7 @@ export default function Studio() {
             {view === 'voices' && active && <>
               <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Deutsche Erzählerstimme</h1><p>Ausschließlich fertig trainierte Stimmen, keine hochgeladenen Referenzen oder Stimmklone.</p></div></div>
               {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice" role="status"><LockKeyhole size={21}/><div><strong>{capabilities?.voice_installed ? 'Thorsten installiert – Hörfreigabe noch offen' : 'Thorsten noch nicht betriebsbereit'}</strong><p>{capabilities?.reason ?? 'Installationsstatus wird geprüft.'}</p></div></div>}
-              <div className="voice-grid">{voices.map(voice => <section className="panel voice-card" key={voice.id} aria-label={voice.name}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : ['initializing', 'checking-cache', 'downloading', 'installing'].includes(capabilities?.voice_install_state ?? '') ? 'Installation läuft' : ['insufficient-space', 'cuda-unavailable', 'download-failed', 'installation-failed', 'voice-cuda-unavailable', 'bootstrap-failed'].includes(capabilities?.voice_install_state ?? '') ? 'Installation fehlgeschlagen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
+              <div className="voice-grid">{voices.map(voice => <section className="panel voice-card" key={voice.id} aria-label={voice.name}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? capabilities?.voice_model_loaded ? 'Im GPU-Speicher · Freigabe offen' : capabilities?.voice_warmup_state === 'loading' ? 'Modell wird vorgeladen' : 'Installiert · Freigabe offen' : ['initializing', 'checking-cache', 'downloading', 'installing'].includes(capabilities?.voice_install_state ?? '') ? 'Installation läuft' : ['insufficient-space', 'cuda-unavailable', 'download-failed', 'installation-failed', 'voice-cuda-unavailable', 'bootstrap-failed'].includes(capabilities?.voice_install_state ?? '') ? 'Installation fehlgeschlagen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
                 <div className="voice-sample-settings">
                   <label htmlFor="voice-sample-length">Länge der Hörprobe</label>
                   <select id="voice-sample-length" value={previewDurationSeconds} disabled={busy || previewTask?.status === 'running'} onChange={e => setPreviewDurationSeconds(Number(e.target.value) as 5|15|30|60)}>
