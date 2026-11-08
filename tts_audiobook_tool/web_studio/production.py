@@ -1334,12 +1334,15 @@ def retry_segment(project_id: str, job_id: str, index: int) -> dict:
             path.with_suffix(".json").unlink(missing_ok=True)
             # The old independently downloadable chapter must not survive
             # invalidation of any of its constituent voice segments.
-            for item in _chapter_index(job_id):
-                if item["start"] <= index < item["end"]:
-                    chapter_file, chapter_meta = _chapter_audio_paths(job_id, item["index"])
-                    chapter_meta.unlink(missing_ok=True)
-                    chapter_file.unlink(missing_ok=True)
-                    break
+            # Historical test/recovery jobs may not carry a full plan.
+            # They cannot have a derived chapter file to invalidate.
+            if (_jobs_dir(job_id) / "plan.json").is_file():
+                for item in _chapter_index(job_id):
+                    if item["start"] <= index < item["end"]:
+                        chapter_file, chapter_meta = _chapter_audio_paths(job_id, item["index"])
+                        chapter_meta.unlink(missing_ok=True)
+                        chapter_file.unlink(missing_ok=True)
+                        break
             # Retain the previous completed M4B until the replacement is
             # exported atomically. It remains inaccessible while queued.
             db.execute(
