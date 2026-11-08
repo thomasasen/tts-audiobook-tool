@@ -1342,6 +1342,7 @@ def retry_segment(project_id: str, job_id: str, index: int) -> dict:
                         chapter_file, chapter_meta = _chapter_audio_paths(job_id, item["index"])
                         chapter_meta.unlink(missing_ok=True)
                         chapter_file.unlink(missing_ok=True)
+                        _chapter_preview_path(job_id, item["index"]).unlink(missing_ok=True)
                         break
             # Retain the previous completed M4B until the replacement is
             # exported atomically. It remains inaccessible while queued.
@@ -1435,25 +1436,81 @@ def _chapter_audio_paths(job_id: str, chapter_index: int) -> tuple[Path, Path]:
     return audio, audio.with_suffix(".json")
 
 
+def _chapter_preview_path(job_id: str, chapter_index: int) -> Path:
+    audio, _ = _chapter_audio_paths(job_id, chapter_index)
+    return audio.with_name(audio.stem + "-preview.wav")
+
+
+def _write_chapter_preview(job_id: str, chapter: dict) -> tuple[float, int]:
+    """Take whole finished speech segments, approximately 60 s, as PCM-16.
+
+    Browser-independent playback: Playwright's open-source Chromium often
+    lacks AAC decoding even though Chrome/Edge can decode the M4A download.
+    Avoid cutting words by stopping at segment boundaries, not PCM samples.
+    """
+    target = _chapter_preview_path(job_id, chapter["index"])
+    staging = target.with_name(target.stem + "." + uuid.uuid4().hex + ".partial.wav")
+    try:
+        written_frames = 0
+        sample_rate = None
+        params = None
+        with wave.open(str(staging), "wb") as result:
+            for i in range(chapter["start"], chapter["end"]):
+                path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
+                with wave.open(str(path), "rb") as source:
+                    current = (source.getnchannels(), source.getsampwidth(), source.getframerate())
+                    if current[1] != 2 or current[0] not in (1, 2):
+                        raise ValueError("Vorhörprobe benötigt signiertes 16-Bit-PCM.")
+                    if params is None:
+                        params = current
+                        sample_rate = current[2]
+                        result.setnchannels(current[0])
+                        result.setsampwidth(current[1])
+                        result.setframerate(current[2])
+                    elif current != params:
+                        raise ValueError("Vorhörprobe enthält unterschiedliche WAV-Formate.")
+                    while True:
+                        chunk = source.readframes(32768)
+                        if not chunk:
+                            break
+                        result.writeframesraw(chunk)
+                        written_frames += len(chunk) // (current[0] * current[1])
+                if sample_rate and written_frames >= 60 * sample_rate:
+                    break
+        duration = _valid_browser_preview(staging)
+        os.chmod(staging, 0o600)
+        os.replace(staging, target)
+        return duration, target.stat().st_size
+    finally:
+        staging.unlink(missing_ok=True)
+
+
 def _ready_chapter_audio(job_id: str, chapter: dict) -> dict | None:
     """Only expose atomically finalized AAC with a matching source fingerprint."""
     path, meta_path = _chapter_audio_paths(job_id, chapter["index"])
-    if not path.is_file() or not meta_path.is_file():
+    preview = _chapter_preview_path(job_id, chapter["index"])
+    if not path.is_file() or not preview.is_file() or not meta_path.is_file():
         return None
     try:
         metadata = json.loads(meta_path.read_text(encoding="utf-8"))
         stat = path.stat()
+        preview_stat = preview.stat()
         if (metadata.get("version") != CHAPTER_AUDIO_CACHE_VERSION
                 or metadata.get("fingerprint") != chapter["fingerprint"]
                 or metadata.get("start") != chapter["start"]
                 or metadata.get("end") != chapter["end"]
                 or metadata.get("byte_size") != stat.st_size
                 or stat.st_size < 1024
+                or metadata.get("preview_byte_size") != preview_stat.st_size
+                or preview_stat.st_size < 1024
+                or not isinstance(metadata.get("preview_duration"), (int, float))
+                or not 0 < metadata["preview_duration"] < 180
                 or not isinstance(metadata.get("duration"), (int, float))
                 or not 0 < metadata["duration"] < 24 * 3600):
             return None
         return {"duration": round(float(metadata["duration"]), 2),
-                "bytes": stat.st_size}
+                "bytes": stat.st_size,
+                "preview_duration": round(float(metadata["preview_duration"]), 2)}
     except (OSError, ValueError, TypeError, KeyError):
         return None
 
@@ -1508,11 +1565,14 @@ def _assemble_chapter_audio(job_id: str, chapter: dict, plan: dict) -> bool:
             raise ValueError("Kapitelquelle enthält keine Audioteile.")
         duration = writer.duration
         writer.close()
+        preview_duration, preview_bytes = _write_chapter_preview(job_id, chapter)
         _atomic_json(meta_path, {
             "version": CHAPTER_AUDIO_CACHE_VERSION,
             "fingerprint": chapter["fingerprint"], "start": chapter["start"],
             "end": chapter["end"], "duration": round(duration, 4),
             "byte_size": path.stat().st_size,
+            "preview_duration": round(preview_duration, 4),
+            "preview_byte_size": preview_bytes,
         })
         return True
     except Exception:
@@ -1538,12 +1598,13 @@ def completed_chapter_files(project_id: str, job_id: str) -> list[dict]:
                 "index": chapter["index"], "title": chapter["title"],
                 "segment_count": chapter["segments"],
                 "duration_seconds": audio["duration"],
+                "preview_seconds": audio["preview_duration"],
                 "bytes": audio["bytes"],
             })
     return ready
 
 
-def completed_chapter_path(project_id: str, job_id: str, index: int) -> Path:
+def completed_chapter_path(project_id: str, job_id: str, index: int, *, preview: bool = False) -> Path:
     """Fail closed on wrong project, incomplete chapter, or stale cache."""
     job = public_job(project_id, job_id)
     chapters = _chapter_index(job_id)
@@ -1552,7 +1613,8 @@ def completed_chapter_path(project_id: str, job_id: str, index: int) -> Path:
     chapter = chapters[index]
     if chapter["end"] > job["done"] or _ready_chapter_audio(job_id, chapter) is None:
         raise ValueError("Kapitel ist noch nicht vollständig als Audiodatei verfügbar.")
-    return _chapter_audio_paths(job_id, index)[0]
+    return (_chapter_preview_path(job_id, index) if preview
+            else _chapter_audio_paths(job_id, index)[0])
 
 
 def export_job(project_id: str, job_id: str) -> Path:
