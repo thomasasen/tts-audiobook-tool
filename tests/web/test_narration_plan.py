@@ -207,6 +207,32 @@ def test_b01_audit_with_missing_mapping_is_not_disguised_as_legacy(tmp_path):
         _plan(folder)
 
 
+
+def test_same_epub_source_range_in_two_selected_chapters_is_a_real_duplicate(tmp_path):
+    folder, cat = _fixture(tmp_path)
+    mapping = cat["content_audit"]["source_mapping"]
+    mapping[1]["source_href"] = mapping[0]["source_href"]
+    mapping[1]["source_start"] = mapping[0]["source_start"]
+    mapping[1]["source_end"] = mapping[0]["source_start"] + len(
+        "".join(c for c in "ARR ist eine Kennzahl." if not c.isspace())
+    )
+    (folder / "chapters.json").write_text(json.dumps(cat), encoding="utf-8")
+    with pytest.raises(ValueError, match="EPUB-Quelltextspanne wurde mehrfach"):
+        _plan(folder)
+
+
+def test_same_words_at_different_source_offsets_are_not_duplicates(tmp_path):
+    folder, cat = _fixture(tmp_path)
+    mapping = cat["content_audit"]["source_mapping"]
+    mapping[1]["source_href"] = mapping[0]["source_href"]
+    mapping[1]["source_start"] = mapping[0]["source_end"] + 20
+    mapping[1]["source_end"] = mapping[1]["source_start"] + 40
+    (folder / "chapters.json").write_text(json.dumps(cat), encoding="utf-8")
+    plan = _plan(folder)
+    assert plan["segments"][1]["text"] == plan["segments"][2]["text"]
+    assert np.validate_narration_plan(plan)
+
+
 def test_pre_b01_project_falls_back_explicitly_to_book_source(tmp_path):
     folder, _ = _fixture(tmp_path, mapping=False)
     plan = _plan(folder)
