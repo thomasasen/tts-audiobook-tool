@@ -2,7 +2,10 @@
 
 export const FALLBACK_MAX_BYTES = 96 * 1024 * 1024
 
-export type DownloadProgress = { received: number; total: number | null }
+export type DownloadProgress = {
+  received: number; total: number | null
+  etaSeconds: number | null; measuredAt: number
+}
 
 type FileSink = {
   write(chunk: Uint8Array): Promise<void>
@@ -73,6 +76,8 @@ async function downloadAuthenticatedAudio(
     }
     const reader = response.body.getReader()
     let received = 0
+    let firstByteAt: number | null = null
+    let firstChunkLength = 0
     const chunks: Uint8Array[] = []
     try {
       while (true) {
@@ -80,6 +85,11 @@ async function downloadAuthenticatedAudio(
         if (done) break
         if (signal.aborted) throw new DOMException('Download abgebrochen.', 'AbortError')
         received += value.byteLength
+        const transferNow = performance.now()
+        if (firstByteAt === null) {
+          firstByteAt = transferNow
+          firstChunkLength = received
+        }
         if (!sink && received > FALLBACK_MAX_BYTES) {
           throw new Error(`${label} überschreitet das Speicherlimit von 96 MB. Chrome oder Edge verwenden.`)
         }
@@ -88,7 +98,13 @@ async function downloadAuthenticatedAudio(
         } else {
           chunks.push(value)
         }
-        onProgress({ received, total: length })
+        const seconds = (transferNow - firstByteAt) / 1000
+        const rate = seconds >= 2 ? (received - firstChunkLength) / seconds : 0
+        // A trustworthy transfer ETA requires a known Content-Length and
+        // a sustained actual byte rate. Streaming ZIP has no such total.
+        const etaSeconds = length !== null && length > received && rate > 0
+          ? Math.max(1, Math.ceil((length - received) / rate)) : null
+        onProgress({ received, total: length, etaSeconds, measuredAt: Date.now() })
       }
     } catch (error) {
       await reader.cancel().catch(() => undefined)
