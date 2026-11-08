@@ -193,34 +193,54 @@ echo "Boot mode: Web Studio + Thorsten. Legacy TUI models: $RUNPOD_TTS_MODELS."
 # Retry once because a just-assigned GPU can be transiently unavailable.
 # In explicit web-only recovery mode, do not block EPUB diagnostics on CUDA.
 CUDA_SYSTEM_READY=0
+GPU_ARCH_UNSUPPORTED=0
 if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 ]]; then
-  echo "Preflight 0/5: Checking real CUDA execution before costly setup."
+  echo "Preflight 0/5: Checking real CUDA execution and Thorsten GPU support before costly setup."
   for ((cuda_attempt=1; cuda_attempt<=2; cuda_attempt++)); do
-    echo "CUDA execution test $cuda_attempt/2 (real GPU tensor allocation)."
-    if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json; then
+    echo "CUDA execution + pinned Thorsten compatibility test $cuda_attempt/2."
+    CUDA_PROBE_REPORT=""
+    if CUDA_PROBE_REPORT="$(python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json --require-thorsten-compatible)"; then
+      printf '%s\n' "$CUDA_PROBE_REPORT"
       CUDA_SYSTEM_READY=1
       break
     fi
+    printf '%s\n' "$CUDA_PROBE_REPORT"
+    # A newer GPU architecture cannot become compatible by retrying.
+    if [[ "$CUDA_PROBE_REPORT" == *'not supported by the pinned Thorsten'* ]]; then
+      GPU_ARCH_UNSUPPORTED=1
+      break
+    fi
     if (( cuda_attempt == 1 )); then
-      echo "CUDA not operational; retrying once after 3 seconds." >&2
+      echo "CUDA not operational or compatibility unknown; retrying once after 3 seconds." >&2
       sleep 3
     fi
   done
   if (( ! CUDA_SYSTEM_READY )); then
-    write_voice_state cuda-unavailable
-    echo "=======================================================================" >&2
-    echo "START ABGEBROCHEN: CUDA funktioniert auf diesem RunPod-Host nicht." >&2
+    if (( GPU_ARCH_UNSUPPORTED )); then
+      write_voice_state cuda-unavailable
+      echo "=======================================================================" >&2
+      echo "START ABGEBROCHEN: DIE GPU IST ZU NEU FUER DIE THORSTEN-LAUFZEIT." >&2
+      echo "Der System-CUDA-Test kann funktionieren, obwohl das separate" >&2
+      echo "Thorsten PyTorch 2.3.1+cu121 Blackwell (z.B. RTX 5090) nicht kann." >&2
+      echo "Keine Neuinstallation behebt diese Versions-Inkompatibilitaet." >&2
+      echo "Verwende RTX 4090, L40S, L4, RTX 3090 oder A100 (kein Blackwell)." >&2
+    else
+      write_voice_state cuda-unavailable
+      echo "=======================================================================" >&2
+      echo "START ABGEBROCHEN: CUDA funktioniert nicht oder ist nicht verifizierbar." >&2
+      echo "Die GPU kann trotz Anzeige in nvidia-smi unbenutzbar sein." >&2
+      echo "Bei unklarer CUDA-Stoerung einen ANDEREN RunPod-GPU-Host waehlen." >&2
+    fi
     echo "Thorsten wurde NICHT installiert. Kein apt/npm/Python-Setup gestartet." >&2
-    echo "Die GPU kann trotz Anzeige in nvidia-smi unbenutzbar sein." >&2
     echo "Massnahme: Diesen kostenpflichtigen Pod im RunPod-Dashboard STOPPEN." >&2
-    echo "Dann einen neuen Pod auf einem ANDEREN GPU-Host erstellen; Volume" >&2
-    echo "wiederverwenden. Ein Container-Fehler beendet GPU-Abrechnung nicht." >&2
+    echo "Ein Container-Fehler beendet die GPU-Abrechnung nicht automatisch." >&2
+    echo "Das vorhandene Network Volume mit Modellen/Projekten weiterverwenden." >&2
     echo "Fuer reine EPUB-Diagnose RUNPOD_TTS_SKIP_VOICE_INSTALL=1 verwenden." >&2
     echo "Privates Startprotokoll: $LOG_FILE" >&2
     echo "=======================================================================" >&2
     exit 1
   fi
-  echo "CUDA preflight PASSED. Starting host bootstrap and voice installation."
+  echo "CUDA preflight PASSED: System-GPU laeuft und ist fuer den aktuellen Thorsten-Torch-Pin geeignet."
 else
   write_voice_state skipped
   echo "Explicit web-only recovery: early GPU gate skipped; Thorsten installation disabled."
