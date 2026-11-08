@@ -25,10 +25,12 @@ rule() { printf '%s\n' '+=======================================================
 
 if [[ "$RUNPOD_SUMMARY_WEB" != ready ]]; then
   status="START FEHLGESCHLAGEN: WEB-SERVER NICHT ERREICHBAR"
+elif [[ "$RUNPOD_SUMMARY_CUDA_SYSTEM" == failed ]]; then
+  status="START NICHT BETRIEBSBEREIT: CUDA-TEST FEHLGESCHLAGEN"
 elif [[ "$RUNPOD_SUMMARY_THORSTEN" == installed && "$RUNPOD_SUMMARY_CUDA_THORSTEN" == passed ]]; then
   status="START ABGESCHLOSSEN: WEB + THORSTEN INSTALLIERT"
 else
-  status="START ABGESCHLOSSEN: WEB BEREIT (MIT WARNUNGEN)"
+  status="WEB BEREIT: SPRECHER NOCH NICHT BETRIEBSBEREIT"
 fi
 
 # A failed model download or CUDA test must not be reported as successful TTS.
@@ -77,10 +79,14 @@ else
   fi
 fi
 
-if [[ "$RUNPOD_SUMMARY_WEB" == ready ]]; then
-  line "Naechster Schritt" "Sprecher > Echte Hoerprobe erzeugen, anhoeren und freigeben"
-else
+if [[ "$RUNPOD_SUMMARY_WEB" != ready ]]; then
   line "Diagnose" "tmux capture-pane -pt audiobook-web -S -100"
+elif [[ "$RUNPOD_SUMMARY_CUDA_SYSTEM" == failed ]]; then
+  line "AKTION ERFORDERLICH" "GPU-Pod STOPPEN; anderen RunPod-GPU-Host waehlen"
+elif [[ "$RUNPOD_SUMMARY_THORSTEN" != installed || "$RUNPOD_SUMMARY_CUDA_THORSTEN" != passed ]]; then
+  line "AKTION ERFORDERLICH" "Thorsten-Installationsstatus und private Autostart-Logs pruefen"
+else
+  line "Naechster Schritt" "Sprecher > Echte Hoerprobe erzeugen, anhoeren und freigeben"
 fi
 rule
 printf '%s\n\n' 'SICHERHEIT: Zugangsschluessel nur in privaten Container-Logs. Nicht teilen.'
