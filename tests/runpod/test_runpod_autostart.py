@@ -205,6 +205,26 @@ class TestRunPodAutostart(unittest.TestCase):
         self.assertIn("RunPod start incomplete: Thorsten narration is not ready", source)
         self.assertLess(source.index("RUNPOD_SUMMARY_WEB="), source.index("RunPod start incomplete: Thorsten narration is not ready"))
 
+    def test_cuda_gate_runs_before_any_expensive_install_and_fails_closed(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        gate = source.index('echo "Preflight 0/5: Checking real CUDA execution before costly setup."')
+        check = source.index('python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json')
+        setup = source.index('bash "$REPO_DIR/runpod/setup.sh" --models none --bootstrap-only')
+        build = source.index('bash "$REPO_DIR/runpod/build-web.sh"')
+        download = source.index('bash "$REPO_DIR/runpod/prefetch-thorsten.sh"')
+        self.assertLess(gate, check)
+        self.assertLess(check, setup)
+        self.assertLess(setup, build)
+        self.assertLess(build, download)
+        self.assertIn('if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 ]]; then', source)
+        self.assertIn('for ((cuda_attempt=1; cuda_attempt<=2; cuda_attempt++)); do', source)
+        self.assertIn('write_voice_state cuda-unavailable', source)
+        self.assertIn("START ABGEBROCHEN: CUDA funktioniert", source)
+        self.assertIn("kostenpflichtigen Pod im RunPod-Dashboard STOPPEN", source)
+        self.assertIn('exit 1\n  fi\n  echo "CUDA preflight PASSED.', source)
+        self.assertIn('local state="$1" tmp="$VOICE_STATE_FILE.tmp.$"', source)
+        self.assertEqual(source.count('python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json'), 1)
+
     def test_web_recovery_skips_new_voice_downloads(self):
         source = AUTOSTART.read_text(encoding="utf-8")
         self.assertIn(': "${RUNPOD_TTS_SKIP_VOICE_INSTALL:=0}"', source)
