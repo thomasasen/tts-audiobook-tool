@@ -188,6 +188,23 @@ class TestRunPodAutostart(unittest.TestCase):
         self.assertIn('tmux kill-session -t audiobook-web', source)
         self.assertIn("tmux capture-pane -pt audiobook-web", source)
 
+    def test_default_start_requires_ready_thorsten_and_records_safe_states(self):
+        source = AUTOSTART.read_text(encoding="utf-8")
+        self.assertIn('VOICE_STATE_FILE="$DATA_ROOT/studio-voice-install-state"', source)
+        self.assertIn('chmod 600 "$tmp"', source)
+        self.assertIn('mv -f "$tmp" "$VOICE_STATE_FILE"', source)
+        for state in (
+            "initializing", "downloading", "checking-cache", "installing",
+            "cuda-unavailable", "insufficient-space", "download-failed",
+            "installation-failed", "voice-cuda-unavailable", "installed",
+            "skipped", "bootstrap-failed",
+        ):
+            self.assertIn("write_voice_state " + state, source)
+        self.assertIn('if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 ]] &&', source)
+        self.assertIn('(( ! THORSTEN_INSTALL_OK || ! CUDA_THORSTEN_READY ))', source)
+        self.assertIn("RunPod start incomplete: Thorsten narration is not ready", source)
+        self.assertLess(source.index("RUNPOD_SUMMARY_WEB="), source.index("RunPod start incomplete: Thorsten narration is not ready"))
+
     def test_web_recovery_skips_new_voice_downloads(self):
         source = AUTOSTART.read_text(encoding="utf-8")
         self.assertIn(': "${RUNPOD_TTS_SKIP_VOICE_INSTALL:=0}"', source)
