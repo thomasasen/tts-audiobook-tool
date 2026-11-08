@@ -294,8 +294,8 @@ def benchmark(args) -> dict:
     import fcntl  # Linux RunPod; the Studio uses the identical process lock.
 
     model_root = Path(args.model_root)
-    if not model_root.is_dir():
-        return _benchmark_unlocked(args)  # Retain the precise missing-install error.
+    if not model_root.is_dir() or not (model_root / ".studio-ready").is_file():
+        return _benchmark_unlocked(args)  # Reject invalid installs before making any lock.
     lock_path = model_root.parent.parent / ".gpu-worker.lock"
     lock_path.touch(mode=0o600, exist_ok=True)
     with lock_path.open("r+") as handle:
