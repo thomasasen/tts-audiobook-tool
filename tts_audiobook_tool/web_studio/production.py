@@ -251,8 +251,8 @@ def _atomic_json(path: Path, obj: object) -> None:
 
 
 def _parallel_worker_count() -> int:
-    """Explicit opt-in; preserve all existing jobs' single-worker default."""
-    raw = os.environ.get("AUDIOBOOK_STUDIO_TTS_WORKERS", "1")
+    """Two workers for NEW jobs; existing plans keep their frozen worker count."""
+    raw = os.environ.get("AUDIOBOOK_STUDIO_TTS_WORKERS", "2")
     if raw not in ("1", "2", "3", "4"):
         raise ValueError("AUDIOBOOK_STUDIO_TTS_WORKERS muss 1, 2, 3 oder 4 sein.")
     count = int(raw)
