@@ -1178,10 +1178,6 @@ def export_job(project_id: str, job_id: str) -> Path:
         job = public_job(project_id, job_id)
         if job["status"] not in ("generated", "completed"):
             raise ValueError("Alle Audiosegmente müssen fertig sein.")
-        if job["status"] == "completed":
-            existing = _jobs_dir(job_id) / "audiobook.m4b"
-            if existing.is_file():
-                return existing
         from tts_audiobook_tool.sound.audio_writers import AacWriter, Chapter
         import numpy as np
         import soundfile as sf
@@ -1193,6 +1189,11 @@ def export_job(project_id: str, job_id: str) -> Path:
             narration_plan.assert_book_unchanged(_studio()._project_dir(project_id), plan)
             if project_glossary(project_id) != plan["glossary"]:
                 raise ValueError("Das Projektglossar wurde seit Auftragsbeginn verändert.")
+        # Even a completed export cannot bypass a damaged/new-version plan.
+        if job["status"] == "completed":
+            existing = _jobs_dir(job_id) / "audiobook.m4b"
+            if existing.is_file():
+                return existing
         path = _jobs_dir(job_id) / "audiobook.m4b"
         start = 0.0
         chapters = []
