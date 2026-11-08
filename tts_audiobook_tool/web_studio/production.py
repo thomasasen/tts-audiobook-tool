@@ -788,6 +788,10 @@ def save_glossary(project_id: str, entries: dict[str, str]) -> dict:
             obj = json.loads(path.read_text(encoding="utf-8"))
             obj["word_substitutions"] = requested
             _atomic_json(path, obj)
+            _atomic_json(_glossary_result_path(project_id), {
+                "status": "applied", "affected": 0, "preserved": 0,
+                "message": "Glossar gespeichert.",
+            })
             db.execute("UPDATE studio_projects SET updated_at=? WHERE id=?", (_now(), project_id))
             return {"entries": requested, "update": {"status": "applied", "affected": 0,
                                                      "preserved": 0, "message": "Glossar gespeichert."}}
@@ -928,7 +932,10 @@ def _apply_pending_glossary_revision(project_id: str) -> None:
                 meta.unlink(missing_ok=True)
                 file.unlink(missing_ok=True)
                 preview.unlink(missing_ok=True)
-            elif _ready_chapter_audio(job_id, before) is not None:
+            elif (_ready_chapter_audio(job_id, before) is not None
+                  or _ready_chapter_audio(job_id, after) is not None):
+                # Either the untouched old fingerprint or a metadata update
+                # made just before an interrupted migration is valid.
                 item = json.loads(meta.read_text(encoding="utf-8"))
                 item["fingerprint"] = after["fingerprint"]
                 _atomic_json(meta, item)
