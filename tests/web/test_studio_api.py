@@ -286,6 +286,37 @@ def test_upload_uses_existing_extractor_and_suggests_preface(client, monkeypatch
     assert source.is_file()
 
 
+
+def test_resaving_chapters_preserves_existing_pronunciation_glossary(client):
+    """Actual EPUB -> save chapters -> save glossary -> save chapters again."""
+    from runpod.acceptance_epub import build_epub
+
+    uploaded = client.post(
+        "/api/projects", headers=authorized(),
+        files={"file": ("glossar.epub", build_epub(), "application/epub+zip")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    project = uploaded.json()
+    project_id = project["id"]
+    chapters_url = f"/api/projects/{project_id}/chapters"
+    glossary_url = f"/api/projects/{project_id}/glossary"
+    selection = {"start_index": project["suggested_start"], "excluded_indices": []}
+    first = client.put(chapters_url, headers=authorized(), json=selection)
+    assert first.status_code == 200, first.text
+
+    entries = {"MEDDPICC": "M E D D P I C C", "MongoDB": "Mongo De Be"}
+    saved = client.put(glossary_url, headers=authorized(), json={"entries": entries})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["update"]["status"] == "applied"
+    assert client.get(glossary_url, headers=authorized()).json()["entries"] == entries
+
+    repeated = client.put(chapters_url, headers=authorized(), json=selection)
+    assert repeated.status_code == 200, repeated.text
+    assert client.get(glossary_url, headers=authorized()).json()["entries"] == entries
+    persisted = studio._project_dir(project_id) / "engine" / "project.json"
+    assert json.loads(persisted.read_text(encoding="utf-8"))["word_substitutions"] == entries
+
+
 def test_premature_generation_not_exposed(client):
     assert client.get("/api/capabilities", headers=authorized()).json()["tts_generation"] is False
     assert client.post("/api/generate", headers=authorized()).status_code == 404
