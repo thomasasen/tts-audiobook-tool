@@ -751,16 +751,36 @@ class GlossaryPayload(BaseModel):
 
 @app.get("/api/projects/{project_id}/glossary", dependencies=[Depends(require_auth)])
 def get_glossary(project_id: str):
-    return {"entries": production.project_glossary(project_id)}
+    entries = production.project_glossary(project_id)
+    update = production.glossary_update_status(project_id)
+    if update["status"] in ("pending", "failed"):
+        # The explicit submitted version is shown during a safe handoff;
+        # the original frozen plan is still used by any in-flight segment.
+        try:
+            pending = json.loads(
+                production._glossary_pending_path(project_id).read_text(encoding="utf-8")
+            )
+            entries = pending["entries"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return {"entries": entries, "update": update}
 
 
 @app.put("/api/projects/{project_id}/glossary", dependencies=[Depends(require_auth)])
 def put_glossary(project_id: str, payload: GlossaryPayload):
     try:
-        production.save_glossary(project_id, payload.entries)
+        return production.save_glossary(project_id, payload.entries)
     except (OSError, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
-    return get_glossary(project_id)
+
+
+@app.get("/api/projects/{project_id}/glossary/update",
+         dependencies=[Depends(require_auth)])
+def get_glossary_revision_status(project_id: str):
+    try:
+        return production.glossary_update_status(project_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/projects/{project_id}/jobs", dependencies=[Depends(require_auth)])
