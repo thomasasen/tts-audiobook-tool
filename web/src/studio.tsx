@@ -4,7 +4,7 @@ import {
   FolderOpen, Headphones, LockKeyhole, Moon, ShieldCheck, Sun,
   Volume2, AlertCircle, RotateCcw, Trash2, PlayCircle, PauseCircle, StopCircle
 } from 'lucide-react'
-import { downloadAuthenticatedM4b, downloadAuthenticatedChapter, supportsDirectSave, type DownloadProgress } from './download'
+import { downloadAuthenticatedM4b, downloadAuthenticatedChapter, downloadAuthenticatedChapterZip, supportsDirectSave, type DownloadProgress } from './download'
 
 type Chapter = {
   index: number
@@ -103,7 +103,7 @@ type ActivityEvent = {at: string; message: string}
 type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string; duration_seconds?: number; speed?: number; custom_text?: boolean}
 type VoiceSettings = {speed: number; preview_text: string}
 const VERIFIED_SPEEDS = [0.85, 0.90, 0.95, 1, 1.05, 1.10, 1.15] as const
-type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null; eta_sample_count?: number; calculated_at?: string}
+type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null; eta_sample_count?: number; calculated_at?: string; export?: {processed: number; total: number; percent: number} | null}
 type QualityIssue = {index: number; status: string; reason?: string; warnings: string[]; asr_similarity?: number | null; asr_wer?: number | null; asr_cer?: number | null; asr_number_mismatch?: boolean}
 type QualityReport = {checked: number; unchecked?: number; total: number; issues: QualityIssue[]}
 const STATUS_LABELS: Record<string, string> = {
@@ -223,6 +223,7 @@ export default function Studio() {
   const [jobActivity, setJobActivity] = useState<JobActivity | null>(null)
   const [exportPending, setExportPending] = useState(false)
   const [downloadPending, setDownloadPending] = useState(false)
+  const [chapterZipPending, setChapterZipPending] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null)
   const downloadAbort = useRef<AbortController | null>(null)
   const handledPreview = useRef<string | null>(null)
@@ -552,6 +553,32 @@ export default function Studio() {
     }
   }
 
+  async function startChapterZipDownload() {
+    if (!active || !job || job.status !== 'completed' || !completedChapters.length || downloadPending) return
+    const controller = new AbortController()
+    downloadAbort.current = controller
+    setDownloadPending(true); setChapterZipPending(true)
+    setChapterDownloadIndex(null); setDownloadProgress(null); setError('')
+    const base = (active.title || 'Hoerbuch').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
+    try {
+      const result = await downloadAuthenticatedChapterZip(
+        `/api/projects/${active.id}/jobs/${job.id}/chapters/archive`,
+        token, `${base}-Kapitel.zip`, controller.signal, setDownloadProgress,
+      )
+      setNotice(`${completedChapters.length} Kapitel als ZIP gespeichert (${(result.bytes / (1024 * 1024)).toFixed(1)} MB).`)
+    } catch (error) {
+      const exc = error as Error
+      if (controller.signal.aborted || exc.name === 'AbortError') {
+        setNotice('Kapitel-ZIP-Download abgebrochen.')
+      } else {
+        setError(exc.message || 'Kapitel-ZIP-Download fehlgeschlagen.')
+      }
+    } finally {
+      if (downloadAbort.current === controller) downloadAbort.current = null
+      setDownloadPending(false); setChapterZipPending(false)
+    }
+  }
+
   async function previewChapter(chapter: CompletedChapter) {
     if (!active || !job) return
     const path = `/api/projects/${active.id}/jobs/${job.id}/chapters/${chapter.index}/audio`
@@ -628,6 +655,7 @@ export default function Studio() {
 
   function signOut() {
     downloadAbort.current?.abort()
+    setChapterZipPending(false)
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
     setOwnedAudioUrl(''); setJob(null); setJobActivity(null); setQuality(null); setPreviewTask(null)
     setCompletedChapters([]); setChapterListError(''); setChapterPreviewIndex(null); setChapterDownloadIndex(null)
@@ -1110,14 +1138,18 @@ export default function Studio() {
                         : 'Keine aktive Restzeitprognose'}</small>
                     </div>
                   </div>
-                  {(job.status === 'exporting' || exportPending) && <p role="status">M4B-Export läuft. Fortschritt ist im Protokoll sichtbar; keine Schätzung der Restzeit.</p>}
+                  {(job.status === 'exporting' || exportPending) && <div role="status" aria-live="polite">
+                    <div className="progress-head"><strong>M4B-Export</strong><span>{jobActivity?.export?.percent ?? 0} %</span></div>
+                    <progress max={Math.max(1, jobActivity?.export?.total ?? job.total)} value={jobActivity?.export?.processed ?? 0} aria-label="Fortschritt M4B-Export"/>
+                    <p>{jobActivity?.export?.processed ?? 0} von {jobActivity?.export?.total ?? job.total} Segmenten verarbeitet · Export läuft im Hintergrund.</p>
+                  </div>}
                   <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
                     <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
                     <ol>{jobActivity?.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>) ?? <li>Noch keine Einträge vorhanden.</li>}</ol>
                   </details>
                   {job.error && <p className="error" role="alert">{job.error}</p>}
                   {job.status === 'completed' && <p className="helper">Download-Modus: {supportsDirectSave() ? 'Direkt auf Datenträger speichern (streaming, ohne großen Browser-Blob)' : 'Browser-Fallback bis 96 MB. Für größere Bücher Chrome oder Edge verwenden.'}</p>}
-                  {downloadPending && chapterDownloadIndex === null && <div role="status" aria-live="polite" className="production-time-metrics">
+                  {downloadPending && chapterDownloadIndex === null && !chapterZipPending && <div role="status" aria-live="polite" className="production-time-metrics">
                     <span>M4B-Download: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen{downloadProgress?.total ? ` von ${(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB` : ''}</span>
                     <progress aria-label="M4B-Download" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
                   </div>}
@@ -1157,7 +1189,15 @@ export default function Studio() {
                   <h2>Fertige Kapitel</h2>
                   <span className="status-chip">{completedChapters.length} verfügbar</span>
                 </div>
-                <p className="helper">Jedes fertiggestellte Kapitel steht als vollständige M4A-Datei zum Download bereit. Zum Vorhören gibt es einen browserkompatiblen WAV-Ausschnitt mit ungefähr einer Minute, ohne Wörter mitten im Segment abzuschneiden.</p>
+                <p className="helper">Jedes fertiggestellte Kapitel steht als vollständige M4A-Datei bereit. Alle Kapitel lassen sich mit lesbaren Dateinamen gesammelt als ZIP speichern. Zum Vorhören gibt es einen WAV-Ausschnitt.</p>
+                {job.status === 'completed' && completedChapters.length > 0 && <div className="job-actions">
+                  <button className="primary-btn" disabled={busy || downloadPending} onClick={() => {void startChapterZipDownload()}}><FileAudio size={17}/>{chapterZipPending ? 'ZIP wird übertragen …' : 'Alle Kapitel als ZIP herunterladen'}</button>
+                </div>}
+                {chapterZipPending && <div role="status" aria-live="polite" className="chapter-file-download">
+                  <span>Kapitel-ZIP: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen</span>
+                  <progress aria-label="Download aller Kapitel" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
+                  <button className="text-btn" onClick={() => downloadAbort.current?.abort()}>Abbrechen</button>
+                </div>}
                 {chapterListError && <p className="message error" role="alert">Kapiteldateien konnten nicht geladen werden: {chapterListError}</p>}
                 {completedChapters.length === 0
                   ? <p className="chapter-empty">Noch kein Kapitel vollständig vertont und als Audiodatei bereitgestellt.</p>

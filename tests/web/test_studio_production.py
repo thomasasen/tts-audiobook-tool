@@ -866,7 +866,7 @@ def test_chapters_publish_incrementally_as_authenticated_m4a(env, monkeypatch):
                 assert len(container.streams.audio) == 1
                 decoded = list(container.decode(audio=0))
                 assert len(decoded) > 0
-            assert "Kapitel-001.m4a" in download.headers["content-disposition"]
+            assert "001%20-%20Vorwort.m4a" in download.headers["content-disposition"]
             assert env.get(
                 f"/api/projects/{project_id}/jobs/{job_id}/chapters/1/audio",
                 headers=HEADERS,

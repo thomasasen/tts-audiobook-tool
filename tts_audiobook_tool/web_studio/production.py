@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 import wave
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1186,6 +1187,18 @@ def job_activity(project_id: str, job_id: str) -> dict:
         elapsed = max(0, int((now - started_at).total_seconds()))
     except (ValueError, TypeError):
         elapsed = 0
+    export = None
+    if job["status"] in ("exporting", "completed"):
+        try:
+            progress = json.loads((_jobs_dir(job_id) / "export-progress.json").read_text(encoding="utf-8"))
+            processed = max(0, min(total, int(progress["processed"])))
+            if int(progress["total"]) == total:
+                export = {
+                    "processed": processed, "total": total,
+                    "percent": round(100 * processed / total) if total else 0,
+                }
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
     return {
         "id": job_id, "status": job["status"],
         "done": done, "total": total,
@@ -1194,6 +1207,7 @@ def job_activity(project_id: str, job_id: str) -> dict:
         "remaining_seconds": eta,
         "eta_sample_count": sample_count,
         "calculated_at": now.isoformat(),
+        "export": export,
         "events": events[-60:],
     }
 
@@ -2010,17 +2024,123 @@ def completed_chapter_path(project_id: str, job_id: str, index: int, *, preview:
             else _chapter_audio_paths(job_id, index)[0])
 
 
-def export_job(project_id: str, job_id: str) -> Path:
+def _write_export_progress(job_id: str, processed: int, total: int) -> None:
+    _atomic_json(_jobs_dir(job_id) / "export-progress.json", {
+        "processed": processed, "total": total, "updated_at": _now(),
+    })
+
+
+def start_export_job(project_id: str, job_id: str) -> dict:
+    """Claim the export in SQLite and return immediately (safe for proxy timeouts).
+
+    The single persistent process lock from init() prevents two server
+    processes from executing an export against the same data directory.
+    A second request sees 'exporting' and never starts a second thread.
+    """
+    if _STOP.is_set():
+        raise ValueError("Der Webserver wird beendet.")
+    public_job(project_id, job_id)
+    with _studio()._db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT status, total FROM studio_jobs WHERE id=? AND project_id=?",
+            (job_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Hörbuchauftrag nicht gefunden.")
+        if row["status"] == "exporting":
+            return {"ready": False, "status": "exporting", "already_running": True,
+                    "filename": "audiobook.m4b"}
+        if row["status"] == "completed" and (_jobs_dir(job_id) / "audiobook.m4b").is_file():
+            return {"ready": True, "status": "completed", "already_running": False,
+                    "filename": "audiobook.m4b"}
+        if row["status"] not in ("generated", "completed"):
+            raise ValueError("Alle Audiosegmente müssen fertig sein.")
+        _write_export_progress(job_id, 0, int(row["total"]))
+        updated = db.execute(
+            "UPDATE studio_jobs SET status='exporting',error='',updated_at=? "
+            "WHERE id=? AND project_id=? AND status=?",
+            (_now(), job_id, project_id, row["status"]),
+        ).rowcount
+        if updated != 1:
+            raise ValueError("Der Auftragsstatus hat sich inzwischen geändert.")
+
+    worker = threading.Thread(
+        target=_export_background, args=(project_id, job_id),
+        name=f"studio-export-{job_id[:8]}", daemon=True,
+    )
+    try:
+        worker.start()
+    except RuntimeError:
+        with _studio()._db() as db:
+            db.execute(
+                "UPDATE studio_jobs SET status='generated',updated_at=? "
+                "WHERE id=? AND status='exporting'", (_now(), job_id),
+            )
+        raise
+    return {"ready": False, "status": "exporting", "already_running": False,
+            "filename": "audiobook.m4b"}
+
+
+def _export_background(project_id: str, job_id: str) -> None:
+    try:
+        export_job(project_id, job_id, _claimed=True)
+    except Exception:
+        # Validation failures can happen before export_job enters its own
+        # writer cleanup. Never leave a permanently stuck 'exporting' job.
+        logging.getLogger("german-audiobook-studio.engine").exception(
+            "M4B export failed for job %s", job_id
+        )
+        with _studio()._db() as db:
+            db.execute(
+                "UPDATE studio_jobs SET status='generated',error='Export fehlgeschlagen',"
+                "updated_at=? WHERE id=? AND status='exporting'", (_now(), job_id),
+            )
+        _job_event(job_id, "M4B-Export fehlgeschlagen. Privates Server-Log prüfen.")
+
+
+def chapter_download_name(index: int, title: str) -> str:
+    """Stable sortable filenames, safe on Windows and in ZIP archives."""
+    clean = "".join(
+        "_" if char in '/\\:*?"<>|' or unicodedata.category(char).startswith("C") else char
+        for char in title
+    )
+    clean = re.sub(r"\s+", " ", clean).strip(" ._")[:90].rstrip(" .")
+    return f"{index + 1:03d} - {clean or 'Kapitel'}.m4a"
+
+
+def chapter_archive_entries(project_id: str, job_id: str) -> list[tuple[Path, str]]:
+    """Only complete chapter renders belonging to a completed book."""
     job = public_job(project_id, job_id)
-    if job["status"] not in ("generated", "completed"):
+    if job["status"] != "completed":
+        raise ValueError("Bitte den Hörbuchexport zuerst abschließen.")
+    chapters = _chapter_index(job_id)
+    if not chapters:
+        raise ValueError("Keine fertigen Kapitel vorhanden.")
+    entries = []
+    for chapter in chapters:
+        index = chapter["index"]
+        path = completed_chapter_path(project_id, job_id, index)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Eine Kapiteldatei ist nicht mehr verfügbar.")
+        entries.append((path, chapter_download_name(index, chapter["title"])))
+    return entries
+
+
+def export_job(project_id: str, job_id: str, *, _claimed: bool = False) -> Path:
+    # Direct invocation is retained for internal tooling and existing tests.
+    # HTTP requests use start_export_job and return before encoding begins.
+    allowed = ("exporting",) if _claimed else ("generated", "completed")
+    job = public_job(project_id, job_id)
+    if job["status"] not in allowed:
         raise ValueError("Alle Audiosegmente müssen fertig sein.")
-    if not _GPU.acquire(blocking=False):
+    if not _GPU.acquire(blocking=not not _claimed):
         raise ValueError("Die GPU ist belegt.")
     try:
         # A retry or cancellation may have changed the state while this
         # export request waited for the lock.
         job = public_job(project_id, job_id)
-        if job["status"] not in ("generated", "completed"):
+        if job["status"] not in allowed:
             raise ValueError("Alle Audiosegmente müssen fertig sein.")
         from tts_audiobook_tool.sound.audio_writers import AacWriter, Chapter
         import numpy as np
@@ -2081,6 +2201,7 @@ def export_job(project_id: str, job_id: str) -> Path:
                 writer.write(np.asarray(audio, dtype=np.float32))
                 start += len(audio) / sr
                 if (i + 1) % 25 == 0 or i + 1 == len(plan["segments"]):
+                    _write_export_progress(job_id, i + 1, len(plan["segments"]))
                     _job_event(job_id, f"M4B-Export: {i + 1} von {len(plan['segments'])} Segmenten verarbeitet.")
             if chapter_key is not None:
                 chapters.append(Chapter(chapter_start, start, chapter_title))
@@ -2095,6 +2216,7 @@ def export_job(project_id: str, job_id: str) -> Path:
                 db.execute("UPDATE studio_jobs SET status='generated',error='Export fehlgeschlagen',updated_at=? WHERE id=?", (_now(),job_id))
             _job_event(job_id, "M4B-Export fehlgeschlagen. Privates Server-Log prüfen.")
             raise
+        _write_export_progress(job_id, len(plan["segments"]), len(plan["segments"]))
         with _studio()._db() as db:
             db.execute("UPDATE studio_jobs SET status='completed',error='',updated_at=? WHERE id=?", (_now(),job_id))
             db.execute("UPDATE studio_projects SET status='Fertig',updated_at=? WHERE id=?", (_now(),project_id))
