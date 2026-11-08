@@ -1204,7 +1204,7 @@ export default function Studio() {
                       : exportActivity?.phase === 'finalizing' ? `${exportProcessed ?? job.total} von ${job.total} Segmenten verarbeitet · Datei wird abgeschlossen.`
                       : exportProcessed == null ? 'Export wird vorbereitet; noch keine bestätigten Segmente.'
                       : `${exportProcessed} von ${exportActivity?.total ?? job.total} Segmenten verarbeitet · Export läuft im Hintergrund.`}</p>
-                  </div>
+                  </div>}
                   <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
                     <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
                     <ol>{jobActivity?.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>) ?? <li>Noch keine Einträge vorhanden.</li>}</ol>
