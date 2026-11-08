@@ -1,1515 +1,225 @@
-# German Audiobook Studio – RunPod-Schnellstart
+# German Audiobook Studio
 
-Die deutschsprachige Weboberfläche importiert EPUB-Dateien, verwaltet Kapitel und erstellt nach deiner ausdrücklichen Sprecherfreigabe Hörbücher mit **Thorsten-CosyVoice3**. Der Pod startet die Weboberfläche automatisch; eine separate Konsolenanwendung oder ein manuelles `pip install` sind nicht erforderlich.
+**Aus einem deutschsprachigen EPUB ein Hörbuch machen – mit einer klaren Weboberfläche, einer echten deutschen Sprecherstimme und herunterladbaren Kapiteln.**
 
-**Status (7. November 2026):** Web-API, React-Frontend, reproduzierbare Installer und simulierte Worker-/CUDA-Fehler werden in GitHub Actions geprüft. Ein vollständiger Erststart auf einem neuen RunPod-Host, echte Thorsten-GPU-Inferenz, Hörqualität und EPUB-zu-M4B-Ausgabe sind **noch nicht auf einem funktionierenden GPU-Pod abgenommen**. „RunPod Pod is ready“ bedeutet nur, dass der Container gestartet ist, nicht, dass das Web-Studio bereits erreichbar ist.
+German Audiobook Studio liest EPUB-Dateien ein, lässt dich Kapitel und Aussprache kontrollieren, erstellt eine Hörprobe mit **Thorsten-CosyVoice3** und wandelt den gewählten Buchtext anschließend in Sprache um. Am Ende bekommst du ein **M4B-Hörbuch mit Kapitelmarken** und **einzelne M4A-Kapitel**, auf Wunsch zusammen als ZIP.
 
-## 1. RunPod-Template vollständig einrichten
+Du bedienst das Studio im Browser. Die aufwendige Spracherzeugung läuft auf einem **eigenen, kostenpflichtigen GPU-Pod bei RunPod**. Auf deinem Windows-Rechner brauchst du dafür keine Python-Umgebung.
 
-Wähle einen **GPU-Pod**, kein Serverless-Endpoint. Erstelle bzw. wähle zuerst ein Network Volume im gleichen RunPod-Rechenzentrum und hänge es bei der Pod-Erstellung an. Der Mount-Pfad muss genau `/workspace` sein.
+> **Zu den Bildern:** Alle Abbildungen in dieser Anleitung sind **echte Chromium-Screenshots der tatsächlichen React-Weboberfläche**. Ein automatisierter Browsertest hat sie mit einem eigens erzeugten **Demo-EPUB**, einer synthetischen WAV-Hörprobe und simulierten Produktions-/Exportzuständen aufgenommen. Es sind **keine KI-generierten Mockups und keine Bilder eines echten GPU-Durchlaufs**. Die Werte und Buchtitel sind Demodaten.
 
-| Einstellung | Empfohlener Wert |
+## Inhalt
+
+- [Was kann das Studio?](#was-kann-das-studio)
+- [Installation auf RunPod](#installation-auf-runpod)
+- [In sieben Schritten zum Hörbuch](#in-sieben-schritten-zum-hörbuch)
+- [Was unterscheidet das Projekt?](#was-unterscheidet-das-projekt)
+- [Kosten, Daten und Sicherheit](#kosten-daten-und-sicherheit)
+- [Häufige Fragen und Probleme](#häufige-fragen-und-probleme)
+- [Urheber, Modellquellen und Lizenzen](#urheber-modellquellen-und-lizenzen)
+- [Technische Dokumentation](#technische-dokumentation)
+
+## Was kann das Studio?
+
+| Aufgabe | Was du davon hast |
 | --- | --- |
-| Template-Name | `German Audiobook Studio – Web` |
+| **EPUB importieren** | Buchtext und Kapitel werden erkannt und zur Kontrolle aufbereitet. |
+| **Kapitel prüfen** | Du kannst festlegen, wo die Vertonung beginnen soll, und ungeeignete Abschnitte ausschließen. |
+| **Ausspracheglossar pflegen** | Für Namen, Abkürzungen und Fachbegriffe legst du fest, was tatsächlich gesprochen wird. |
+| **Hörprobe erstellen** | Du hörst Thorstens Stimme an, bevor du die gesamte Vertonung startest. |
+| **Hörbuch erstellen** | Die Anwendung verarbeitet das Buch in nachvollziehbaren Segmenten, mit Fortschritt und einer vorsichtigen Restzeitschätzung. |
+| **Arbeit fortsetzen** | Fertige Audiosegmente und Projektinformationen liegen auf einem persistenten Laufwerk. |
+| **Kapitel früh herunterladen** | Bereits vollständig vertonte Kapitel stehen als M4A bereit. |
+| **Fertiges Hörbuch exportieren** | Eine M4B-Datei mit Kapitelmarken und ein ZIP mit den einzelnen M4A-Kapiteln. |
+
+Das ist keine Musik- oder Podcast-Anwendung. Das Studio ist auf **lange deutschsprachige Sach- und Fachtexte** und einen reproduzierbaren Hörbuch-Workflow ausgelegt.
+
+## Installation auf RunPod
+
+Die Einrichtung klingt aufwendiger, als die spätere Bedienung ist: Du wählst einmal einen GPU-Rechner bei RunPod, richtest ein dauerhaftes Laufwerk ein und setzt den Startbefehl ein. Danach erfolgt die Bedienung im Browser.
+
+### 1. Was du brauchst
+
+- Ein **RunPod-Konto** und eine funktionierende Zahlungsmethode. GPU-Laufzeit und Speicher können Kosten verursachen.
+- Ein **Network Volume** im gleichen RunPod-Rechenzentrum wie dein Pod, empfohlen **80 GB oder mehr**, eingehängt unter `/workspace`.
+- Einen GPU-Pod, beispielsweise mit **24 bis 32 GB Grafikspeicher**. Entscheidend ist, dass CUDA auf der zugewiesenen GPU tatsächlich funktioniert.
+- Eine EPUB-Datei, für deren Verwendung du die erforderlichen Rechte hast.
+- Einen Browser wie Chrome oder Edge für den direkten Download größerer Hörbuchdateien.
+
+### 2. RunPod-Pod konfigurieren
+
+Wähle **GPU Pod**, nicht Serverless. Lege ein privates Pod-Template mit diesen Werten an:
+
+| Feld in RunPod | Einstellung |
+| --- | --- |
 | Image | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` |
-| GPU | 1 × RTX 5000 Ada (32 GB) oder RTX 3090 (24 GB); **eine funktionsfähige Host-Zuweisung ist entscheidend** |
-| Container Disk | **15 GB** als Testwert, bei Bedarf 20 GB |
-| Network Volume | **60 GB Network Volume** als knapper Testwert; für Hörbuchprojekte und Downloads **80 GB oder mehr empfohlen** |
-| Network-Volume-Mount | `/workspace` |
-| HTTP-Port | **7860** (`7860/http`) |
-| TCP/SSH | Für die Weboberfläche nicht erforderlich; SSH optional |
+| GPU | GPU mit 24–32 GB VRAM; Verfügbarkeit und Preis vor dem Start prüfen |
+| Container Disk | 15–20 GB als Planungswert |
+| Network Volume | Dein Volume, eingehängt unter `/workspace` |
+| Exposed HTTP Port | `7860/http` |
 | Template-Zugriff | Privat |
-| Docker Start Command | Den vollständigen Befehl unten kopieren |
-| Optionaler Web-Zugangsschlüssel | `AUDIOBOOK_STUDIO_TOKEN` als privates Secret mit mindestens 32 Zeichen; andernfalls wird einer erstellt |
+| Optionales Secret | `AUDIOBOOK_STUDIO_TOKEN`, mindestens 32 Zeichen |
 
-**Speicherhinweis:** Die Zahlen sind Planungswerte, keine ermittelten Mindestgrößen. Kein reguläres `Volume Disk` mit einem persistenten `Network Volume` verwechseln. Das Network Volume bleibt bei der Terminierung eines Pods erhalten; die Zuordnung ist beim neuen Pod ausdrücklich vorzunehmen. Die Image-Version stammt aus dem tatsächlich verwendeten RunPod-PyTorch-Template.
+**Wichtig:** Ein Network Volume ist nicht dasselbe wie eine normale Container-Festplatte. Auf dem Volume werden deine Projekte, WAV-Dateien, Modelle und Exporte gespeichert. Hänge es beim nächsten Pod wieder unter **demselben Pfad** ein.
 
-### Docker Start Command – vollständig kopieren
+### 3. Startbefehl einfügen
 
-Den **gesamten einzeiligen Befehl** in RunPods Feld **Docker Start Command / Container Start Command** einsetzen. Er verweist ausdrücklich auf den Branch `master` und überschreibt die überholten Template-Variablen für `feature/runpod-p0` und `RUNPOD_TTS_MODELS=both`.
+Kopiere den folgenden **vollständigen Befehl** in RunPods Feld **Docker Start Command / Container Start Command**:
 
 ```bash
 bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.com/thomasasen/tts-audiobook-tool/master/runpod/autostart.sh -o /tmp/tts-autostart.sh; then RUNPOD_WORKSPACE=/workspace AUDIOBOOK_DATA_ROOT=/workspace/audiobook-data RUNPOD_TTS_BRANCH=master RUNPOD_TTS_MODELS=none RUNPOD_TTS_START_TUI=0 RUNPOD_TTS_SKIP_VOICE_INSTALL=0 RUNPOD_TTS_DOWNLOAD_WORKERS=4 bash /tmp/tts-autostart.sh; rc=$?; if [ "$rc" -ne 0 ]; then echo "FEHLER: Audiobook-Start abgebrochen (Code $rc). RunPod-Logs pruefen und unbrauchbaren GPU-Pod im Dashboard STOPPEN!" >&2; fi; else echo "FEHLER: Audiobook-Startskript nicht geladen. GPU-Pod im Dashboard STOPPEN!" >&2; fi; wait "$pod_pid"'
 ```
 
-Dieser Befehl startet `/start.sh` für die üblichen RunPod-Basisdienste und führt anschließend unseren Autostart aus. Er darf **nicht** auf die alte URL `feature/runpod-p0` geändert werden. Die Wiederherstellungsoption `RUNPOD_TTS_SKIP_VOICE_INSTALL=1` ist im regulären Erststart bewusst **nicht gesetzt**.
+Beim ersten Start lädt das Skript automatisch den Quellcode, richtet die Weboberfläche ein, prüft CUDA und installiert das CosyVoice-/Thorsten-Modell. Das kann wegen der großen Modelldateien dauern. Bei einem späteren Start werden korrekt gespeicherte Komponenten nach Möglichkeit wiederverwendet.
 
-Ein Pod bleibt bei einem Fehler möglicherweise als laufend markiert und verursacht weiter Kosten. **`Web studio health check OK (port 7860)` belegt ausschließlich die erreichbare Web-API, nicht die Thorsten-Installation.** Im normalen Startmodus endet der Autostart mit Fehlercode, wenn Thorsten oder CUDA nicht betriebsbereit sind. **Bei einem frühen CUDA-Fehler erscheint bereits vor der Paketinstallation `START ABGEBROCHEN: CUDA funktioniert ...` mit der ausdrücklichen Anweisung, den Pod im RunPod-Dashboard zu stoppen.** Der äußere Docker-Startbefehl hält weiterhin den RunPod-Basisdienst am Leben: **Der Fehlercode stoppt nicht automatisch die GPU-Abrechnung.** Bei erfolgreichem GPU-Preflight zeigt der letzte `GERMAN AUDIOBOOK STUDIO`-Block die Installation und den Sprecherstatus.
+**Bei einem fehlgeschlagenen CUDA-Test** die privaten RunPod-Logs prüfen und den kostenpflichtigen Pod bei Bedarf stoppen. Ein Pod, der im Dashboard als „Running“ erscheint, ist **nicht automatisch** ein funktionsfähiger TTS-Rechner.
 
-### Was beim ersten Start automatisch passiert
+### 4. Studio öffnen und anmelden
 
-1. **Repository und sofortiger CUDA-Test:** Der Autostart holt `master`, prüft das persistente Volume und führt **vor apt, npm oder Python-Umgebungen** eine echte GPU-Tensoroperation aus (bei Fehlschlag ein zweiter Versuch nach 3 Sekunden). Wenn CUDA nicht läuft, bricht er mit deutlicher Stop-Anweisung ab. Dadurch werden keine großen Pakete oder Thorsten-Gewichte für einen defekten GPU-Host installiert. Nur der ausdrücklich gewählte Web-only-Recovery-Modus `RUNPOD_TTS_SKIP_VOICE_INSTALL=1` überspringt diesen frühen Test.
-2. **System-Bootstrap:** Erst nach bestandenem GPU-Test werden Betriebssystempakete, `uv` und Python vorbereitet.
-3. **Parallele Vorbereitung:** React-Frontend (`npm`) und, nur bei erfolgreichem CUDA-Ausführungstest und ausreichend freiem Speicher, Thorsten-Modellgewichte werden unabhängig voneinander vorbereitet. Währenddessen installiert ein dritter Schritt die eigene CPU-Web-Python-Umgebung. **Qwen/MOSS werden standardmäßig nicht installiert.**
-4. **Web zuerst:** Sobald Web-Abhängigkeiten und Frontend-Build geprüft sind, startet FastAPI in `tmux` auf Port 7860. Der Autostart kontrolliert `/api/health`. Die Oberfläche kann bereits Bücher vorbereiten, auch wenn Thorsten noch installiert wird.
-5. **Modell finalisieren:** Der Installer wartet auf den Vorabdownload, installiert die isolierte Python-3.11-CosyVoice-Laufzeit, kontrolliert Prüfsummen und Imports und führt einen eigenen CUDA-Speichertest aus. Eine fertige Installation wird beim nächsten Start erkannt und wiederverwendet.
-6. **Freigabe:** Eine reale Hörprobe muss erzeugt, angehört und ausdrücklich freigegeben werden, bevor das Hörbuch erstellt werden kann. Es gibt keine automatische Stimmfreigabe und keinen stillen CPU-Ersatz für ausgefallene GPU-Inferenz.
+1. Öffne in RunPod den laufenden Pod.
+2. Klicke auf **Connect → HTTP Service 7860**.
+3. Melde dich mit deinem **privaten Zugangsschlüssel** an. Wenn du `AUDIOBOOK_STUDIO_TOKEN` nicht selbst gesetzt hast, erzeugt das Studio einen Schlüssel und zeigt ihn in den **privaten RunPod-Container-Logs** an.
+4. Warte auf einen funktionsfähigen Sprecherstatus, bevor du eine echte Hörprobe startest.
 
-### Auffällige Abschlussmeldung im RunPod-Log
+Den Zugangsschlüssel, private Logs und EPUB-Dateien **nicht in GitHub-Issues oder Screenshots veröffentlichen**.
 
-**Neu:** Sobald die Startschritte einschließlich Thorsten-Installation und anschließendem HTTP-Healthcheck beendet sind, wird ganz am **Ende der privaten RunPod-Container-Logs** ein breiter, eingerahmter Block mit dem Titel `GERMAN AUDIOBOOK STUDIO` ausgegeben. Dort stehen Webzugriff, Anmeldung, die tatsächlich erkannten CUDA-Ergebnisse, Sprecherstatus, GPU, Git-Version, Network-Volume-Pfad und der nächste Bedienungsschritt.
+## In sieben Schritten zum Hörbuch
 
-Beispiel (Zugangsschlüssel absichtlich nicht echt):
+### Schritt 1: Buch importieren
 
-```text
-+====================================================================================================+
-| GERMAN AUDIOBOOK STUDIO                                                                            |
-| START ABGESCHLOSSEN: WEB + THORSTEN INSTALLIERT                                                     |
-+====================================================================================================+
-  Weboberflaeche      : RunPod > Connect > HTTP 7860
-  Web-API             : BEREIT (Port 7860)
-  Deutsche Stimme     : Installiert; CUDA-Tensor-Test bestanden (Hoerprobe noch offen)
-  GPU                 : NVIDIA RTX 5000 Ada Generation
-  CUDA (Basis)        : passed
-  CUDA (Thorsten)     : passed
-  Git-Version         : <aktuelle Commit-ID> (master)
-  Network Volume      : /workspace (freier Platz)
-  Daten/Projekte      : /workspace/audiobook-data
-  ZUGANGSSCHLUESSEL   : <nur in privaten RunPod-Container-Logs>
-  Naechster Schritt   : Sprecher > Echte Hoerprobe erzeugen, anhoeren und freigeben
-+====================================================================================================+
-```
+Öffne **Meine Hörbücher** und wähle deine **EPUB-Datei** aus. Die Anwendung importiert das Buch und legt ein Projekt an.
 
-Die Statuswerte werden dynamisch ermittelt. Wenn Thorsten nach bestandenem frühem CUDA-Test dennoch nicht bereit ist, lautet die Überschrift `WEB BEREIT: SPRECHER NOCH NICHT BETRIEBSBEREIT`; bei einem später festgestellten CUDA-Fehler `START NICHT BETRIEBSBEREIT: CUDA-TEST FEHLGESCHLAGEN`. In beiden Fällen gibt die Abschlussmeldung keine Hörprobenanweisung aus. **Scheitert schon der frühe CUDA-Test, endet der Start stattdessen vor apt/npm mit einem auffälligen Fehlerblock.** Ist der Webserver beim abschließenden Healthcheck nicht erreichbar, zeigt die Meldung einen Fehlerstatus; der Autostart endet mit einem Fehlercode. Auch ein bestandener CUDA-Test ist **noch keine erfolgreich angehörte Hörprobe**.
+![Tatsächliche Startansicht des German Audiobook Studios mit Demo-Daten](docs/screenshots/01-bibliothek.png)
 
-Der automatisch erzeugte Zugangsschlüssel erscheint **einmal früh nach dem erfolgreichen Webstart und erneut in der Abschlussmeldung**. Beide Ausgaben gehen ausschließlich in die *privaten RunPod-Container-Logs*, **nicht** in `/workspace/audiobook-data/logs/autostart-*.log`. Wenn `AUDIOBOOK_STUDIO_TOKEN` selbst als Secret gesetzt wurde, wird sein Wert auch am Ende **nicht** ausgegeben. Keine ungeschwärzten Container-Logs teilen.
+*Echte Weboberfläche, aufgenommen mit Chromium. Die Bibliothek ist im Demo-Ausgangszustand noch leer.*
 
-**Warum nicht alles gleichzeitig heruntergeladen wird:** Das CosyVoice-Basismodell und Thorstens Finetuning besitzen gleichnamige Dateien. Sie werden daher **nacheinander in denselben Modellordner** geladen, damit das Finetuning nicht überschrieben wird. Innerhalb jedes Hugging-Face-Downloads laufen bis zu vier Dateiübertragungen parallel. Ein erfolgreicher Vorabdownload erhält eine eigene SHA-256-Prüfung und wird vom Installer **nicht noch einmal heruntergeladen**. Fehlgeschlagene oder unvollständige Downloads werden nicht als fertig markiert.
+### Schritt 2: Buch und Kapitel prüfen
 
-**Speicherschutz:** Neue Thorsten-Downloads beginnen nur bei mindestens 25 GiB freiem Platz und einem bestandenen **echten CUDA-Tensor-Test** im Basisimage. Bei fehlendem Platz kann die Weboberfläche für EPUB-Diagnose trotzdem starten; bei einem nicht funktionsfähigen CUDA-Host wird der normale Erststart dagegen **vor der aufwendigen Installation abgebrochen**. Ein bereits installiertes Modell wird separat auf Unversehrtheit kontrolliert. Die 25-GiB-Schwelle begrenzt das Risiko, garantiert aber nicht, dass jeder Download oder jedes Hörbuch in den verfügbaren Speicher passt.
+Unter **Text und Kapitel** siehst du die erkannten Abschnitte. Prüfe vor allem den **ersten vorzulesenden Abschnitt**. Inhaltsverzeichnis, Impressum oder andere unerwünschte Teile lassen sich ausschließen. Speichere deine Auswahl, bevor du das Hörbuch erzeugst.
 
-## 2. Weboberfläche, Zugang und GPU-Test
+![Tatsächliche Kapitelübersicht der Anwendung nach dem Import eines Demo-EPUB](docs/screenshots/02-kapitelpruefung.png)
 
-Öffne nach der Meldung `Web studio health check OK` in RunPod **Connect → HTTP Service 7860**. Der Link wird von RunPod für deinen Pod erstellt.
+*Hier siehst du die echte Kapitel- und Inhaltsprüfung. Die Buchinhalte stammen aus einem synthetischen Test-EPUB.*
 
-Ohne selbst gesetztes `AUDIOBOOK_STUDIO_TOKEN` legt die Anwendung einen zufälligen Schlüssel unter `/workspace/audiobook-data/studio-access-token` ab. Der Autostart zeigt ihn nach erfolgreichem Healthcheck und **erneut am Ende im eingerahmten Abschlussblock** ausschließlich in den **privaten Container-Logs**. In den persistenten Dateien `autostart-*.log` wird der generierte Schlüssel nicht protokolliert. Wer Zugriff auf deine Container-Logs hat, kann den dort angezeigten Schlüssel möglicherweise lesen. Mit einem selbst gesetzten Secret wird der Schlüssel **nicht ausgegeben**.
+### Schritt 3: Aussprache verbessern
 
-**Prüfen, ob das Studio antwortet (RunPod-Terminal):**
+Öffne **Ausspracheglossar**. Für spezielle Begriffe kannst du eine gesprochene Form hinterlegen, beispielsweise `MongoDB = Mongo De Be`. Das Glossar hilft vor allem bei Abkürzungen, Produktnamen und Fachwörtern. Änderungen während einer laufenden Produktion werden an einer sicheren Segmentgrenze übernommen; möglicherweise müssen betroffene Segmente neu erzeugt werden.
 
-```bash
-git -C /workspace/tts-audiobook-tool rev-parse --short HEAD
-curl -fsS http://127.0.0.1:7860/api/health
-tmux ls
-```
+![Tatsächlicher Ausspracheglossar-Bildschirm mit Demo-Einträgen](docs/screenshots/03-ausspracheglossar.png)
 
-### Einstellbare Hörprobenlänge und fortlaufende Produktionsprognose
+*Die Beispiele im Screenshot sind nur Testdaten und keine allgemein gültigen Ausspracheempfehlungen.*
 
-Auf der Seite **Sprecher** kannst du eine ungefähre Hörprobendauer von **5, 15, 30 oder 60 Sekunden** wählen. Dafür verwendet das Studio fertig formulierte deutsche Testsätze aus dem Umfeld eines Fachbuchs. Längere Proben werden satzweise erzeugt und als eine **16-Bit-PCM-WAV** zusammengefügt. Die Auswahl wird dem Server bei jedem neuen Hörprobenauftrag explizit übergeben und streng validiert. Die tatsächliche Audiodauer hängt von Thorstens Sprechtempo ab und kann von den Auswahlwerten abweichen: Die Anwendung schneidet keine gesprochenen Wörter ab.
+### Schritt 4: Stimme anhören und freigeben
 
-Unter **Hörbuch und Export** erscheinen ein realer Segmentfortschritt, die **vergangene Zeit** seit dem Auftragseingang (einschließlich Warte- und Pausenzeiten) und eine **fortlaufend aktualisierte Schätzung der Restzeit** für die eigentliche Sprachsynthese. Nach mindestens drei gemessenen Segmenten ermittelt die Anwendung aus den zuletzt tatsächlich angefallenen Bearbeitungszeiten inklusive Qualitätsprüfung und der noch ausstehenden Textmenge eine robuste, gleitende Prognose. Der Server berechnet sie mit jedem weiteren Segment neu; der Client zeigt zwischen den Abfragen einen sekündlich aktualisierten Countdown. Bei Pause wird die Restzeit angehalten, bei Wiederaufnahme erneut ermittelt. Bereits gemessene Laufzeiten stehen in den privaten, persistenten Segmentmetadaten, damit ein Web-Neustart die Grundlage nicht vollständig zurücksetzt. Dies ist eine **Schätzung**, keine verlässliche Deadline; die separate M4B-Exportzeit ist darin nicht enthalten.
+Unter **Sprecher** verwendest du die deutsche Stimme **Thorsten**. Wähle die Hörprobendauer (5, 15, 30 oder 60 Sekunden) oder gib einen eigenen **vorzulesenden Testtext** ein. Stelle bei Bedarf das Sprechtempo ein, lasse die Hörprobe erzeugen und **höre sie vollständig an**. Erst danach kannst du den Sprecher freigeben.
 
-**Verifizierte Sprecherkonfiguration und eigener Vorlese-Prompt:** Die Sprecheransicht bietet eine pro Buch speicherbare Sprechgeschwindigkeit (0,85–1,15× in 0,05-Schritten). Diese wirkt auf den **tatsächlich dokumentierten Parameter** `inference_sft(..., speed=...)`, sowohl bei einer Hörprobe als auch bei neuen Produktionssegmenten. Die Einstellung wird in `studio-projects/<id>/voice-settings.json` privat gespeichert und als `voice_settings` mit dem Produktions-Fingerprint im unveränderlichen Hörbuchplan festgehalten. Vorhandene historische Produktionspläne ohne Sprechtempo bleiben gültig und verwenden 1,00×. Während laufender oder fortsetzbarer Produktionen kann die Einstellung nicht verändert werden.
+![Tatsächliche Sprecheransicht mit browserseitig abspielbarer Test-Hörprobe](docs/screenshots/04-sprecher-hoerprobe.png)
 
-Ein **eigener Vorlese-Prompt** auf derselben Seite ersetzt nur den **zu sprechenden Hörprobentext** (5–600 Zeichen). Er wird mit demselben deutschen Normalisierer und dem projektbezogenen Ausspracheglossar verarbeitet; bei leerem Feld bleiben die bisherigen deutschen Standardtestsätze und die ungefähre Dauerwahl (5/15/30/60 Sekunden) erhalten. Ein eigener Text hat eine durch die Textlänge bestimmte tatsächliche Dauer. Die Hörprobe nutzt zunächst die aktuellen UI-Werte, auch vor dem Speichern. Für die Produktion gelten nur gespeicherte Sprechgeschwindigkeiten; der Hörprobentext wird **nicht** als Buchtext oder Stil-Instruktion in den Hörbuchplan übernommen. Verwende denselben Abschnitt mit zwei Tempi für einen realen Hörvergleich.
+*Wichtig: Die WAV im Screenshot ist ein synthetisches Browsertest-Signal, **keine echte Thorsten-Sprachausgabe**. Die reale Hörqualität musst du mit dem installierten Modell auf deinem Pod beurteilen.*
 
-**Sprechstil-Prompts:** Für den verwendeten, fest trainierten Thorsten-Sprecher kommt `CosyVoice3.inference_sft(text, "thorsten")` zum Einsatz. Der vom Hersteller dokumentierte CosyVoice3-Instruct-Modus (`inference_instruct2`) erfordert dagegen eine Referenzaufnahme. Da wir keine Referenzaufnahmen oder Benutzer-Stimmklone nutzen und eine Anweisung bei Thorstens SFT-Inferenzpfad nicht nachweislich wirksam wäre, gibt es bewusst **kein freies Sprechstil-Prompt-Feld**. Es wird kein vorgetäuschter Effekt versprochen.
+Ein freier „Sprich lebendiger“-Prompt ist für den hier verwendeten festgelegten Thorsten-SFT-Modus bewusst nicht angeboten, weil die Wirksamkeit solcher Anweisungen auf diesem Modellpfad nicht belegt ist.
 
-### Ausspracheglossar während der Hörbuchproduktion ändern
+### Schritt 5: Vertonung starten
 
-Unter **Ausspracheglossar** lassen sich Aussprachekorrekturen jetzt auch bei laufenden, wartenden oder pausierten Hörbuchaufträgen übernehmen. Die Änderung wird zuerst als private, dauerhafte Anfrage gespeichert. Ein laufender TTS-Auftrag beendet noch den gerade berechneten Sprachabschnitt und hält dann an einer sicheren Segmentgrenze an. Der vorhandene GPU-Worker übernimmt die Glossaränderung **vor** der Wiederaufnahme weiterer Aufträge.
+Unter **Hörbuch und Export** startest du die Sprachgenerierung. Der Balken zeigt die **tatsächlich fertiggestellten Segmente**, nicht eine künstlich hochzählende Animation. Die Restzeit ist eine Schätzung aus bisherigen Laufzeiten. Du kannst pausieren und später fortsetzen. Bereits abgeschlossene Kapitel sind als einzelne M4A-Dateien verfügbar.
 
-Dabei wird der tatsächliche **gesprochene Text jedes Segments** mit dem neuen Glossar erneut berechnet. Entscheidend ist die Änderung des gesprochenen Texts, nicht nur ein hinzugefügter oder umbenannter Glossareintrag. Audio-Checkpoints mit unverändertem Vorlesetext und gültiger SHA-256-Prüfsumme werden auf den neuen, vollständig validierten NarrationPlan übertragen. Nur bei verändertem Vorlesetext werden die betreffenden WAV-Dateien zur Neuberechnung freigegeben; die zugehörigen M4A-Kapiteldateien samt WAV-Vorhörproben werden ungültig gemacht. Alle nicht betroffenen Kapitel und ihre Audiodaten bleiben erhalten. Das finale M4B darf erst nach erneuter Fertigstellung neu erstellt bzw. heruntergeladen werden.
+![Echte Produktionsoberfläche mit simuliertem laufendem Demoauftrag](docs/screenshots/05-vertont-wird.png)
 
-Die Oberfläche meldet **„Übernahme läuft“** und nach Abschluss die Anzahl betroffener Segmente sowie die Zahl übernommener Audio-Checkpoints. Vorher aktive Aufträge laufen automatisch weiter; vorher pausierte Aufträge bleiben pausiert. Während eines laufenden **M4B-Exports** wird die Glossaränderung nicht angenommen. Der ursprüngliche Project-V5-Buchtext wird niemals umgeschrieben. Historische Produktionspläne ohne aktuelle NarrationPlan-v3-Prüfsummen werden nicht automatisch migriert; bei ihnen wird eine Fehlermeldung angezeigt.
+*Hier ist die echte Oberfläche zu sehen; die Segmentzahlen stammen aus einem kontrollierten Testauftrag, nicht aus einer mehrstündigen GPU-Produktion.*
 
-Die Aktualisierungsanfrage und alle zugehörigen Daten liegen auf dem persistenten Volume. Ein Container-Neustart während der Übernahme führt nicht zum Verlust der gewünschten Aussprache: Der Worker kann die gespeicherte Anfrage anhand des alten bzw. bereits geänderten Plans erneut auswerten. Schlägt die Übernahme trotzdem fehl, bleibt der Auftrag **pausiert**, und die Weboberfläche zeigt den Fehler. In solchen Fällen zuerst das private Webserver-Log prüfen und nicht parallel einen zweiten Pod am selben Network Volume starten.
+### Schritt 6: Gesamtes Hörbuch erstellen
 
-### Fertige Kapitel sofort anhören und herunterladen
+Wenn alle Audios fertig sind, starte **M4B erstellen**. Der Export wird im Hintergrund ausgeführt, damit längere Hörbücher keine zeitlich begrenzte Browseranfrage blockieren. Der Export hat einen **eigenen Fortschrittsbalken**. Bei der abschließenden Dateiverarbeitung erscheint noch keine voreilige 100-%-Meldung.
 
-Unter **Hörbuch und Export → Fertige Kapitel** zeigt das Studio während der gesamten Vertonung alle bereits vollständig erzeugten und erfolgreich als **AAC/M4A (96 kbit/s)** exportierten Kapitel. Jedes Kapitel steht dort als **eigenständige Datei** mit Titel, Audiodauer, Größe, einem browserkompatiblen „Vorhören“-Ausschnitt (circa eine Minute) und „M4A herunterladen“ zur Verfügung; auf die Fertigstellung des ganzen Buches oder den späteren M4B-Export muss nicht gewartet werden.
+![Echter M4B-Exportbildschirm mit simuliertem Exportfortschritt](docs/screenshots/06-m4b-export.png)
 
-Die Kapitelzuordnung verwendet exakt denselben **kanonischen Section-Index** wie der M4B-Export, sodass auch doppelt benannte Kapitel getrennt bleiben. Nach jedem letzten Kapitel-Segment werden dessen bereits gespeicherte und anhand des Produktionsplans geprüfte WAV-Segmente **ohne erneute GPU-Inferenz** mit dem vorhandenen PyAV-Encoder in eine durchgehend abspielbare M4A-Datei geschrieben. Der Export ist atomar und läuft ohne vollständiges Laden des Kapitels in den RAM. Zusätzlich wird aus den ersten vollständig gesprochenen Segmenten (bis rund 60 Sekunden, ohne harte Wortabbrüche) ein kleines **16-Bit-PCM-WAV** als Vorhörprobe geschrieben. Playwright-Chromium ist nicht auf einen verfügbaren AAC-Decoder angewiesen; die ganze Kapiteldatei bleibt als kompakte M4A herunterladbar. Erst wenn **M4A, WAV-Hörprobe und der passende Cache-Fingerprint** vollständig vorhanden sind, erscheint das Kapitel in der Liste. Ein Fehler bei der separaten Kapiteldatei lässt die fortlaufende Hörbuchproduktion weiterlaufen und wird im Auftragsprotokoll gemeldet.
+*Der sichtbare Exportstatus wird im Test über die reale API-Anbindung mit Demowerten gespeist.*
 
-Kapiteldateien und ihr kleiner Index bleiben auf dem **Network Volume** unter `studio-jobs/<job-id>/chapters/` gespeichert und werden bei einer Wiederaufnahme vorhandener Aufträge wiederverwendet. Ein gezielter Segment-Retry entwertet nur die betroffene Kapiteldatei und deren WAV-Hörprobe; andere Kapitel bleiben auf dem Datenträger. Bereits bestehende Aufträge mit gültigen Segment-Checkpoints können bei einer Wiederaufnahme ebenfalls Kapitel-M4As erzeugen. Die Liste wird während laufender Aufträge alle drei Sekunden aktualisiert.
+### Schritt 7: Hörbuch herunterladen
 
-**Sicherheit und Speichergrenzen:** Die Kapitel-API ist mit demselben Bearer-Token wie die übrige Projekt-API geschützt; kein Zugangs-Token erscheint in einem Download-Link. Für die Vorschau wird ausschließlich der kleine PCM-WAV-Ausschnitt authentifiziert geladen (höchstens 20 MB im Browser) und als lokale `blob:`-URL abgespielt. Der Download der **gesamten** M4A-Datei nutzt vorzugsweise die Dateistream-Schnittstelle von Chrome/Edge ohne großen Browser-Zwischenspeicher. Andere Browser besitzen wie beim M4B einen begrenzten Fallback bis 96 MB. Die im Browser sichtbare Dateiliste enthält ausschließlich fertige Kapitel, keine teilweise geschriebenen WAV-Dateien.
+Ist der Export erfolgreich abgeschlossen, kannst du auswählen:
 
-### Automatisches Vorladen von Thorsten in den GPU-Speicher
+- **M4B herunterladen:** das gesamte Hörbuch in einer Datei mit Kapitelmarken, geeignet für viele Android-Hörbuchplayer.
+- **Alle Kapitel als ZIP herunterladen:** alle fertiggestellten Kapitel als einzelne, sinnvoll benannte M4A-Dateien.
+- **M4A herunterladen:** ein bestimmtes Kapitel einzeln speichern.
 
-Nach einer erfolgreichen Thorsten-Installation startet der laufende Webserver **automatisch im Hintergrund** den einen persistenten Thorsten-Worker. Er lädt das Modell bereits vor der ersten Hörprobe in den GPU-Speicher und wartet auf dessen echtes Bereitschaftssignal. Das funktioniert sowohl bei einer bestehenden, geprüften Installation beim Webserverstart als auch beim Erststart, wenn der Webserver vor dem Modelldownload verfügbar wird. Der Webserver und die EPUB-Bedienung bleiben erreichbar. Die Seite **Sprecher** zeigt `Modell wird vorgeladen` bzw. `Im GPU-Speicher · Freigabe offen` an.
+![Echte Downloadansicht nach einem simulierten abgeschlossenen Auftrag](docs/screenshots/07-fertiges-hoerbuch.png)
 
-**Keine zweite Modellkopie:** Hörprobe und anschließende Buchproduktion verwenden denselben Worker im VRAM. Bei paralleler Hörprobeanforderung wartet diese auf eine laufende Initialisierung, statt mit einer fälschlichen `GPU belegt`-Meldung zu scheitern. Ein fehlgeschlagener Preload wird nicht endlos wiederholt; die manuelle Hörprobe kann eine erneute Initialisierung auslösen. Der VRAM bleibt bis zum Webserver-Stopp bzw. Worker-Absturz belegt. Eine erfolgreiche Modellinitialisierung ist **keine Hörqualitätsabnahme** und hebt die Pflicht zur vollständig angehörten und freigegebenen Hörprobe nicht auf.
+*Die Schaltflächen stammen aus der echten Anwendung. Die Testdaten simulieren einen abgeschlossenen Auftrag; die gezeigte Szene belegt keine echte Audioerzeugung.*
 
-Bei Bedarf lässt sich nur das Vorladen mit `AUDIOBOOK_STUDIO_PRELOAD_VOICE=0` deaktivieren; die normale spätere Modellinitialisierung bei der ersten Hörprobe bleibt möglich. Der GPU-Pod wird durch das Vorladen nicht billiger, aber die Wartezeit verlagert sich auf die Zeit vor der ersten Benutzeraktion.
+**Auf Android:** Mit einem geeigneten M4B-Hörbuchplayer kannst du direkt zwischen Kapiteln wechseln und die letzte Wiedergabeposition speichern. Eine Umwandlung in MP3 ist für solche Player normalerweise nicht nötig.
 
-### Hörprobe und Hörbuchproduktion: Live-Fortschritt und Protokolle
+## Was unterscheidet das Projekt?
 
-Bei **Sprecher → Echte Hörprobe erzeugen** läuft die Modellinitialisierung und GPU-Synthese als **Hintergrundauftrag**, nicht mehr als blockierende Browseranfrage. Die Oberfläche aktualisiert den Status etwa alle 1,5 Sekunden und zeigt die realen Phasen (GPU-Prüfung, Modellladen, Sprachsynthese, WAV-Prüfung) sowie ein aufklappbares **Protokoll der Hörprobe**. Da CosyVoice3 bei einer einzelnen Hörprobe keine verlässlichen Prozentwerte oder Restzeit liefert, ist die Fortschrittsanzeige dort bewusst **unbestimmt**, bis das fertige WAV tatsächlich geprüft wurde.
+Es gibt viele Text-to-Speech-Programme. Der Schwerpunkt hier liegt nicht auf einer besonders großen Auswahl von Stimmen oder auf Klonen fremder Stimmen, sondern auf der **durchgängigen Produktion längerer deutscher Hörbücher**:
 
-Der Player erscheint erst bei erfolgreicher Erzeugung und nach Prüfung der WAV-Datei. Wenn die Datei leer ist, vom Browser nicht decodiert werden kann oder eine Audiodauer von `0:00` meldet, erscheint eine sichtbare Fehlermeldung statt eines scheinbar fertigen Players. Die Sprecherfreigabe bleibt bis zum **vollständigen tatsächlichen Anhören** gesperrt. Ein installierter Thorsten-Runtime allein garantiert **keine** funktionsfähige Sprachausgabe.
+| German Audiobook Studio | Typischer einzelner TTS-Aufruf |
+| --- | --- |
+| EPUB importieren und seine Abschnitte prüfen | Text muss häufig vorher aufbereitet werden |
+| Echte Sprecher-Hörprobe mit expliziter Freigabe | Qualitätsprüfung oft außerhalb des TTS-Aufrufs |
+| Ausspracheglossar für Fachsprache | Aussprachekorrekturen häufig manuell im Eingabetext |
+| Segmentbasierte Speicherung und Wiederaufnahme | Lange Aufträge müssen je nach Lösung neu gestartet werden |
+| Fortschritt, Protokoll und vorsichtige Restzeitprognose | Ein einzelner Aufruf bietet nicht zwingend solche Übersichten |
+| Kapitelweise M4A und vollständiges M4B mit Kapitelmarken | Roh-Audio benötigt eventuell weitere Bearbeitung |
+| Optionaler Whisper-ASR-Qualitätscheck | Sprach-zu-Text-Kontrolle ist nicht Bestandteil jeder TTS-Lösung |
+| Browserbedienung und automatisierter RunPod-Start | Andere Werkzeuge erfordern teils mehr manuelle Schritte |
 
-Unter **Hörbuch und Export** zeigt der Fortschrittsbalken die **wirklich fertiggestellten Audiosegmente** und deren Anteil am Gesamtauftrag. Über **Auftragsprotokoll** lassen sich Start, laufende Segmente, Pausen, Abbrüche, Fehler und M4B-Export nachverfolgen. Beim M4B-Export werden verarbeitete Segmente gemeldet, jedoch keine künstlichen Restzeiten. Das Log liegt als begrenzte Liste von maximal 60 Ereignissen je Auftrag unter `studio-jobs/<job-id>/activity.json`; es enthält **keinen Buchtext**. Die Hörproben-Historie wird auf 40 Ereignisse begrenzt und bleibt während des laufenden Webserver-Prozesses verfügbar.
+Die rechte Spalte beschreibt **einzelne TTS-Aufrufe**, nicht alle konkurrierenden Hörbuchprogramme. Es handelt sich weder um eine Marktübersicht noch um einen Anspruch, diese Funktionen exklusiv anzubieten.
 
-**WAV-/Browserkompatibilität (Korrektur vom 07.11.2026):** CosyVoice/Torchaudio schreibt nun ausdrücklich **16-Bit-Signed-PCM-WAV**, statt sich auf ein von Tensor-Datentyp und Audio-Backend abhängiges Standardformat zu verlassen. Der Server prüft diesen Formatstandard vor dem Status „bereit“. Die Content Security Policy erlaubt ausschließlich für lokale Medien und Verbindungen zusätzlich das Schema `blob:`, damit der geschützte React-Player die über die authentifizierte API geladenen Audio-Bytes überhaupt decodieren kann. Die bisherigen Sicherheitseinschränkungen für externe Skripte und Webseiten bleiben erhalten. Ein echter Chromium-Browsertest lädt jetzt eine vollständige 16-Bit-PCM-WAV-Datei und überprüft eine endliche Audiodauer über null. Bei einem Medienfehler zeigt die Oberfläche den Browser-Fehlercode und erlaubt das Herunterladen der WAV-Datei zur Diagnose.
+**Bewusste Grenzen:** Die Weboberfläche ist auf Thorsten-CosyVoice3 ausgelegt. Sie bietet keinen beliebigen Sprecherwechsel, keine Benutzer-Stimmklone und kein unbelegtes Prompt-Steuern von Emotionen. Die ursprüngliche, im Repository ebenfalls enthaltene Konsolenanwendung (TUI) unterstützt andere Modelle und Abläufe; diese sind **nicht automatisch Funktionen des Web-Studios**.
 
-**Wenn eine Hörprobe dennoch scheitert:** Im Protokoll wird der Schritt und ein bewusst bereinigter Fehler angezeigt. Zusätzlich lassen sich die **privaten** Diagnoselogs im RunPod-Terminal prüfen:
+## Kosten, Daten und Sicherheit
 
-```bash
-tail -n 100 /workspace/audiobook-data/logs/thorsten-worker.log
-tmux capture-pane -pt audiobook-web -S -100 2>&1 | tail -100
-```
+**RunPod ist kostenpflichtig.** Während ein GPU-Pod läuft, können Gebühren anfallen; ein Network Volume kann auch im ausgeschalteten Zustand Speichergebühren verursachen. Preise hängen vom gewählten Angebot ab.
 
-In den Worker-Logs erscheinen nur ausgewählte Fehlerkategorien wie GPU/CUDA, fehlende Sprecherzuordnung oder WAV-Encoder, keine vollständigen Buchtexte. **Ein erfolgreich installierter Runtime und bestandener CUDA-Test sind noch kein Nachweis einer erfolgreich generierten Hörprobe.**
+Das Studio verarbeitet Buch und Sprachdaten auf deinem **gemieteten RunPod-Pod** und speichert die Projektdaten unter `/workspace/audiobook-data`. Das ist **nicht dein lokaler Windows-Rechner**. Schütze den Zugangsschlüssel und verwende ein privates Pod-Template.
 
-**Echte CUDA-Funktionsprüfung vor der Hörprobe:**
+**Vor dem Löschen des Pods:** Lade die fertige M4B-Datei und – falls du später weiterarbeiten möchtest – auch die Produktionsdaten herunter. Wenn du ein Network Volume wiederverwendest, achte darauf, es beim nächsten Pod erneut einzuhängen. Während ein Export läuft, sollte der Pod nicht gestoppt werden.
 
-```bash
-python3 /workspace/tts-audiobook-tool/runpod/gpu_preflight.py --env system
-python3 /workspace/tts-audiobook-tool/runpod/gpu_preflight.py --env thorsten
-```
+**Urheberrecht:** Du bist selbst dafür verantwortlich, dass du den Buchtext verarbeiten und gegebenenfalls veröffentlichen darfst. Eine rechtmäßig erstellte private Vertonung bedeutet **nicht automatisch**, dass du das Hörbuch öffentlich, etwa auf Spotify, hochladen darfst.
 
-Der Test weist CUDA-Speicher auf der GPU zu und synchronisiert ihn. `nvidia-smi` und `torch.cuda.is_available()` allein reichen nicht. Der beobachtete CUDA-Fehler 46 trat sogar bei einer ungenutzten RTX 5000 Ada in zwei unabhängigen Python-Umgebungen auf; das GPU-Modell selbst ist deshalb nicht grundsätzlich ungeeignet. Erst ein bestandener Tensor-Test belegt, dass die konkrete Zuweisung zum Prüfzeitpunkt funktioniert. `--env thorsten` funktioniert erst nach Einrichtung der Thorsten-Umgebung.
+## Häufige Fragen und Probleme
 
-**Bei Problemen (private Logs, keine Zugangsschlüssel öffentlich teilen):**
+**Das Studio ist nicht erreichbar.** Prüfe, ob der Pod wirklich läuft, der Port `7860/http` konfiguriert ist und **Connect → HTTP Service 7860** funktioniert. Ein gestarteter Container garantiert noch keine betriebsbereite Webanwendung.
+
+**Thorsten ist noch nicht bereit.** Der Erststart lädt große Modellgewichte und führt CUDA-Tests aus. Prüfe den Sprecherstatus und die privaten RunPod-Logs. Ein fehlerhafter CUDA-Host sollte nicht unnötig weiterlaufen.
+
+**Die Hörprobe ist nicht abspielbar.** Prüfe das Hörproben-Protokoll, die Meldung im Browser und das Webserver-Log. Das Modell muss eine gültige WAV-Datei erzeugen; eine leere Datei ist keine erfolgreiche Hörprobe.
+
+**Die Restzeit springt oder verschwindet.** Die Prognose wird aus tatsächlichen Messwerten ermittelt. Bei wenigen Messpunkten, Pausen, Stillstand oder abschließender Dateiverarbeitung wird lieber **keine erfundene Zeit** angezeigt.
+
+**Der Download ist sehr groß.** Für große M4B- und ZIP-Dateien empfiehlt sich Chrome oder Edge mit direktem Speichern auf die Festplatte. Bei unbekannter ZIP-Gesamtgröße zeigt der Balken den übermittelten Datenstand ohne erfundene Prozentzahl.
+
+**Ein Export wurde unterbrochen.** Die fertig erzeugten WAV-Segmente bleiben auf dem persistenten Laufwerk erhalten. Nach einem kontrollierten Neustart kann ein fehlgeschlagener M4B-Export erneut angestoßen werden, ohne den gesamten Buchtext erneut zu sprechen.
+
+**Privates Webserver-Log anzeigen:** Öffne die RunPod-Konsole und führe dort aus:
 
 ```bash
-# Neustes Autostart- und Downloadprotokoll
-ls -lt /workspace/audiobook-data/logs/ | head -20
-# Webserver-Ausgabe, auch wenn der Prozess abgebrochen ist
-tmux capture-pane -pt audiobook-web -S -100 2>&1 | tail -100
-# Lokal prüfen, ob der Server antwortet
-curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:7860/api/health
-# Speicher prüfen
-df -h /workspace
+tmux capture-pane -pt audiobook-web -S -150 | tail -n 100
 ```
 
-Typische Fälle: `Source commit: 68291fd` und nur die `audiobook`-TUI bedeuten, dass noch das **alte RunPod-Template** mit `feature/runpod-p0` gestartet wurde. Ein GitHub-Update ändert gespeicherte Docker-Befehle **nicht** automatisch. `CUDA_UNAVAILABLE` beziehungsweise CUDA-Fehler 46 bedeutet, dass bereits PyTorch keine GPU-Operation ausführen konnte; dann Host/GPU-Zuweisung prüfen statt Modellpakete neu zu installieren. Ein gescheiterter Vorabdownload steht im `thorsten-prefetch-*.log`; ein fehlerhafter React-Build im `web-build-*.log`.
+Im Fehlerfall keine Zugangsschlüssel oder personenbezogenen Buchinhalte öffentlich teilen.
 
-## 3. Einstellungen und Wiederverwendung
+## Urheber, Modellquellen und Lizenzen
 
-| Variable | Standard | Bedeutung |
-| --- | --- | --- |
-| `RUNPOD_TTS_BRANCH` | `master` | Quellcode-Branch; im Startcommand festgelegt |
-| `RUNPOD_TTS_MODELS` | `none` | Kein Qwen/MOSS nötig. Nur für die **optionale ältere TUI** `qwen`, `moss` oder `both` aktivieren |
-| `RUNPOD_TTS_START_TUI` | `0` | `1` startet zusätzlich die ältere TUI, sofern ein passendes Modell eingerichtet ist |
-| `RUNPOD_TTS_AUTOSTART_MODEL` | `qwen` | Nur relevant, falls die ältere TUI aktiviert wurde |
-| `RUNPOD_TTS_DOWNLOAD_WORKERS` | `4` | 1–8 parallele Dateiübertragungen pro Modell-Download |
-| `RUNPOD_TTS_SKIP_VOICE_INSTALL` | `0` | `1` überspringt Thorsten-Downloads für einen reinen Web-/Wiederherstellungsstart |
-| `AUDIOBOOK_STUDIO_PORT` | `7860` | Muss zum exponierten HTTP-Port passen |
-| `AUDIOBOOK_STUDIO_TOKEN` | automatisch generiert | Optional selbst gesetztes privates Secret mit mindestens 32 Zeichen |
-| `AUDIOBOOK_STUDIO_ASR_MODEL` | `small` | Optionaler deutscher Whisper-ASR-Qualitätscheck bei der Audioproduktion |
-| `RUNPOD_WORKSPACE` | `/workspace` | Mount-Pfad des Network Volumes |
-| `AUDIOBOOK_DATA_ROOT` | `/workspace/audiobook-data` | Persistent gespeicherte Umgebungen, Modelle, Projekte und Logs |
+Dieses Projekt verbindet eigene Web-Studio-Erweiterungen mit bestehenden Open-Source-Komponenten. Sie verdienen eine **klare und überprüfbare Nennung**:
 
-**Wiederstart:** Repo und Nutzdaten liegen auf dem Network Volume, die Web-Python-Umgebung unter `venvs/web`, Thorsten unter `venvs/thorsten`. Korrekt installierte Komponenten werden anhand ihrer Fingerprints/Prüfsummen erneut geprüft und nach Möglichkeit übersprungen. Fehlgeschlagene oder abgebrochene Schritte dürfen erneut ausgeführt werden, ohne Modellgewichte oder Projekte automatisch zu löschen. Ein laufender Pod muss bei Änderungen am Docker Start Command nicht zwangsläufig dieselbe Konfiguration erhalten; bei **einem neuen Pod** ist das gespeicherte Template ausdrücklich zu kontrollieren.
+- **Ursprüngliches Projekt:** [zeropointnine/tts-audiobook-tool](https://github.com/zeropointnine/tts-audiobook-tool) – Grundlage der Konsolenanwendung und des Audiobook-Workflows. Die ursprüngliche Dokumentation ist vollständig unter [Technische und ursprüngliche README](docs/technical-and-upstream-readme.md) archiviert. Der Quellcode dieses Repositorys steht gemäß [LICENSE](LICENSE) unter MIT.
+- **Deutsche Sprecherstimme:** [Thorsten-Voice](https://thorsten-voice.de/) und das Fine-Tuning [Thorsten-Voice/CosyVoice3](https://huggingface.co/Thorsten-Voice/CosyVoice3). Die deutsche Stimme stammt nicht von den Entwicklern dieser Weboberfläche. Das Fine-Tuning wird laut Modellkarte unter **Apache-2.0**, der zugrunde liegende Thorsten-Voice-Datensatz unter **CC0** bereitgestellt.
+- **TTS-Basismodell:** [FunAudioLLM / CosyVoice](https://github.com/FunAudioLLM/CosyVoice), insbesondere [Fun-CosyVoice3-0.5B-2512](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512). Das Web-Studio verwendet den Thorsten-Fine-Tune dieses Basismodells; die jeweilige Modelllizenz gilt zusätzlich zur Lizenz des Anwendungscodes.
+- **Optionale Qualitätssicherung:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) bzw. [Whisper](https://github.com/openai/whisper) zur Prüfung erstellter Sprache, sofern die ASR-Funktion eingerichtet ist.
+- **Betriebsplattform:** [RunPod](https://www.runpod.io/) stellt die mietbare GPU-Infrastruktur bereit; RunPod ist weder der Urheber der Stimme noch des Basismodells.
 
-**Nicht automatisch unterstützt:** unkontrollierte Mehrfachstarts des gesamten Autostarts im selben Pod, parallele Schreibzugriffe mehrerer Installer auf denselben Modellordner, ein Pod-Wechsel ohne korrekt angehängtes Network Volume, Live-GPU-Inferenz auf einem Host ohne funktionierende CUDA-Ausführung.
+**Wissenschaftliche CosyVoice-Referenz:** Du et al., *CosyVoice 3: Towards In-the-wild Speech Generation via Scaling-up and Post-training*, arXiv:2505.17589 (2025); siehe die [offizielle Thorsten-Modellkarte](https://huggingface.co/Thorsten-Voice/CosyVoice3).
 
-## 4. Abgrenzung: deutsches Web-Studio und ursprüngliche Konsolenanwendung
+Die genannten Rechte gelten für **Code, Modelle und Sprachdatensätze jeweils getrennt**. Sie geben keine Veröffentlichungsrechte an den EPUB-Inhalten.
 
-| | German Audiobook Studio (Web) | Ursprüngliche TUI (Konsole) |
-| --- | --- | --- |
-| Start | Automatisch über obigen Docker Start Command und Port 7860 | Nur bei `RUNPOD_TTS_START_TUI=1` |
-| Sprachausgabe | Fest kuratierte deutsche Thorsten-CosyVoice3-Stimme | Verschiedene konfigurierbare Modell- und Sprecheroptionen |
-| Sprecherwahl | **Keine Benutzer-Stimmklone oder Referenzaufnahme** | Je nach TUI-Modell Referenzaufnahmen und weitere Optionen |
-| Erstinstallation | Eigene Web-CPU-Python-Umgebung plus isolierte Thorsten-GPU-Umgebung | Zusätzlich Qwen/MOSS-Umgebung, wenn ausdrücklich gewählt |
-| Freigabe | Echte deutsche Hörprobe und manuelle Bestätigung erforderlich | Abhängig vom jeweiligen TUI-Workflow |
+## Technische Dokumentation
 
-**Die nachfolgende englische Originaldokumentation ab „Table of contents“ beschreibt die ursprüngliche Konsolenanwendung**, einschließlich Sprachklonen, zusätzlichen TTS-Modellen und deren manueller Installation. Diese Angaben sind **keine Funktions- oder Qualitätszusage für das deutsche Web-Studio**.
+- [Vollständige frühere README mit RunPod-Details und ursprünglicher TUI-Dokumentation](docs/technical-and-upstream-readme.md)
+- [RunPod-Installationsanleitung](runpod/README.md)
+- [Quellcode der Weboberfläche](web/src/)
+- [Reproduzierbarer Chromium-Browsertest für diese echten Screenshots](tests/web/browser_smoke.py)
+- [Automatisierte Qualitätssicherung (GitHub Actions)](.github/workflows/german-audiobook-studio.yml)
 
-
-# Table of contents
-
-- [Description](#description)
-- [Installation](#installation)
-- [Supported features by TTS model](#supported-features-by-tts-model)
-- [Usage notes](#usage-notes)
-- [Update highlights](#update-highlights)
-
-# Description
-
-`tts-audiobook-tool` is an audiobook creation tool focused on high-quality output, supporting a growing list of text-to-speech models.
-
-Audio generation is performed locally (via dedicated virtual environments) or through a remote server: [SGL-Omni](https://github.com/sgl-project/sglang-omni) or [audio.cpp](https://github.com/0xShug0/audio.cpp).
-
-| TTS model | Local | SGL-Omni | audio.cpp |
-| --- | :---: | :---: | :---: |
-| [AuK (Base, Flash)](https://github.com/Tencent-Hunyuan/AuK) | | ✅ | |
-| [Breeze TTS 2](https://github.com/breezeblue-ai/breeze-tts) | ✅ | | ✅ |
-| [Chatterbox (Multilingual V3, Turbo)](https://github.com/resemble-ai/chatterbox) | ✅ | ✅ | ✅ |
-| [dots.tts](https://github.com/studio-dots-ai/dots.tts) | ✅ | | ✅ |
-| [Echo-TTS](https://github.com/jordandare/echo-tts) | | | ✅ |
-| [FireRedTTS3](https://github.com/FireRedTeam/FireRedTTS3) | | | ✅ |
-| [Fish Audio Drama 3](https://huggingface.co/fishaudio/drama-3) | | | ✅ |
-| [Fish Speech S2-Pro](https://github.com/fishaudio/fish-speech) | ✅ | ✅ | ✅ |
-| [Fish Speech S1-mini](https://github.com/fishaudio/fish-speech) | ✅ | | |
-| [Fun-CosyVoice3](https://github.com/QwenAudio/CosyVoice) | | ✅ | ✅ |
-| [GLM-TTS](https://github.com/zai-org/GLM-TTS) | ✅ | | ✅ |
-| [Higgs Audio V2](https://github.com/boson-ai/higgs-audio) | ✅ | | |
-| [Higgs Audio V3](https://github.com/boson-ai/higgs-audio) | | ✅ | ✅ |
-| [IndexTTS2 (2, 2.5)](https://github.com/index-tts/index-tts) | ✅ | | ✅ |
-| [MiraTTS](https://github.com/ysharma3501/MiraTTS) | ✅ | | |
-| [MOSS-TTS v1.5 (Delay, Local)](https://github.com/OpenMOSS/MOSS-TTS) | ✅ | ✅ | ✅ |
-| [OmniVoice](https://github.com/k2-fsa/OmniVoice) | ✅ | | ✅ |
-| [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) | ✅ | | |
-| [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) | ✅ | ✅ | ✅ |
-| [VibeVoice](https://github.com/microsoft/VibeVoice) | ✅ | | |
-| [ZONOS2](https://github.com/Zyphra/ZONOS2) | | ✅ | |
-
-By themselves, these models are unreliable at book scale. The app wraps them in the tooling needed for effective long-form generation:
-
-- Error detection using speech-to-text verification, with retry logic that keeps the most accurate take
-- Rational text segmentation at paragraph/sentence/phrase boundaries
-- Silence trimming and reduction of excessive pauses, plus semantically-aware pause modulation at segment boundaries to improve prosody
-- Per-segment loudness leveling, so voice clones and lines match in loudness (ACX-style or louder target)
-- Optional post-processing: 48 kHz [LavaSR v2](https://huggingface.co/YatharthS/LavaSR) upsampler, per-voice stereo positioning, room reverb
-
-A single project can utilize multiple voice-clone samples. An optional step applies an LLM-assisted character identification pass on the text to map character lines to voice clones, enabling "full-cast audio drama" productions.
-
-It also includes a realtime audiobook playback mode and a voice chat feature, useful for voice/model testing.
-
-The app uses a plain-text, hotkey-based console interface.
-
-
-### How to create an audiobook (quick summary)
-
-1. Assign a working project directory.
-2. Select the source EPUB or text file.
-3. Select a short reference audio clip for the voice clone.
-4. Generate. Wait.
-5. Concatenate the generated sound segments to create the finished audiobook file.
-6. Use the optional web browser player to play and read your audiobook.
-
-https://github.com/user-attachments/assets/53e967bc-ea28-4dbc-944d-9c0376f3ddfa
-
-### Browser player
-
-The included browser player displays text highlighted in sync with the generated audio — similar to the Kindle Whispersync or Google Play Books read-along experience. This works because the app embeds the text and word-level timing data directly into the metadata of the FLAC and M4B files it produces.
-
-The player is a static HTML page — no web server or install required. Open `browser_player/index.html` directly in any browser, or use the [hosted version](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/).
-
-**Sample outputs**
-
-These examples use the same source text, 15-second voice clone sample, and default model settings.
-
-| | | |
-| --- | --- | --- |
-| [AuK](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-auk.abr.m4a) | [Chatterbox](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-chatterbox.abr.m4a) |
-| [CosyVoice3](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-cosyvoice3.abr.m4a) | [dots.tts](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-dots-soar.abr.m4a) | [Echo-TTS](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-echo.abr.m4a) (audio.cpp q8) |
-| [FireRedTTS3](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-fireredtts3.abr.m4a) (audio.cpp q8) | [Fish S2-Pro](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-s2-pro.abr.m4a) | [GLM-TTS](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-glm.abr.m4a) |
-| [Higgs Audio V3](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-higgs-v3.abr.m4a) (sgl-omni)| [IndexTTS2](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-indextts2-plus-emo.abr.m4a) (plus emotional guidance sample) | [MOSS-TTS v1.5](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-moss-v1.5.abr.m4a) |
-| [OmniVoice](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-omnivoice.abr.m4a) | [Pocket TTS](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-pocket.abr.m4a) | [Pocket TTS](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-pocket-upscaled.abr.m4a) (LavaSRv2 48k upsample) |
-| [Qwen3-TTS-1.7B-Base](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-qwen3-12hz-1.7b-base.abr.m4a) | [VibeVoice 1.5B](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/waves-vibevoice-1.5b-lora-klett.abr.m4a) ([LoRA](https://huggingface.co/vibevoice-community/klett) example) |  |
-
-| |
-| ------ |
-| [Multi-character dialog](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/through-the-looking-glass.abr.m4a) (four voices, LLM auto-attributed lines, Breeze TTS 2)|
-
-
-### Enhance existing audiobooks
-
-This feature extends the browser player to work with professionally produced audiobooks — not just ones generated with this tool. It uses speech-to-text to align the existing audio with the corresponding book text, then embeds the same timing metadata the app normally produces during generation.
-
-Select `Tools` > `Enhance a pre-existing audiobook`, and choose your source audiobook file (M4A or M4B) and the corresponding book text. This feature is experimental.
-
-### tts-server-tool
-
-The project also includes an optional stand-alone REST service that runs the app's full configured TTS pipeline — your chosen model, voice clone, and project settings — and plays generated audio through the default sound device or serves it as an HTTP audio stream. This is aimed at developers who want to integrate the app's TTS capabilities into their own tools and workflows — for example, triggering spoken audio from a script, a home automation system, a chatbot, or any other application that can issue HTTP requests. See [server readme](tts_audiobook_tool/server/README-server.md) for setup and API details.
-
-# Installation
-
-### Step 1
-
-Check that your platform is supported:
-
-| OS | Architecture | Notes |
-| --- | --- | --- |
-| Windows | x86_64 | |
-| Linux | x86_64, aarch64 (glibc 2.28 or later) | Audio playback needs the system PortAudio library (e.g. `sudo apt install libportaudio2`) |
-| macOS | Apple Silicon, macOS 14 (Sonoma) or later | |
-
-
-### Step 2
-
-Clone the repository and cd into it:
-
-    git clone https://github.com/zeropointnine/tts-audiobook-tool
-    cd tts-audiobook-tool
-
-### Step 3
-
-Create a Python virtual environment using the instructions below.
-
-- Local inference: Follow the section for each model you want to use.
-- SGL-Omni or audio.cpp: Follow “Virtual environment for remote TTS servers.”
-
-The requirements files tell pip `--only-binary=av,soundfile`: PyAV and soundfile are installed only from their prebuilt wheels, which bundle FFmpeg and libsndfile, and pip fails with a clear error rather than compiling them from source on an unsupported platform. If you install or upgrade these packages by hand, pass the same option, e.g. `pip install --only-binary=av,soundfile av==18.1.0 soundfile==0.13.1`.
-
-Then return here.
-
-### Step 4 (Windows only)
-
-To enable torch CUDA acceleration on Windows, run the following commands (The project uses the same version of torch for each TTS model's virtual environments unless otherwise noted - v2.8.0/cu128).
-
-    pip uninstall -y torch torchaudio
-    pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-
-### Step 5
-
-Run the app by entering:
-
-    python -m tts_audiobook_tool
-
-Or, if you have multiple virtual environments installed, you can use `launch.py` to pick a venv and start the app:
-
-    python launch.py # searches the project root for venv subdirectories by default
-    python launch.py path/to/venvs-parent-dir # searches for venv subdirectories from the given path
-
-For how the app chooses a project's TTS model and exposes model-specific settings, refer to [TTS model selection rules](<docs-dev/tts-model-selection.md>). Project storage and migration are documented in [Project Spec v5](<docs-dev/project-spec-v5.md>).
-
-<details>
-
-<summary>
-
-### Virtual environment for Breeze TTS 2 (local inference)
-
-</summary>
-
-> **ℹ️ Requires CUDA**
-
-Initialize a **Python v3.12** virtual environment named `venv-breeze`:
-
-    python -m venv venv-breeze # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-breeze # windows
-
-Activate the virtual environment:
-
-    source venv-breeze/bin/activate # linux/mac
-    venv-breeze\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-breeze.txt
-
-Note that the above requirements file draws from a fork of the breeze-tts library, [zeropointnine/breeze-tts-packaged](https://github.com/zeropointnine/breeze-tts-packaged), refactored for use as an installable package.
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for Chatterbox (local inference)
-
-</summary>
-
-Initialize a **Python v3.11** virtual environment named "venv-chatterbox":
-
-    python -m venv venv-chatterbox # linux/mac
-    C:\path\to\python3.11\python.exe -m venv venv-chatterbox # windows
-
-Activate the virtual environment:
-
-    source venv-chatterbox/bin/activate # linux/mac
-    venv-chatterbox\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-chatterbox.txt
-
-Windows CUDA support (unlike the other models, we must use torch 2.6/cu124 here)
-
-    pip uninstall -y torch torchaudio
-    pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-
-Note: To upgrade an environment with an old version of the chatterbox-tts package, do the following:
-
-    pip uninstall chatterbox-tts
-    pip install -r requirements-chatterbox.txt
-
-</details>
-
-<details>
-
-<summary>
-
-### Virtual environment for dots.tts (local inference)
-
-</summary>
-
-> **ℹ️ Note:**
-> The SOAR model variant requires 16+GB VRAM
-
-Initialize a **Python v3.12** virtual environment named `venv-dots`:
-
-    python -m venv venv-dots # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-dots # windows
-
-Activate the virtual environment:
-
-    source venv-dots/bin/activate # linux/mac
-    venv-dots\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-dots.txt
-
-Note that the above requirements file draws from a fork of the dots.tts library, [zeropointnine/dots.tts-for-tat](https://github.com/zeropointnine/dots.tts-for-tat), refactored for use as an installable package.
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for Fish S1-mini (local inference)
-
-</summary>
-
-Initialize a **Python v3.12** virtual environment named "venv-fish-s1":
-
-    python -m venv venv-fish-s1 # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-fish-s1 # windows
-
-Activate the virtual environment:
-
-    source venv-fish-s1/bin/activate # linux/mac
-    venv-fish-s1\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-fish-s1.txt
-
-Authenticate the model on HuggingFace:
-
-1. Accept the license terms on the [HuggingFace Fish model page](https://huggingface.co/fishaudio/s1-mini).
-
-2. Authenticate locally using your [access token](https://huggingface.co/settings/tokens) by running `hf auth login`
-
-</details>
-
-<details>
-
-<summary>
-
-### Virtual environment for Fish S2-Pro (local inference)
-
-</summary>
-
-> **ℹ️ Note:**
-> Requires 24GB VRAM
-
-Initialize a **Python v3.12** virtual environment named "venv-fish-s2":
-
-    python -m venv venv-fish-s2 # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-fish-s2 # windows
-
-Activate the virtual environment:
-
-    source venv-fish-s2/bin/activate # linux/mac
-    venv-fish-s2\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-fish-s2.txt
-
-Authenticate the model on HuggingFace:
-
-1. Accept the license terms on the [HuggingFace Fish model page](https://huggingface.co/fishaudio/s2-pro).
-
-2. Authenticate locally using your [access token](https://huggingface.co/settings/tokens) by running `hf auth login`
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for GLM-TTS (local inference)
-
-</summary>
-
-> **ℹ️ Requires CUDA**
-
-### Linux
-
-Initialize a **Python v3.11** virtual environment named `venv-glm`:
-
-- Linux
-
-        python -m venv venv-glm
-
-Activate the virtual environment:
-
-- Linux/Mac
-
-        source venv-glm/bin/activate
-
-Install dependencies:
-
-    pip install -r requirements-glm.txt
-
-### Windows
-
-Requires setting up a "hybrid conda environment" due to a transitive dependency which is difficult to install on Windows using only pip.
-
-Install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install#quickstart-install-instructions) if not already.
-
-Initialize the conda environment:
-
-    conda create --prefix "c:\path\to\conda-glm" python=3.11 -y
-
-Activate the conda environment:
-
-    conda activate "c:\path\to\conda-glm"
-
-Install this dependency using conda:
-
-    conda install pynini==2.1.6 -c conda-forge
-
-Install the rest of the project dependencies using pip like normal:
-
-    pip install -r requirements-glm.txt
-
-Note that we pull from [a fork of glm-tts](https://github.com/zeropointnine/glm-tts-packaged) that has been refactored for use as an installable package.
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for Higgs Audio V2 (local inference)
-
-</summary>
-
-> **ℹ️ Note:**
-> 24GB VRAM recommended
-
-On Linux and macOS, portaudio must be installed (eg, on Mac, `brew install portaudio`)
-
-Initialize a **Python v3.12** virtual environment named `venv-higgs-v2`:
-
-    python -m venv venv-higgs-v2 # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-higgs-v2 # windows
-
-Activate the virtual environment:
-
-    source venv-higgs/bin/activate # linux/mac
-    venv-higgs\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-higgs-v2.txt
-
-Note that the above `requirements` file draws from a personal fork of the `higgs-audio` library due to the fact that the higgs repo is missing `__init__.py` files required for module use.
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for IndexTTS2 (local inference)
-
-</summary>
-
-Initialize a **Python v3.11** virtual environment named `venv-indextts2`:
-
-    python -m venv venv-indextts2 # linux/mac
-    C:\path\to\python3.11\python.exe -m venv venv-indextts2 # windows
-
-Activate the virtual environment:
-
-    source venv-indextts2/bin/activate # linux/mac
-    venv-indextts2\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-indextts2.txt
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for MiraTTS (local inference)
-
-</summary>
-
-> **ℹ️ Requires CUDA**
-
-Initialize a **Python v3.12** virtual environment named `venv-mira`:
-
-    python -m venv venv-mira # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-mira # windows
-
-Activate the virtual environment:
-
-    source venv-mira/bin/activate # linux/mac
-    venv-mira\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-mira.txt
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for MOSS-TTS v1.5 (local inference)
-
-</summary>
-
-> **ℹ️ Note:**
-> 9B model requires 24GB+ VRAM
-
-Initialize a **Python v3.12** virtual environment named `venv-moss`:
-
-    python -m venv venv-moss # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-moss # windows
-
-Activate the virtual environment:
-
-    source venv-moss/bin/activate # linux/mac
-    venv-moss\Scripts\activate.bat # windows
-
-Update pip:
-
-        python -m pip install --upgrade pip setuptools wheel
-
-Install dependencies:
-
-    pip install -r requirements-moss.txt
-
-For CUDA on Windows, uninstall the vanilla version of torch, and install the CUDA version of torch 2.9.1:
-
-    pip uninstall -y torch torchaudio
-    pip install torch==2.9.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
-
-Finally, install [Flash Attention](#installing-flash-attention) (optional but recommended).
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for OmniVoice (local inference)
-
-</summary>
-
-Initialize a **Python v3.12** virtual environment named `venv-omnivoice`:
-
-    python -m venv venv-omnivoice # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-omnivoice # windows
-
-Activate the virtual environment:
-
-    source venv-omnivoice/bin/activate # linux/mac
-    venv-omnivoice\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-omnivoice.txt
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for Pocket TTS (local inference)
-
-</summary>
-
-Initialize a **Python v3.12** virtual environment named "venv-pocket":
-
-    python -m venv venv-pocket # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-pocket # windows
-
-Activate the virtual environment:
-
-    source venv-pocket/bin/activate # linux/mac
-    venv-pocket\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-pocket.txt
-
-Authenticate the model on HuggingFace:
-
-    Accept the license terms on the [HuggingFace Pocket TTS model page](https://huggingface.co/kyutai/pocket-tts).
-
-    Authenticate locally using your access token by running hf auth login
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for Qwen3-TTS (local inference)
-
-</summary>
-
-Initialize a **Python v3.12** virtual environment named `venv-qwen3tts`:
-
-    python -m venv venv-qwen3-tts # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-qwen3tts # windows
-
-Activate the virtual environment:
-
-    source venv-qwent3tts/bin/activate # linux/mac
-    venv-qwen3tts\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-qwen3tts.txt
-
-Install [Flash Attention](#installing-flash-attention) if using CUDA (optional but recommended).
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Virtual environment for VibeVoice (local inference)
-
-</summary>
-
-Initialize a **Python v3.11** virtual environment named `venv-vibevoice`:
-
-    python -m venv venv-vibevoice # linux/mac
-    C:\path\to\python3.11\python.exe -m venv venv-vibevoice # windows
-
-Activate the virtual environment:
-
-    source venv-vibevoice/bin/activate # linux/mac
-    venv-vibevoice\Scripts\activate.bat # windows
-
-Install dependencies:
-
-    pip install -r requirements-vibevoice.txt
-
-Install [Flash Attention](#installing-flash-attention) if using CUDA (optional but recommended).
-
-Note that because Microsoft famously removed the source code from their github repository, we pull from an archived, third-party fork, [vibevoice-community](https://github.com/vibevoice-community/VibeVoice).
-
-</details>
-
-<details>
-
-<summary>
-
-### Virtual environment for remote TTS servers (SGL-Omni + audio.cpp)
-
-</summary>
-
-Initialize a **Python v3.12** virtual environment named `venv-remote-tts`:
-
-    python -m venv venv-remote-tts # linux/mac
-    C:\path\to\python3.12\python.exe -m venv venv-remote-tts # windows
-
-Activate the virtual environment:
-
-    source venv-remote-tts/bin/activate # linux/mac
-    venv-remote-tts\Scripts\activate.bat # windows
-
-Install the dependencies:
-
-    pip install -r requirements-remote.txt
-
-Run the app and set the remote TTS server URL under `Options` (eg, http://127.0.0.1:8080).
-
-For server installation guidance and tips on running the server alongside this app, see:
-
-- [Running audio.cpp alongside tts-audiobook-tool](<docs/tips-audio-cpp.md>)
-- [Running SGL-Omni alongside tts-audiobook-tool](<docs/tips-sgl-omni.md>)
-
-</details>
-
-
-<details>
-
-<summary>
-
-### Installing Flash Attention
-
-</summary>
-
-If instructed to do so, perform this step after successfully running `pip install requirements-[model].txt` without errors.
-
-On Linux, enter:
-
-    pip install flash-attn==2.8.3 --no-build-isolation
-
-On Windows, download and install a pre-compiled wheel from a trustworthy source (for example, [mjun0812](https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/tag/v0.4.10)). The filename should look something like this, depending on Python version and torch version:
-
-- flash_attn-2.7.4+cu128torch2.8-cp311-cp311-win_amd64.whl
-- flash_attn-2.7.4+cu128torch2.8-cp312-cp312-win_amd64.whl
-
-</details>
-
-
-# Supported features by TTS model
-
-Zero-shot voice cloning is a first-class feature, supported for all models.
-
-### Locally generated using dedicated venv
-
-**Breeze TTS 2**
-- Voice clone, voice direction (voice sample + instructions) and voice design (instructions only)
-- Batch processing support
-- Audio tags
-- Temperature, top_p, top_k, repetition_penalty, CFG, seed
-
-**Chatterbox**
-- Multilingual V2, Multilingual V3, and Turbo model variants
-- Exaggeration, CFG, temperature, top_p, top_k, repetition_penalty, seed
-
-**dots.tts**
-- Model variants:
-    - `dots.tts-soar` (default; full flow-matching)
-    - `dots.tts-mf` (MeanFlow-distilled, few-step)
-    - `dots.tts-mf-2steps` (fixed 2-step)
-    - `dots.tts-mf-1step` (fixed 1-step)
-- Torch compile toggle
-- Streaming (for the stand-alone server and LLM chat mode)
-- Speaker scale, num steps, guidance scale, seed
-
-**Fish S1-mini**
-- Torch compile (togglable)
-- Temperature, top_p, repetition penalty, seed
-
-**Fish S2-Pro**
-- Torch compile (togglable)
-- Experimental rolling continuation mode
-- Temperature, top_p, top_k, seed
-- Emotion tags
-
-**Higgs Audio V2**
-- Temperature, top_p, top_k, seed
-
-**GLM-TTS**
-- Samplerate selection (24khz or 32 khz)
-- Seed
-
-**IndexTTS2**
-- FP16 / FP8
-- Emotion voice sample, emotion vector, emotion alpha
-- Temperature, top_p, top_k, seed
-
-**MiraTTS**
-- Batch processing support
-- Temperature, top_p, top_k, repetition_penalty, seed
-
-**MOSS-TTS**
-- MOSS-TTS v1.5 9B and MOSS-TTS-Local-Transformer v1.5 1.7B models
-- Batch processing
-- Experimental rolling continuation mode
-- Temperature, top_p, top_k, seed
-- Music detection/rejection (for MOSS-TTS-Local-Transformer)
-
-**OmniVoice**
-- Voice design
-- Steps, speed, CFG, seed
-
-**Qwen3-TTS**
-- CustomVoice and VoiceDesign model variants
-- Support for Darwin-TTS-1.7B-Cross finetune
-- Batch processing support
-- Experimental rolling continuation mode
-- Temperature, top_p, top_k, repetition_penalty, seed
-
-**Pocket TTS**
-- Selectable language models (english, french_241, german_241, italian, portuguese, spanish_241)
-- Predefined voices (alba, anna, azelma, etc)
-- Streaming support (for the stand-alone server and LLM chat mode)
-- Supports CUDA acceleration (this is not mentioned in the project page)
-- Temperature, seed
-
-**VibeVoice**
-- Alternate VibeVoice models (eg, VibeVoice-7B or custom finetunes)
-- LoRA support!
-- Batch processing support
-- Streaming support (for the stand-alone server and LLM chat mode)
-- Music detection/rejection
-- CFG, steps, seed
-
-
-### SGL-Omni
-
-**AuK / AuK-Flash**
-- Base and Flash models
-- Speech speed
-- Seed
-
-**CosyVoice3**
-- Concurrent requests
-- Streaming support (for the stand-alone server and LLM chat mode)
-- Temperature, top_p, top_k, repetition_penalty
-
-**Fish S2-Pro**
-- Streaming support (for the stand-alone server and LLM chat mode)
-- Concurrent requests
-- Experimental rolling continuation mode
-- Temperature, top_p, top_k, seed
-- Emotion tags
-
-**Higgs Audio V3**
-- Streaming support (for the stand-alone server and LLM chat mode)
-- Concurrent requests
-- Temperature, top_p, top_k
-
-**MOSS-TTS**
-- MOSS-TTS v1.5 9B and MOSS-TTS-Local-Transformer 1.7B models
-- Concurrent requests
-- Music detection/rejection (for MOSS-TTS-Local-Transformer)
-- Temperature, top_p, top_k, seed
-
-**ZONOS2**
-- Streaming support (for the stand-alone server and LLM chat mode)
-- Concurrent requests
-- Temperature, top_k, repetition_penalty
-
-
-### audio.cpp
-
-**Breeze TTS 2**
-- Voice design
-- Audio tags
-- Temperature, top_p, top_k, guidance scale, seed
-
-**Chatterbox**
-- Multilingual V2, Multilingual V3, and English model variants
-- Exaggeration, CFG, temperature, top_p, top_k, repetition_penalty, seed
-
-**CosyVoice3**
-- Modes: zero-shot, cross-lingual, or instruct
-- Top_k, steps, seed
-
-**dots.tts**
-- SOAR or MeanFlow (whichever the server entry is configured with)
-- Steps, guidance scale, speaker scale, seed
-
-**Echo-TTS**
-- Steps, text guidance scale, speaker guidance scale, seed
-
-**GLM-TTS**
-- Temperature,top_p, top_k, steps, flow guidance scale, seed
-
-**FireRedTTS3**
-- Steps, guidance scale, stop threshold, seed
-
-**Fish Audio Drama 3**
-- Experimental community port
-- Temperature, top_p, top_k, seed
-- Event tags (eg `[sighs]`)
-
-**Fish S2-Pro**
-- Temperature, top_p, top_k, seed
-- Emotion tags
-
-**Higgs Audio V3**
-- Temperature, top_p, top_k, seed
-
-**IndexTTS2/2.5**
-- Temperature, top_p, top_k, duration factor (speech rate), seed
-
-**MOSS-TTS**
-- MOSS-TTS v1.5 8B Delay and MOSS-TTS-Local v1.5
-- Temperature, top_p, top_k, seed
-- Music detection/rejection (MOSS-TTS-Local)
-
-**OmniVoice**
-- Voice design
-- Steps, speed, CFG, seed
-
-**Qwen3-TTS**
-- Base, CustomVoice and VoiceDesign model types
-- Temperature, top_p, top_k; repetition penalty, seed
-- See [Qwen3-TTS setup notes](<docs/tips-audio-cpp.md#qwen3-tts>)
-
-
-# Usage notes
-
-The app uses sane, conservative defaults, which should allow you to start generating your first audiobook in just a couple minutes. From there, you can explore and adjust the app's various knobs and settings to your preference.
-
-The app saves its state between sessions, so you can interrupt the program at any time and resume later.
-
-Setting "chapter cut points" can be useful to generate and export a long work in manageable chunks over time, allowing you to to use early chapter files before the full job is completed.
-
-
-### Voice cloning
-
-Voice samples and their transcripts belong to one shared list per project. Switching TTS models keeps the list and its order. Transcripts remain editable and are retained even for models that do not use them; each model still has its own clone support and transcript requirements. Pocket's selected predefined voice takes precedence without erasing the shared samples, and IndexTTS2's secondary emotion sample remains model-specific.
-
-Older projects migrate to the current project format (v5) on load. For v1/v2/v3 projects, with no populated old clone lists the new list is empty; a single source is adopted silently. Multiple independent sources require a numbered choice showing model names and all sample filenames, even when the lists are identical. An already-shared list counts once across backend variants. An explicit top-level `voice_references` list, including `[]`, wins over stale old lists. For v4 projects, the project-wide room reverb setting is copied onto each voice (room reverb is now a per-voice setting; the room reverb stereo effect stays project-wide). Successful migration saves immediately after backing up the original settings as `project.json.pre-v5.bak` (an unused numbered suffix is used if needed), without deleting voice or generated audio. Settings imports require the same choice before writing the destination; ambiguous noninteractive loads/imports fail with guidance rather than choosing automatically. See [Project Spec v5](<docs-dev/project-spec-v5.md>) for details.
-
-When prepping reference audio for voice cloning, it's worthwhile to prepare a few different sound samples from a given source (not just one), and then test each one out in turn on a short passage of the intended text, as the quality, characteristics, and word error rate resulting from each sample from the same source can vary quite a bit. Some TTS models are especially sensitive to this.
-
-### VRAM considerations
-
-The app ideally wants to use ~2-4 GB extra VRAM for the Whisper speech-to-text model, which needs to runs concurrently with the currently active TTS model to validate its output. If you are getting out of memory errors, try one of the following:
-
-- Use large-v3-turbo instead of large-v3 (saves a gig or two of VRAM) (`Options` > `Whisper model` > `large-v3-turbo`)
-- Force Whisper to use system memory instead of running on the GPU (runs much slower, ofc) (`Options` > `Whisper device` > `CPU`)
-- Disable Whisper altogether (last resort) (`Options` > `Whisper model` > `Disabled`)
-
-
-### Inference speeds, expectations
-
-Listed below are some anecdotal TTS inference speeds (locally hosted models only). The app adopts each respective model's reference implementation logic as much as possible. Note how CUDA inference speeds on Linux are typically significantly faster than on Windows.
-
-| TTS Model               | Setup                | Speed           | Notes                       |
-| ----------------------- | -------------------- | --------------- | --------------------------- |
-| Breeze TTS 2            | GTX 3080 Ti, Linux   | ~100% realtime  | batch size=1
-| Breeze TTS 2            | GTX 3080 Ti, Linux   | 600% realtime   | batch size=10
-| Chatterbox Multilingual | GTX 3080 Ti, Linux   | 250% realtime   |
-| Chatterbox Multilingual | Macbook Pro M1 (MPS) | 20-35% realtime |
-| Chatterbox Turbo        | GTX 3080 Ti, Linux   | 500%+ realtime  |
-| Chatterbox Turbo        | Macbook Pro M1       | ~70% realtime   |
-| dots.tts (SOAR)         | RTX 4090, Windows    | 400% realtime   | default steps (10)
-| dots.tts (MF)           | GTX 3080 Ti, Linux   | 550% realtime   | default steps (4)
-| Fish S2-Pro             | RTX 4090, Windows    | 150% realtime   |
-| Fish S1-mini            | GTX 3080 Ti, Windows | 500%+ realtime  |
-| Higgs V2                | RTX 4090, Windows    | ~200% realtime  |
-| IndexTTS2               | RTX 4090, Windows    | ~150% realtime  |
-| IndexTTS2               | GTX 3080 Ti, Windows | ~90% realtime   |
-| IndexTTS2               | Macbook Pro M1 (MPS) | ~20% realtime   |
-| MOSS-TTS v1.5           | GTS 4090, Windows    | ~50% realtime   | batch size=1, flash attn
-| MOSS-TTS-Local-Transformer-v1.5 | GTS 4090, Windows | 1000% realtime | batch size=20, flash attn
-| OmniVoice TTS           | GTX 3080 Ti, Linux   | 300% realtime   | default steps
-| OmniVoice TTS           | Macbook Pro M1 (MPS) | 20% realtime    | default steps
-| Pocket TTS              | GTX 3080 Ti, Linux   | 1300% realtime  |
-| Pocket TTS              | Ryzen 7 7700, Linux  | ~200% realtime  | CPU mode
-| Pocket TTS              | Macbook Pro M1       | 350% realtime   |
-| Qwen3-TTS 1.6B          | GTX 3080 Ti, Linux   | 300% realtime   | batch size=5
-| Qwen3-TTS 1.6B          | GTX 3080 Ti, Linux   | 100% realtime   | batch size=1
-| GLM-TTS                 | GTX 3080 Ti, Linux   | 200%+ realtime  |
-| MiraTTS                 | GTX 3080 Ti, Linux   | 3000% realtime (yes rly) | batch size=10
-| MiraTTS                 | GTX 3080 Ti, Linux   | 800% realtime   | batch size=1
-| VibeVoice-Large 7B      | RTX 4090, Windows    | 600%+ realtime  | batch size=10, default steps
-| VibeVoice 1.5B          | GTX 3080 Ti, Linux   | 1000% realtime  | batch size=10, default steps
-| VibeVoice 1.5B          | GTX 3080 Ti, Linux   | 200%+ realtime  | batch size=1, default steps
-| VibeVoice 1.5B          | Macbook Pro M1       | ~40% realtime   |
-
-
-# Update highlights
-
-**2026-11-05**
-
-- **"Enhance-an-audiobook"** feature is now much more accurate, and forced alignment step is now much faster.
-
-**2026-11-02**
-
-- **FFmpeg is no longer required** as a system dependency after a broad refactor.
-
-**2026-10-31**
-
-- **Rich(er) text formatting** in the browser player (heading text, boldface, italice, underline). Applies to new projects post-update, or by re-importing EPUB files into existing project and re-generating audio.
-
-**2026-10-30**
-
-- **Improved loudness leveling** in exports and realtime playback. Loudness is now normalized segment by segment. Removed the now-redundant, time-consuming whole-file loudness normalization pass.
-- Added **per-voice volume** setting. Useful for when a certain voice clone tends to overpower the mix, etc.
-
-**2026-10-25**
-
-- Added **Auto-identify characters** (`Voices > Auto-identify characters`). Uses an LLM to determine which character speaks what dialog, which can then be assigned to your configured voices. Love this feature, personally...
-
-**2026-10-21**
-
-- Added support for **Breeze TTS 2 (local)**. Supports batch mode.
-- Added support for **Qwen3-TTS for audio.cpp** (all varianets).
-
-**2026-10-19**
-
-- The **Voices menu** has been revamped. Various previuosly global controls are now configurable on a per-voice basis:
-    - **Stereo position** (new) - voices can now be positioned within the stereo field; useful for dialog
-    - Room reverb
-    - Room reverb stereo effect
-    - Instructions (when applicable - eg, OmniVoice, etc.)
-    - Voice preset (when applicable - eg, Pocket TTS)
-- `Realtime playback` now displays currently playing waveform
-
-**2026-10-16**
-
-- Added support for [**Fish Drama 3 for audio.cpp**](https://github.com/0xShug0/audio.cpp/blob/main/docs/models/fish_drama3.md)
-
-**2026-10-13**v
-
-- Added **Room reverb** under `Create > Post-processing`. Places the narration in a subtle small room (light or moderate level) or a larger, more audible space (Larger room). Off by default.
-- Added **Room reverb stereo effect**. Spreads the reverb across left and right while the voice stays centered; creates stereo files. Off by default.
-
-**2026-10-12**
-
-- Added **Room tone** under `Create > Post-processing`. Adds low-level background noise, prevents awkward digital (zero amplitude) silences. Off by default.
-- Added **Minimum sentence silence inside segments** under `Create > Pause timing rules`. Extends overly short sentence pauses in the audio. Off by default.
-
-**2026-10-10**
-
-- "Quick generate" (within `Generate > Review sound segments`) now allows for A/B playback comparisons before saving new version.
-
-**2026-10-09+**
-
-- Added support for **dots.tts for audio.cpp** (SOAR or MeanFlow)
-- Added support for **Fish S2-Pro for audio.cpp**
-- Added support for **GLM-TTS for audio.cpp**
-- Added support for **IndexTTS2 / IndexTTS2.5 for audio.cpp**
-- Added support for **CosyVoice3 for audio.cpp**
-- Added support for **FireRedTTS3 for audio.cpp** (Base)
-
-**2026-10-06**
-
-- The `Voice clone and model settings` menu has been split into `Voice clone` and `Model settings` menus.
-- Projects now use a **unified voice clone list** instead of a separate list for each TTS model. This makes it more convenient to switch between models mid-project.
-- Added **trim voice sample audio** full-screen interface. This can be useful when your clip is, say, 15s, but the TTS model you're using has a lower recommended duration (eg, Echo TTS recommends 10s).
-
-**2026-10-04**
-
-- Added support for [**audio.cpp**](https://github.com/0xShug0/audio.cpp) as an alternative TTS backend, along with the following models:
-    - Breeze TTS 2
-    - Chatterbox
-    - Echo-TTS
-    - Higgs V3
-    - Moss TTS v1.5 (Delay and Local-Transformer)
-    - Omnivoice
-
-- Added support for **CosyVoice3** via SGL-Omni
-- Added support for **MOSS-TTS-Local-Transformer v1.5** update (local version)
-
-
-**2026-09-27**
-
-- Expanded menu for the "**enhance-an-audiobook**" feature.
-
-**2026-09-16**
-
-- Added support for **AuK** TTS models (base and Flash) via SGL-Omni.
-
-**2026-09-15**
-
-- Reworked **LLM Chat** feature, which is now uses a full-screen interface. Also added "echo mode" and then removed the custom text source option from "Realtime playback".
-- Removed Oute TTS model. The last commit with Oute support is [121029d](https://github.com/zeropointnine/tts-audiobook-tool/commit/121029d05d0d054c8f3dbfe59cda2eec268e9180).
-
-**2026-09-12**
-
-- Added support for *Chatterbox Multilingual V3* which addresses the serious shortcomings of the V2 model. After updating, the app may prompt you to update the virtual environment.
-
-**2026-09-10**
-
-- New full-screen interface for `Text > Word substitutions`
-- Player now highlights both the full TTS prompt and the subdivided phrase currently playing within it
-
-**2026-09-01**
-
-- Added support for [**dots.tts**](https://github.com/studio-dots-ai/dots.tts).
-
-**2026-08-25**
-
-- New full-screen interface for `Generate` and `Realtime audiobook playback`
-- New option: `Options > Unload models` now frees memory reliably, since model execution is now handled through a separate worker process.
-- New option: `Options > Save log files`
-- The app now requires an ANSI-capable terminal; ‘dumb’ terminals are no longer supported.
-- Menus now always use the full-screen interface. The legacy “Menu does not clear screen” option has been removed.
-
-**2026-08-21**
-
-- Batch mode is now supported when using `Voice selection mode: user-defined`.
-- Higgs V3 and Fish S2-Pro running through SGL-Omni now use the standard voice-clone workflow. Add local voice sample files as usual, with support for multiple voice clones.
-
-**2026-08-19**
-
-- Added optional **dialog segmentation** at `Text > Segmentation settings > Dialog segmentation`. Detected dialog is separated from surrounding narration and preassigned to voice sample 2, simplifying multi-voice narration. [Short sample](https://zeropointnine.github.io/tts-audiobook-tool/browser_player/?url=https://zeropointnine.github.io/tts-audiobook-tool-sample-output/two-voices-dialog-qwen3.abr.m4a)
-
-**2026-08-17**
-
-- `Create > Section markers > Edit`: Full-screen interface for defining section markers / file split points.
-
-**2026-08-11**
-
-- Replaced Sidon with **[LavaSR v2](https://github.com/ysharma3501/LavaSR)** upscaler, which is better suited to TTS and produces more tonally faithful, consistent output.
-
-**2026-08-11**
-
-- `Generate > Select lines / review sound segments`: Full-screen interface for selecting lines to be queued for generation and for reviewing already-generated sound segments for deletion/quick-regeneration.
-
-**2026-08-05**
-
-- Added support for [**ZONOS2**](https://sgl-project.github.io/sglang-omni/cookbook/zonos2.html) using SGL-Omni.
-- Added submenu `Create > Pauses between segments` with options for `Normal` and `Shorter`.
-
-**2026-08-01**
-
-- Added **voice selections editor**. When using multiple voice samples, voice samples can now be assigned on a line-by-line basis. `Voice > Edit voice selections`.
-
-- Added **review-and-delete sound segments editor**. Useful for reviewing and selectively deleting unwanted sound generations (bad takes, etc). `Generate > Review/delete segments`.
-
-- Added **text lines editor**. Allows for manually deleting unwanted lines from imported text (eg, table of contents, publisher info, etc) as well as splitting lines at inner phrase boundaries. The latter can be useful when manually assigning voice samples for direct quotes/dialog. `Text > View/edit text`
-
-**2026-07-15**
-
-- Added detection for potentially cut-off words at the end of generated audio
-- Added detection for pathologically long audio generations
-
-**2026-07-13**
-
-- Added ability to add **multiple voice clone samples**, which get rotated after each generation.Applies to most of the supported TTS models.
-
-**2026-06-07+**
-
-- Added support for using [**SGL-Omni**](https://sgl-project.github.io/sglang-omni) as the backend inference engine. Currently supported TTS models using SGL-Omni are:
-
-  - [**Higgs V3**](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b)
-  - MOSS-TTS v1.5
-  - Qwen3TTS
-  - Fish S2
-
-Also added LLM chat **custom system prompts** for Higgs V3 and Fish S2 Pro, which elicit "tagged output" from the LLM. Fun way to test the expressiveness of models' respective custom tag features.
-
-**2026-06-03**
-
-- Added experimental **rolling continuation mode** for Fish S2 Pro and Qwen3-TTS Base (this is already available for MOSS-TTS)
-
-**2026-05-28**
-
-- Added support for [**MOSS-TTS**](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5) (MOSS-TTS v1.5 9B and MOSS-TTS-Local-Transformer 1.7B)
-
-**2026-05-25**
-
-- Added support for [**Darwin-TTS**](https://huggingface.co/FINAL-Bench/Darwin-TTS-1.7B-Cross) (use Qwen3-TTS virtual environment and select custom hf repo id: [`zeropointnine/Darwin-TTS-1.7B-Cross-Qwen3Tokenizer`](https://huggingface.co/zeropointnine/Darwin-TTS-1.7B-Cross-Qwen3Tokenizer))
-
-**2026-05-15**
-
-- Added support for **EPUB** text import
-
-**2026-05-12**
-
-- Added ability to import project settings from app-created m4b/flac files
-
-**2026-05-11**
-
-- Added **first-class language support for Spanish**. This results in more accurate dictionary-based audio word error validation (less false positives), alongside English, and makes using "Strictness level: High" more useful and more efficient.
-
-**2026-05-07**
-
-- Added support for [**OmniVoice TTS**](https://github.com/k2-fsa/OmniVoice) (thanks @GNBS711)
-
-**2026-05-05/06**
-
-- Added **streaming** option for LLM chat feature and stand-alone server, which minimizes "time to first audio". Currently supported for Vibevoice and Pocket TTS.
-
-**2026-04-28**
-
-- Added side feature: **Realtime LLM chat**
-- Added **mlx-whisper** for Mac Apple Silicon (MLX acceleration for Whisper)
-
-**2026-04-25**
-
-- Added **multi-venv convenience launcher** (`python launch.py`)
-
-**2026-04-24**
-
-- Added **[Sidon](https://github.com/sarulab-speech/Sidon) 48khz upsampler** post-processing option.
-- Added `Concat` > **`Limit silence gaps`** (prevents long silences in sound generations, keeps narration flowing)
-
-**2026-04-23**
-
-- Added **high shelf filter** post-processing option
-- Added strictness level "intolerant"
-- Added AAC bitrate setting
-
-**2026-04-22**
-
-- Added support for [**Pocket TTS**](https://github.com/kyutai-labs/pocket-tts), lightweight model suitable for non-GPU systems.
-
-**2026-04-13**
-
-- Added side feature: **tts-server-tool**. View [server readme](tts_audiobook_tool/server/README-server.md).
-
-**2026-04-11**
-
-- Added configurable **top-p**, **top-k**, and **repetition penalty** hyperparameters to models where applicable given their architecture.
-
-**2026-04-07**
-
-- Added support for [**Fish S2-Pro**](https://huggingface.co/fishaudio/s2-pro)
-
-- Updated torch, ctranslate2, and flash-attention dependencies for all virtual environments.
-
-- Fish S1-mini and S2-Pro - Added torch compile toggle
-
-**2026-01-26**
-
-- Added support for [**Qwen3-TTS**](https://github.com/QwenLM/Qwen3-TTS) (Base, CustomVoice, and VoiceDesign models)
-
-**2026-01-23**
-
-- Added new text segmentation method **"multiple sentences"** (`Text` > `Text segmentation strategy`). Probably the ideal way to chunk text in combination with `max_words_per_segment = 80` when the TTS model can handle long prompts with high accuracy and without speeding up.
-
-**2026-01-21**
-
-- Added support for **VibeVoice LoRAs** [(recommended trainer)](https://github.com/voicepowered-ai/VibeVoice-finetuning)
-
-**2026-01-18~**
-
-- **Batching optimization** improves net TTS inference speed by up to 25% (VibeVoice and Mira).
-
-- **VibeVoice batch support** (drastically speeds up inference).
-
-- **VibeVoice seed support**
-
-- **Music detection** - Validator will now reject audio with music hallucinations (VibeVoice)
-
-- Added submenu: `Concat` > `Open audiobook file in the player app`
-
-**2026-01-12**
-
-- Improved per-phrase text segmentation (ie, `Concat` > `Subdivide into phrases`). For pre-existing projects, requires reimporting the source text.
-
-- Prevent some TTS models from mangling the output of prompts starting with **all-caps phrases** (relevant for MiraTTS in particular, plus some others).
-
-**2026-01-10**
-
-- "Section markers" can now be used for creating **M4B chapters** and player bookmarks (`Concatenate` > `Section markers` > `Mode`)
-
-- Note, app now saves AAC files using `.m4b` suffix instead of `.m4a`.
-
-**2026-01-05**
-
-- Added option to **add section markers using regular expressions** (thanks @AntitrustEnthusiast).
-
-**2026-01-04**
-
-- Added support for **Chatterbox-Turbo**.
-
-- Improved logic for trimming audio generations with spurious words and noises at the beginning or end (important for Chatterbox).
-
-**2025-12-31**
-
-- Added support for **MiraTTS**, including batch mode. The model is exceptionally fast when running in batch mode.
-
-- Added option: `Generate` > `Transcript validation strictness`
-
-- Option to control seed value now available for: Chatterbox, Fish, GLM
-
-**2025-12-23**
-
-- Added option: **`Project`** > **`Word substitutions`**. This allows you to replace words in the prompt that the TTS model may mispronounce. Requires some experimentation, as you might imagine.
-
-- Relatedly, added: `Project` > `Word substitutions` > `Inspect project text for uncommon words`.
-
-- Also added option: `Generate` > `Transcript validation max retries`
-
-**2025-12-21**
-
-- Simplified and much-improved **speech-to-text validation logic**, which is now able to calculate the number of word errors for an audio generation (rather than simply adjudging "pass" vs "fail" using a patchwork of bespoke functions).
-
-- When a prompt is re-generated due to excessive word errors, the program is able to cherrypick the generation with the least number of errors.
-
-**2025-12-16**
-
-- Added support for **GLM-TTS**.
-
-- Added option: **`Realtime audio generation` > `Save output`**.
-
-**2025-12-13**
-
-- Added option **`Concatenate` > `Subdivide into phrases`**. This allows the player app to highlight text on a "per-phrase" basis by leveraging the STT word-level timing data (Note, on pre-existing projects, all audio would first need be re-generated).
-
-**2025-12-09**
-
-- Added option to **clone project** (load an existing project > make new project > "Do you want to carry over the current project's settings?" > "Yes")
-
-- Added option to force use of **CPU torch device** even when CUDA or MPS is available.
-
-**2025-12-07**
-
-- Added **max text segment word length** option, allowing for up to 80 words per text segment prompt. Can be useful with VibeVoice and Fish (other models are best left at the default of 40 words).
-
-- **Resolved Linux CUDA crashes** related to faster-whisper library by changing Linux torch requirements. If you were experiencing this problem, get latest and update your virtual environment (`pip install -r requirements-[modelname].txt`).
-
-**2025-12-06**
-
-- **Updated Chatterbox** requirement to v0.1.4, which is multilanguage capable, and **added language code** project setting. Thanks to @JuMGameN, co-author for this update.
-
-- For existing users, the Chatterbox venv must be recreated using Python v3.11.
-
-**2025-11-11**
-
-- Added option to keep the **Whisper** model on the CPU.
-
-**2025-11-05**
-
-- Player/reader: Added **bookmarks** feature, ability to pin the audio player widget in desktop mode, plus.
-
-**2025-10-24**
-
-- Added option to **disable transcription validation** (`Options` > `Whisper model type` > `Disabled`). Doing so is only advisable while VRAM is at a premium or when using reliably accurate and stable TTS models (eg, IndexTTS2; definitely not VoiceVoice 1.5B or Chatterbox).
-
-**2025-10-23**
-
-- Added option to insert a "page turn" **sound effect at section breaks** (2+ blank lines in the text). I use this or text files converted from epub files using Calibre, which tends to insert two or more blank lines at chapter breaks, etc.
-
-**2025-10-03**
-
-- Added support for **IndexTTS2**, including secondary voice reference sample guiding emotion and "emotion vectors".
-
-- Added option to **specify Whisper model** (large-v3 or large-v3-turbo)
-
-**2025-09-15**
-
-- Added support for **VibeVoice alternative models** (ie, large/7B model)
-
-**2025-09-12**
-
-- Added support for **VibeVoice**.
-
-**2025-08-10**
-
-- Migrated from openai-whisper to **faster-whisper** (faster, less memory, equivalent accuracy).
-
-**2025-08-06**
-
-- Added support for **Higgs Audio V2** (3B base model).
-
-**2025-07-18**
-
-- Added support for **Fish OpenAudio S1-mini**
-
-- Logic to detect dropped phrases at end of generated sound segments (common occurrence with the Fish model)
-
-- Added utility to transcode and concatenate directory of MP3 chapter files to M4A (meant for use with the "Enhance existing audiobook" tool)
-
-**2025-07-02**
-
-- New feature: **Real-time playback** (`Options > Real-time playback`)
-
-    This serves as a quicker and more "casual" alternative to the regular `Generate audio` UI flow, and allows for more-or-less immediate and uninterrupted audio playback (contingent on system performance, ofc). It employs the same quality control measures except for loudness normalization, and does not save its output.
-
-**2025-06-28** (many)
-
-- Generated sound segments now have silence trimmed off the ends, and in the concatenation step, stitched-together lines have pauses of varying lengths inserted at paragraph, sentence, and phrase boundaries, resulting in much improved prosody / flow.
-
-- Loudness normalization is now being applied correctly (on the final audio file instead of per audio segment)
-
-- Better detection of undesired repeating phrases
-
-- Better detection and fix for spooky Chatterbox noises at the end of prompts
-
-- Short 1-2 word sentences now get grouped with adjacent sentences to mitigate Chatterbox's issues with short prompts
-
-- Streamlined handling of audio data throughout
-
-- Encoding audiobook files in AAC/M4A format no longer requires intermediate FLAC step
-
-- Streamlined some UI
-
-- Some improvements to the web player/reader
+**Hinweis für Mitwirkende:** Screenshots für die README werden aus dem tatsächlich gebauten React-Frontend mit einem synthetischen Test-EPUB und kontrollierten Demo-API-Daten erstellt. Es dürfen keine generierten UI-Mockups oder privaten RunPod-Zugangsdaten als Screenshots ausgegeben werden.

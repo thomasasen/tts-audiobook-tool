@@ -92,14 +92,44 @@ def main() -> None:
                 browser = p.chromium.launch(headless=True)
                 try:
                     page = browser.new_page(viewport={"width": 1390, "height": 900})
+                    # Only the ACTUAL React UI is captured. The synthetic EPUB,
+                    # WAV sample and API states are explicitly documented as
+                    # demo inputs, and no user data or API tokens are embedded.
+                    screenshot_dir = os.environ.get("README_SCREENSHOT_DIR", "")
+                    def real_ui_screenshot(filename: str) -> None:
+                        if not screenshot_dir:
+                            return
+                        output = Path(screenshot_dir)
+                        output.mkdir(parents=True, exist_ok=True)
+                        # Playwright interactions can leave the viewport midway
+                        # down a long document. Reset scrolling so the sticky
+                        # app header appears at the top of the full-page capture.
+                        page.evaluate("window.scrollTo(0, 0)")
+                        page.wait_for_timeout(120)
+                        # Use the application's real close controls to
+                        # dismiss transient test-only notifications. The site
+                        # enforces CSP style-src 'self'; never inject styles or
+                        # draw invented elements into screenshots.
+                        for label in ("Fehlermeldung schließen", "Hinweis schließen"):
+                            close = page.get_by_role("button", name=label)
+                            if close.count() and close.is_visible():
+                                close.click()
+                        page.evaluate("window.scrollTo(0, 0)")
+                        page.wait_for_timeout(120)
+                        page.screenshot(
+                            path=str(output / filename), full_page=True,
+                            animations="disabled",
+                        )
                     errors = []
                     page.on("pageerror", lambda err: errors.append(str(err)))
                     page.goto(base, wait_until="networkidle")
                     page.get_by_label("Zugangsschlüssel").fill(TOKEN)
                     page.get_by_role("button", name="Studio öffnen").click()
                     page.get_by_role("heading", name="Meine Hörbücher").wait_for()
+                    real_ui_screenshot("01-bibliothek.png")
                     page.get_by_label("EPUB-Datei auswählen").set_input_files(str(source))
                     page.get_by_role("heading", name="Kapitelübersicht").wait_for(timeout=30000)
+                    real_ui_screenshot("02-kapitelpruefung.png")
                     # Design regression: the complex EPUB review is progressive
                     # disclosure rather than five expanded forms above chapter work.
                     assert page.get_by_role("navigation", name="Hauptnavigation").count() == 1
@@ -123,6 +153,7 @@ def main() -> None:
                     page.get_by_label("Begriff = gesprochene Form").fill(expected_glossary)
                     page.get_by_role("button", name="Glossaränderung übernehmen").click()
                     page.get_by_text("Glossar gespeichert.", exact=True).wait_for(timeout=10000)
+                    real_ui_screenshot("03-ausspracheglossar.png")
                     # Regression: changing tabs must reload the persisted
                     # glossary, not show an empty/stale local textarea.
                     page.get_by_role("button", name="Text und Kapitel").click()
@@ -381,6 +412,7 @@ def main() -> None:
                     assert not page.get_by_text("Der Browser kann die Hörprobe nicht abspielen").count()
                     assert page.get_by_role("button", name="Nach Anhören freigeben").is_disabled(), \
                         "Metadata alone must never approve the voice."
+                    real_ui_screenshot("04-sprecher-hoerprobe.png")
                     page.unroute("**/api/voices/preview/start")
                     page.unroute("**/api/voices/preview/audio/*")
                     page.unroute("**/api/capabilities")
@@ -425,6 +457,7 @@ def main() -> None:
                         "done": 3, "total": 6, "chapter": "Kapitel 1",
                         "duration": 19.1, "error": "",
                         "created_at": (simulated_now - timedelta(minutes=2)).isoformat(),
+                        "updated_at": simulated_now.isoformat(),
                     }
                     import json
                     page.route(
@@ -550,6 +583,7 @@ def main() -> None:
                     speech_bar = page.get_by_label("Fertiggestellte Audiosegmente")
                     assert speech_bar.get_attribute("value") == "3"
                     assert speech_bar.get_attribute("max") == "6"
+                    real_ui_screenshot("05-vertont-wird.png")
                     # The real UI must advance from polls, then retain progress
                     # while paused rather than resetting to zero.
                     production_job["done"] = 5
@@ -611,6 +645,7 @@ def main() -> None:
                         "() => document.querySelector('progress[aria-label=\"Fortschritt M4B-Export\"]')?.value === 50",
                         timeout=12000,
                     )
+                    real_ui_screenshot("06-m4b-export.png")
                     activity_state["export"] = {
                         "processed": 6, "total": 6, "percent": 99,
                         "phase": "finalizing", "remaining_seconds": None,
@@ -659,6 +694,7 @@ def main() -> None:
                         "() => document.querySelector('progress[aria-label=\"Fortschritt M4B-Export\"]')?.value === 100",
                         timeout=10000,
                     )
+                    real_ui_screenshot("07-fertiges-hoerbuch.png")
                     page.get_by_role("button", name="M4B herunterladen").click()
                     m4b_bar = page.get_by_label("M4B-Download", exact=True)
                     m4b_bar.wait_for()
