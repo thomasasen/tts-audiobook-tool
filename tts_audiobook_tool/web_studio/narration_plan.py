@@ -318,7 +318,9 @@ def validate_narration_plan(plan: dict) -> bool:
             raise ValueError("NarrationPlan: TTS-Prompt fehlt.")
         if segment.get("chapter") != source.get("section_index") or segment.get("chapter_position") != source.get("group_index"):
             raise ValueError("NarrationPlan: ungültige Kapitel- oder Gruppenreferenz.")
-        if segment.get("chapter_id") != f"epub-chapter:{segment.get('chapter_source_index'):06d}":
+        chapter_source_index = segment.get("chapter_source_index")
+        if (not isinstance(chapter_source_index, int) or chapter_source_index < 0
+                or segment.get("chapter_id") != f"epub-chapter:{chapter_source_index:06d}"):
             raise ValueError("NarrationPlan: Kapitelidentität beschädigt.")
         if segment.get("pause", {}).get("kind") != segment.get("boundary_reason"):
             raise ValueError("NarrationPlan: Segmentgrenze und Pausenplanung weichen ab.")
@@ -348,8 +350,7 @@ def assert_book_unchanged(project_dir: Path, plan: dict) -> None:
 
 
 def segment_fingerprint(segment: dict, plan: dict) -> str:
-    if not validate_narration_plan(plan):
-        raise ValueError("NarrationPlan-Fingerprint nicht für historische Aufträge verfügbar.")
+    """Called after one whole-plan validation; O(1) per segment on resume."""
     return _digest({
         "version": SCHEMA, "unit_id": segment["unit_id"],
         "position": segment["position"], "chapter_id": segment["chapter_id"],
