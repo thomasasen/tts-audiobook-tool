@@ -63,10 +63,27 @@ class TestStartSummary(unittest.TestCase):
                 RUNPOD_SUMMARY_CUDA_THORSTEN="not-tested",
             )
         self.assertEqual(got.returncode, 0, got.stderr)
-        self.assertIn("WEB BEREIT (MIT WARNUNGEN)", got.stdout)
+        self.assertIn("WEB BEREIT: SPRECHER NOCH NICHT BETRIEBSBEREIT", got.stdout)
+        self.assertIn("AKTION ERFORDERLICH", got.stdout)
+        self.assertNotIn("Echte Hoerprobe erzeugen", got.stdout)
         self.assertIn("Noch nicht betriebsbereit", got.stdout)
         self.assertNotIn("WEB + THORSTEN INSTALLIERT", got.stdout)
         self.assertNotIn("ZUGANGSSCHLUESSEL", got.stdout)
+
+    def test_failed_cuda_banner_tells_operator_to_stop_gpu_pod(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder) / "audiobook-data"
+            data.mkdir()
+            got = self.render(
+                data,
+                RUNPOD_SUMMARY_THORSTEN="not-ready",
+                RUNPOD_SUMMARY_CUDA_SYSTEM="failed",
+                RUNPOD_SUMMARY_CUDA_THORSTEN="not-tested",
+            )
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("START NICHT BETRIEBSBEREIT: CUDA-TEST FEHLGESCHLAGEN", got.stdout)
+        self.assertIn("GPU-Pod STOPPEN", got.stdout)
+        self.assertNotIn("Echte Hoerprobe erzeugen", got.stdout)
 
     def test_failed_web_shows_failure_not_success(self):
         with tempfile.TemporaryDirectory() as folder:

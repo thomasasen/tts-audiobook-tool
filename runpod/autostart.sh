@@ -187,6 +187,45 @@ fi
 
 echo "Source commit: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
 echo "Boot mode: Web Studio + Thorsten. Legacy TUI models: $RUNPOD_TTS_MODELS."
+
+# Fast, actual CUDA allocation BEFORE apt, npm, Python venv creation, or
+# multi-gigabyte voice downloads. A GPU shown by nvidia-smi is not sufficient.
+# Retry once because a just-assigned GPU can be transiently unavailable.
+# In explicit web-only recovery mode, do not block EPUB diagnostics on CUDA.
+CUDA_SYSTEM_READY=0
+if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 ]]; then
+  echo "Preflight 0/5: Checking real CUDA execution before costly setup."
+  for ((cuda_attempt=1; cuda_attempt<=2; cuda_attempt++)); do
+    echo "CUDA execution test $cuda_attempt/2 (real GPU tensor allocation)."
+    if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json; then
+      CUDA_SYSTEM_READY=1
+      break
+    fi
+    if (( cuda_attempt == 1 )); then
+      echo "CUDA not operational; retrying once after 3 seconds." >&2
+      sleep 3
+    fi
+  done
+  if (( ! CUDA_SYSTEM_READY )); then
+    write_voice_state cuda-unavailable
+    echo "=======================================================================" >&2
+    echo "START ABGEBROCHEN: CUDA funktioniert auf diesem RunPod-Host nicht." >&2
+    echo "Thorsten wurde NICHT installiert. Kein apt/npm/Python-Setup gestartet." >&2
+    echo "Die GPU kann trotz Anzeige in nvidia-smi unbenutzbar sein." >&2
+    echo "Massnahme: Diesen kostenpflichtigen Pod im RunPod-Dashboard STOPPEN." >&2
+    echo "Dann einen neuen Pod auf einem ANDEREN GPU-Host erstellen; Volume" >&2
+    echo "wiederverwenden. Ein Container-Fehler beendet GPU-Abrechnung nicht." >&2
+    echo "Fuer reine EPUB-Diagnose RUNPOD_TTS_SKIP_VOICE_INSTALL=1 verwenden." >&2
+    echo "Privates Startprotokoll: $LOG_FILE" >&2
+    echo "=======================================================================" >&2
+    exit 1
+  fi
+  echo "CUDA preflight PASSED. Starting host bootstrap and voice installation."
+else
+  write_voice_state skipped
+  echo "Explicit web-only recovery: early GPU gate skipped; Thorsten installation disabled."
+fi
+
 echo "Step 1/5: Minimal host bootstrap (system tools, uv, Python)."
 bash "$REPO_DIR/runpod/setup.sh" --models none --bootstrap-only
 command -v tmux >/dev/null || { echo "ERROR: tmux missing after host bootstrap." >&2; exit 1; }
@@ -206,17 +245,12 @@ WEB_BUILD_LOG="$DATA_ROOT/logs/web-build-$(date -u +%Y%m%dT%H%M%SZ).log"
 bash "$REPO_DIR/runpod/build-web.sh" >"$WEB_BUILD_LOG" 2>&1 &
 BUILD_PID=$!
 
-# Check real CUDA allocation in the OFFICIAL container image. Do not use
-# nvidia-smi or torch.cuda.is_available() alone to authorize large downloads.
-echo "Checking host CUDA execution before any model downloads."
-CUDA_SYSTEM_READY=0
-if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json; then
-  CUDA_SYSTEM_READY=1
-  echo "System CUDA allocation OK."
+# Host CUDA was checked before setup: no duplicate torch initialization here.
+# The explicit recovery mode may still run without a working CUDA host.
+if (( CUDA_SYSTEM_READY )); then
+  echo "System CUDA allocation OK (verified before host bootstrap)."
 else
-  write_voice_state cuda-unavailable
-  echo "WARNING: System CUDA allocation failed. Thorsten downloads are disabled."
-  echo "Check RunPod GPU host; Web Studio remains available without TTS."
+  echo "No operational CUDA preflight (explicit web-only recovery mode)."
 fi
 
 # Network volumes are not unlimited. On a new 60 GB volume, allow at least
