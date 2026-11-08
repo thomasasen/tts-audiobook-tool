@@ -6,6 +6,7 @@ Uvicorn server. No screenshots or large CI artifacts are produced.
 from __future__ import annotations
 
 import io
+import zipfile
 import math
 import os
 import socket
@@ -659,6 +660,44 @@ def main() -> None:
                     assert page.evaluate("window.__fileWritten") == 64
                     assert not page.evaluate("window.__fileAborted")
                     page.get_by_text("direkt gespeichert", exact=False).wait_for()
+                    # ZIP has a streaming response, so it must expose live
+                    # bytes and an honest determinate or indeterminate bar.
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_STORED) as archive:
+                        archive.writestr("001 - Vorwort.m4a", m4a)
+                    archive_bytes = zip_buffer.getvalue()
+                    page.route(
+                        "**/api/projects/*/jobs/*/chapters/archive",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/zip",
+                            body=archive_bytes,
+                        ),
+                    )
+                    page.evaluate("""() => {
+                      window.__zipWritten = 0
+                      window.__zipClosed = false
+                      window.showSaveFilePicker = async () => ({
+                        createWritable: async () => ({
+                          write: async part => { window.__zipWritten += part.byteLength },
+                          close: async () => {
+                            await new Promise(resolve => setTimeout(resolve, 700))
+                            window.__zipClosed = true
+                          },
+                          abort: async () => {throw Error('Unexpected ZIP abort')},
+                        })
+                      })
+                    }""")
+                    page.get_by_role("button", name="Alle Kapitel als ZIP herunterladen").click()
+                    zip_bar = page.get_by_label("Download aller Kapitel", exact=True)
+                    zip_bar.wait_for()
+                    assert zip_bar.get_attribute("max") == "100"
+                    # A known-size mocked ZIP may reach 99% during the last
+                    # disk write; an unknown-size stream remains indeterminate.
+                    assert zip_bar.get_attribute("value") in (None, "99")
+                    page.wait_for_function("() => window.__zipClosed === true", timeout=10000)
+                    assert page.evaluate("window.__zipWritten") == len(archive_bytes)
+                    page.get_by_text("Kapitel als ZIP gespeichert", exact=False).wait_for()
+                    page.unroute("**/api/projects/*/jobs/*/chapters/archive")
                     # Unsupported browser with a large response fails before
                     # buffering any of the advertised 97 MiB into a Blob.
                     page.evaluate("() => { window.showSaveFilePicker = undefined }")
