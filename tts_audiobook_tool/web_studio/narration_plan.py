@@ -214,9 +214,14 @@ def build_narration_plan(
     project_id: str, project_dir: Path, source_indices: list[int] | None,
     glossary: dict[str, str], voice: str, model_identity: str,
     normalizer_version: str, speech_prompt: Callable[[str, dict[str, str], str], str],
-    created_at: str = "",
+    created_at: str = "", voice_settings: dict | None = None,
 ) -> dict:
     """Produce one immutable-in-meaning plan; timestamps never enter hashes."""
+    from tts_audiobook_tool.web_studio.voice_controls import verified_speed
+    voice_settings = voice_settings if voice_settings is not None else {"speed": 1.0}
+    if not isinstance(voice_settings, dict) or set(voice_settings) != {"speed"}:
+        raise ValueError("NarrationPlan: ungültige Sprechgeschwindigkeit.")
+    voice_settings = {"speed": verified_speed(voice_settings["speed"])}
     path = project_dir / "engine" / "project_text.json"
     book = json.loads(path.read_text(encoding="utf-8"))
     sections = _canonical_sections(book)
@@ -286,6 +291,7 @@ def build_narration_plan(
         "version": PLAN_VERSION, "schema": SCHEMA, "project_id": project_id,
         "voice": voice, "model_identity": model_identity, "audio": dict(AUDIO_CONFIG),
         "glossary": glossary, "normalizer_version": normalizer_version,
+        "voice_settings": voice_settings,
         "book_fingerprint": _digest(sections),
         "segments": units, "created_at": created_at,
     }
@@ -293,6 +299,7 @@ def build_narration_plan(
     plan["config_fingerprint"] = _digest({
         "voice": voice, "model_identity": model_identity, "audio": plan["audio"],
         "glossary": glossary, "normalizer_version": normalizer_version,
+        "voice_settings": voice_settings,
     })
     plan["plan_fingerprint"] = _digest({
         "schema": SCHEMA, "project_id": project_id,
@@ -366,11 +373,20 @@ def validate_narration_plan(plan: dict) -> bool:
             raise ValueError("NarrationPlan: Einheitenidentität weicht vom Originaltext ab.")
         if segment.get("pause", {}).get("kind") != segment.get("boundary_reason"):
             raise ValueError("NarrationPlan: Segmentgrenze und Pausenplanung weichen ab.")
-    expected_config = _digest({
+    # Existing v3 jobs without voice_settings retain their historical digest
+    # and therefore resume without regenerating verified segments.
+    config = {
         "voice": plan.get("voice"), "model_identity": plan.get("model_identity"),
         "audio": plan["audio"], "glossary": plan["glossary"],
         "normalizer_version": plan.get("normalizer_version"),
-    })
+    }
+    if "voice_settings" in plan:
+        from tts_audiobook_tool.web_studio.voice_controls import verified_speed
+        settings = plan["voice_settings"]
+        if not isinstance(settings, dict) or set(settings) != {"speed"}:
+            raise ValueError("NarrationPlan: ungültige Sprechkonfiguration.")
+        config["voice_settings"] = {"speed": verified_speed(settings["speed"])}
+    expected_config = _digest(config)
     if (plan.get("content_fingerprint") != _digest(segments)
             or plan.get("config_fingerprint") != expected_config
             or plan.get("plan_fingerprint") != _digest({

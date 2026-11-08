@@ -129,6 +129,33 @@ class TestThorstenProtocol(TestCase):
             self.assertEqual(models[0].patch_input["prompt_text_len"], 1)
             self.assertNotIn("Guten Tag", errors)
 
+    def test_official_thorsten_speed_passes_to_real_sft_entrypoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            audio = Path(temp) / "different-tempo.wav"
+            msg = json.dumps({
+                "id": "speed-1-10", "text": "Das ist ein kontrollierter Hörbuchtest.",
+                "output": str(audio), "speed": 1.1,
+            }) + "\n"
+            messages, _, _, models = self.run_worker(msg)
+            self.assertEqual(messages[0], {"ready": True})
+            self.assertTrue(messages[1]["ok"])
+            self.assertEqual(models[0].last_request[2]["speed"], 1.1)
+            self.assertTrue(audio.is_file())
+
+    def test_invalid_sft_speed_rejected_before_inference(self):
+        with tempfile.TemporaryDirectory() as temp:
+            audio = Path(temp) / "not-created.wav"
+            msg = json.dumps({
+                "id": "invalid-speed", "text": "Das darf nicht gesprochen werden.",
+                "output": str(audio), "speed": 1.37,
+            }) + "\n"
+            messages, errors, _, models = self.run_worker(msg)
+            self.assertEqual(messages[0], {"ready": True})
+            self.assertFalse(messages[1]["ok"])
+            self.assertFalse(audio.exists())
+            self.assertFalse(hasattr(models[0], "last_request"))
+            self.assertNotIn("Das darf nicht", errors)
+
     def test_cuda_error_46_reports_structured_not_ready_before_model_load(self):
         messages, errors, sessions, models = self.run_worker("", gpu_ok=False)
         self.assertEqual(messages, [{"ready": False, "error_code": "CUDA_UNAVAILABLE"}])
@@ -312,6 +339,7 @@ class TestStudioWorkerIntegration(TestCase):
             self.assertEqual(request["id"], "synthetic-request-id")
             self.assertEqual(request["text"], "Synthetic private book passage")
             self.assertEqual(request["output"], str(Path(tmp) / "voice.wav"))
+            self.assertEqual(request["speed"], 1.0)
             # Do not leak the model session into other tests.
             production._MODEL_PROC = None
 

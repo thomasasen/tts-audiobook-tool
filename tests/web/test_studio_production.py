@@ -639,3 +639,154 @@ def test_asr_capabilities_are_authenticated_and_explicit(env, monkeypatch):
     result = env.get("/api/capabilities", headers=HEADERS).json()
     assert result["asr"]["state"] == "disabled"
     assert result["asr"]["enabled"] is False
+
+
+def test_verified_voice_settings_are_private_persistent_and_project_scoped(env):
+    first, second = uuid.uuid4().hex, uuid.uuid4().hex
+    prepare_project(first)
+    prepare_project(second)
+    endpoint = f"/api/projects/{first}/voice-settings"
+    assert env.get(endpoint).status_code == 401
+    assert env.put(endpoint, json={"speed": 1.05, "preview_text": "Probe."}).status_code == 401
+    assert env.get(endpoint, headers=HEADERS).json() == {
+        "speed": 1.0, "preview_text": "",
+    }
+    data = {"speed": 1.05, "preview_text": "ARR steigt in diesem Geschäftsjahr deutlich."}
+    saved = env.put(endpoint, headers=HEADERS, json=data)
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == data
+    assert env.get(endpoint, headers=HEADERS).json() == data
+    assert env.get(f"/api/projects/{second}/voice-settings", headers=HEADERS).json()["speed"] == 1.0
+    assert (studio._project_dir(first) / "voice-settings.json").is_file()
+    for bad in (
+        {"speed": 1.17, "preview_text": ""},
+        {"speed": 0.4, "preview_text": ""},
+        {"speed": True, "preview_text": ""},
+        {"speed": 1.0, "preview_text": "x"},
+    ):
+        result = env.put(endpoint, headers=HEADERS, json=bad)
+        assert result.status_code in (409, 422)
+    assert env.get(endpoint, headers=HEADERS).json() == data
+
+
+def test_voice_settings_blocked_while_job_resumable(env):
+    identifier = uuid.uuid4().hex
+    prepare_project(identifier)
+    now = production._now()
+    with studio._db() as db:
+        db.execute("INSERT INTO studio_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
+            uuid.uuid4().hex, identifier, production.VOICE_ID, "paused",
+            0, 1, "", 0.0, "", now, now,
+        ))
+    response = env.put(
+        f"/api/projects/{identifier}/voice-settings", headers=HEADERS,
+        json={"speed": 1.1, "preview_text": ""},
+    )
+    assert response.status_code == 409
+    assert "gesperrt" in response.json()["detail"]
+
+
+def test_verified_voice_speed_stored_in_immutable_plan(env, monkeypatch):
+    identifier = uuid.uuid4().hex
+    prepare_project(identifier)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    data = {"speed": 1.1, "preview_text": "Dieser Text ist nur für die Hörprobe."}
+    result = env.put(
+        f"/api/projects/{identifier}/voice-settings", headers=HEADERS,
+        json=data,
+    )
+    assert result.status_code == 200, result.text
+    job = production.create_job(identifier)
+    plan = json.loads(
+        (production._jobs_dir(job["id"]) / "plan.json").read_text(encoding="utf-8")
+    )
+    assert plan["voice_settings"] == {"speed": 1.1}
+    assert "preview_text" not in json.dumps(plan, ensure_ascii=False)
+    assert production.narration_plan.validate_narration_plan(plan) is True
+    original = plan["config_fingerprint"]
+    altered = json.loads(json.dumps(plan))
+    altered["voice_settings"]["speed"] = 1.0
+    with pytest.raises(ValueError, match="Fingerprint"):
+        production.narration_plan.validate_narration_plan(altered)
+    assert original != production.narration_plan._digest({
+        "voice": plan["voice"],
+        "model_identity": plan["model_identity"],
+        "audio": plan["audio"],
+        "glossary": plan["glossary"],
+        "normalizer_version": plan["normalizer_version"],
+        "voice_settings": {"speed": 1.0},
+    })
+
+
+def test_custom_preview_text_and_speed_reach_real_synthesis_adapter(env, monkeypatch):
+    identifier = uuid.uuid4().hex
+    prepare_project(identifier)
+    monkeypatch.setattr(production, "_model_identity", lambda: "synthetic-installed-model")
+    seen = []
+
+    def fake_synthesize(text, path, on_progress=None, speed=1.0):
+        seen.append((text, speed))
+        if on_progress:
+            on_progress("Test-Audio wird erzeugt.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rate = 16000
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(struct.pack("<" + "h" * rate, *([700] * rate)))
+        return 1.0
+
+    monkeypatch.setattr(production, "_synthesize", fake_synthesize)
+    path = production.make_sample(
+        duration_seconds=5, speed=1.05,
+        preview_text="ARR hat in diesem Jahr einen hohen Wert erzielt.",
+        project_id=identifier,
+    )
+    assert path.is_file()
+    assert production._valid_browser_preview(path) == pytest.approx(1.0)
+    assert len(seen) == 1 and seen[0][1] == 1.05
+    assert "A R R" in seen[0][0]
+    assert "hohen Wert" in seen[0][0]
+    assert "helpful assistant" not in seen[0][0].lower()
+
+
+def test_historical_plan_without_voice_speed_remains_valid(env, monkeypatch):
+    identifier = uuid.uuid4().hex
+    prepare_project(identifier)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job = production.create_job(identifier)
+    plan = json.loads(
+        (production._jobs_dir(job["id"]) / "plan.json").read_text(encoding="utf-8")
+    )
+    plan.pop("voice_settings")
+    plan["config_fingerprint"] = production.narration_plan._digest({
+        "voice": plan["voice"], "model_identity": plan["model_identity"],
+        "audio": plan["audio"], "glossary": plan["glossary"],
+        "normalizer_version": plan["normalizer_version"],
+    })
+    plan["plan_fingerprint"] = production.narration_plan._digest({
+        "schema": plan["schema"], "project_id": plan["project_id"],
+        "book_fingerprint": plan["book_fingerprint"],
+        "content_fingerprint": plan["content_fingerprint"],
+        "config_fingerprint": plan["config_fingerprint"],
+    })
+    assert production.narration_plan.validate_narration_plan(plan) is True
+    assert production.verified_speed(plan.get("voice_settings", {"speed": 1.0})["speed"]) == 1.0
+
+
+def test_nondefault_speed_never_uses_unverified_pinned_cli_flag(
+    env, monkeypatch, tmp_path,
+):
+    """Pinned Thorsten infer_thorsten.py has no --speed (Python API does)."""
+    from unittest.mock import Mock
+
+    cli = tmp_path / "infer_thorsten.py"
+    cli.write_text("# no --speed argument", encoding="utf-8")
+    monkeypatch.setattr(production, "_config", lambda: ("/usr/bin/python3", str(cli)))
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "0")
+    forbidden = Mock(side_effect=AssertionError("Old CLI must not execute with --speed"))
+    monkeypatch.setattr(production.subprocess, "run", forbidden)
+    with pytest.raises(RuntimeError, match="persistenten Thorsten-Worker"):
+        production._synthesize("Ein Testsatz.", tmp_path / "sample.wav", speed=1.05)
+    forbidden.assert_not_called()

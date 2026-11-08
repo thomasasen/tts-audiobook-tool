@@ -23,6 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tts_audiobook_tool.web_studio import asr_quality, narration_plan
+from tts_audiobook_tool.web_studio.voice_controls import (
+    DEFAULT_SETTINGS, verified_settings, verified_speed, verified_preview_text,
+)
 # Keep the module load lightweight for offline RunPod protocol tests.
 DE_V2_NORMALIZER_VERSION = "de-narration-v2"
 DE_NORMALIZER_VERSION = "de-narration-v3"
@@ -161,7 +164,7 @@ def _ensure_model_loaded(config: tuple[str, str], on_progress=None) -> None:
 
 
 def _generate_with_worker(text: str, output: Path, config: tuple[str, str],
-                          on_progress=None) -> None:
+                          on_progress=None, speed: float = 1.0) -> None:
     """Synthesize through the already warm persistent worker (or load once)."""
     try:
         _ensure_model_loaded(config, on_progress=on_progress)
@@ -171,7 +174,8 @@ def _generate_with_worker(text: str, output: Path, config: tuple[str, str],
             on_progress("Sprachsynthese läuft. Die GPU erzeugt die Hörprobe.")
         request_id = uuid.uuid4().hex
         _MODEL_PROC.stdin.write(json.dumps({
-            "id": request_id, "text": text, "output": str(output)
+            "id": request_id, "text": text, "output": str(output),
+            "speed": verified_speed(speed),
         }, ensure_ascii=False) + "\n")
         _MODEL_PROC.stdin.flush()
         response = _model_message(_MODEL_PROC, 600)
@@ -415,20 +419,27 @@ def _audio_quality(path: Path, expected: str) -> dict:
     return result
 
 
-def _synthesize(text: str, path: Path, on_progress=None) -> float:
+def _synthesize(text: str, path: Path, on_progress=None, speed: float = 1.0) -> float:
     config = _config()
     if config is None:
         raise RuntimeError("Thorsten-CosyVoice3 ist nicht installiert.")
+    speed = verified_speed(speed)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temp = path.with_name(path.stem + "." + uuid.uuid4().hex + ".partial.wav")
     try:
         # Official model's infer_thorsten.py CLI; avoid a shell and never
         # download or inject a user-provided voice reference.
         if os.environ.get("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "1") == "1":
-            _generate_with_worker(text, temp, config, on_progress=on_progress)
+            _generate_with_worker(text, temp, config, on_progress=on_progress, speed=speed)
         else:
-            # Explicit fallback for debugging only; reloads the full model for
-            # every segment and is unsuitable for long production jobs.
+            # The pinned Thorsten CLI at 3ae98d0 does NOT expose --speed.
+            # Only CosyVoice3.inference_sft (our persistent worker) supports
+            # this verified parameter. Do not invoke nonexistent CLI flags.
+            if speed != 1.0:
+                raise RuntimeError(
+                    "Geändertes Sprechtempo erfordert den persistenten Thorsten-Worker."
+                )
+            # Explicit 1.0× fallback for debugging only; reloads each segment.
             run = subprocess.run(
                 [*config, "--text", text, "--output", str(temp)],
                 stdin=subprocess.DEVNULL, capture_output=True,
@@ -446,10 +457,63 @@ def _synthesize(text: str, path: Path, on_progress=None) -> float:
         temp.unlink(missing_ok=True)
 
 
-def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
-    """Generate a curated approximate-length audition; never cut words."""
+def _synthesize_with_speed(text: str, path: Path, speed: float, on_progress=None) -> float:
+    """Retain existing 1.0× call contracts for historical/test-only workers."""
+    speed = verified_speed(speed)
+    if speed == 1.0:
+        if on_progress is None:
+            return _synthesize(text, path)
+        return _synthesize(text, path, on_progress=on_progress)
+    if on_progress is None:
+        return _synthesize(text, path, speed=speed)
+    return _synthesize(text, path, on_progress=on_progress, speed=speed)
+
+
+def project_voice_settings(project_id: str) -> dict:
+    """Persistent, private per-book settings; missing file means original 1×."""
+    _studio()._project(project_id)
+    path = _studio()._project_dir(project_id) / "voice-settings.json"
+    if not path.exists():
+        return dict(DEFAULT_SETTINGS)
+    if path.stat().st_size > 4096:
+        raise ValueError("Gespeicherte Sprecherkonfiguration ist beschädigt.")
+    try:
+        return verified_settings(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise ValueError("Gespeicherte Sprecherkonfiguration ist ungültig.") from exc
+
+
+def save_project_voice_settings(project_id: str, settings: dict) -> dict:
+    """Write under the same DB lock that creates immutable production jobs."""
+    settings = verified_settings(settings)
+    from .app import _db, _project, _project_dir
+    _project(project_id)
+    with _db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        busy = db.execute(
+            "SELECT 1 FROM studio_jobs WHERE project_id=? "
+            "AND status IN ('queued','running','paused','failed','exporting')",
+            (project_id,),
+        ).fetchone()
+        if busy:
+            raise ValueError("Sprecherkonfiguration ist während eines aktiven oder fortsetzbaren Auftrags gesperrt.")
+        _atomic_json(_project_dir(project_id) / "voice-settings.json", settings)
+        db.execute(
+            "UPDATE studio_projects SET updated_at=? WHERE id=?",
+            (_now(), project_id),
+        )
+    return settings
+
+
+def make_sample(on_progress=None, duration_seconds: int = 5, *, speed: float = 1.0,
+                preview_text: str = "", project_id: str | None = None) -> Path:
+    """Audition documented TTS speed with either fixed or custom spoken text."""
     if duration_seconds not in SAMPLE_LENGTHS or type(duration_seconds) is not int:
         raise ValueError("Hörprobenlänge muss 5, 15, 30 oder 60 Sekunden sein.")
+    speed = verified_speed(speed)
+    preview_text = verified_preview_text(preview_text)
+    if project_id is not None:
+        _studio()._project(project_id)
     if _model_identity() is None:
         raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig und geprüft installiert werden.")
     acquired = _GPU.acquire(blocking=False)
@@ -468,10 +532,13 @@ def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
         if busy:
             raise ValueError("Es läuft bereits eine Hörbuchproduktion.")
         sample = data_dir() / "voice-samples" / "thorsten.wav"
-        phrases = SAMPLE_SENTENCES[:SAMPLE_LENGTHS[duration_seconds]]
+        phrases = (preview_text,) if preview_text else SAMPLE_SENTENCES[:SAMPLE_LENGTHS[duration_seconds]]
+        glossary = project_glossary(project_id) if project_id is not None else {}
         if len(phrases) == 1:
-            _synthesize(_narration_prompt(phrases[0], {}, DE_NORMALIZER_VERSION), sample,
-                        on_progress=on_progress)
+            _synthesize_with_speed(
+                _narration_prompt(phrases[0], glossary, DE_NORMALIZER_VERSION),
+                sample, speed, on_progress=on_progress,
+            )
         else:
             # Joining individual sentences keeps each model call short and
             # produces one complete, browser-safe PCM-16 WAV for listening.
@@ -486,8 +553,10 @@ def make_sample(on_progress=None, duration_seconds: int = 5) -> Path:
                     if on_progress is not None:
                         on_progress(f"Hörprobe: Satz {index + 1} von {len(phrases)} wird erzeugt.")
                     item = fragments_dir / f"{index:02d}.wav"
-                    _synthesize(_narration_prompt(sentence, {}, DE_NORMALIZER_VERSION), item,
-                                on_progress=on_progress)
+                    _synthesize_with_speed(
+                        _narration_prompt(sentence, glossary, DE_NORMALIZER_VERSION),
+                        item, speed, on_progress=on_progress,
+                    )
                     _valid_browser_preview(item)
                     fragments.append(item)
                 with wave.open(str(staged), "wb") as joined:
@@ -537,6 +606,8 @@ def preview_status() -> dict:
             "id": _PREVIEW_STATE["id"], "status": _PREVIEW_STATE["status"],
             "stage": _PREVIEW_STATE["stage"], "error": _PREVIEW_STATE["error"],
             "duration_seconds": _PREVIEW_STATE["duration_seconds"],
+            "speed": _PREVIEW_STATE.get("speed", 1.0),
+            "custom_text": _PREVIEW_STATE.get("custom_text", False),
             "events": list(_PREVIEW_STATE["events"]),
         }
 
@@ -553,13 +624,18 @@ def _preview_error(exc: Exception) -> str:
     return "Die Hörprobe konnte nicht erzeugt werden. Details stehen im privaten Thorsten-Worker-Log."
 
 
-def _preview_background(task_id: str, duration_seconds: int) -> None:
+def _preview_background(task_id: str, duration_seconds: int, speed: float,
+                        preview_text: str, project_id: str | None) -> None:
     try:
         _preview_update(task_id, stage="GPU und Sprecherinstallation werden geprüft.")
-        generated = make_sample(
-            on_progress=lambda message: _preview_update(task_id, stage=message),
-            duration_seconds=duration_seconds,
-        )
+        kwargs = {
+            "on_progress": lambda message: _preview_update(task_id, stage=message),
+            "duration_seconds": duration_seconds,
+        }
+        # Backward-compatible entry point for existing 1× preview callers.
+        if speed != 1.0 or preview_text or project_id is not None:
+            kwargs.update(speed=speed, preview_text=preview_text, project_id=project_id)
+        generated = make_sample(**kwargs)
         # make_sample checks the audio file, but verify again just before
         # publishing a ready state. Never publish an empty/truncated WAV.
         _valid_browser_preview(generated)
@@ -573,9 +649,14 @@ def _preview_background(task_id: str, duration_seconds: int) -> None:
         _preview_update(task_id, status="failed", stage=message, error=message)
 
 
-def start_sample(duration_seconds: int = 5) -> dict:
+def start_sample(duration_seconds: int = 5, *, speed: float = 1.0,
+                 preview_text: str = "", project_id: str | None = None) -> dict:
     if type(duration_seconds) is not int or duration_seconds not in SAMPLE_LENGTHS:
         raise ValueError("Hörprobenlänge muss 5, 15, 30 oder 60 Sekunden sein.")
+    speed = verified_speed(speed)
+    preview_text = verified_preview_text(preview_text)
+    if project_id is not None:
+        _studio()._project(project_id)
     if _model_identity() is None:
         raise ValueError("Thorsten-CosyVoice3 muss zuerst vollständig installiert sein.")
     with _PREVIEW_LOCK:
@@ -586,9 +667,11 @@ def start_sample(duration_seconds: int = 5) -> dict:
             "id": task_id, "status": "running", "stage": "Hörprobe wird vorbereitet.",
             "events": [{"at": _now(), "message": f"Hörprobe mit ungefähr {duration_seconds} Sekunden angefordert."}],
             "error": "", "duration_seconds": duration_seconds,
+            "speed": speed, "custom_text": bool(preview_text),
         })
         thread = threading.Thread(
-            target=_preview_background, args=(task_id, duration_seconds),
+            target=_preview_background,
+            args=(task_id, duration_seconds, speed, preview_text, project_id),
             daemon=True, name="studio-preview",
         )
         thread.start()
@@ -905,6 +988,10 @@ def create_job(project_id: str) -> dict:
         raise ValueError("Keine freigegebene deutsche Stimme: zuerst eine echte Hörprobe prüfen.")
     # Persist the canonical Project-V5 text once as a versioned production
     # snapshot. B01 source offsets are joined, never re-extracted from EPUB.
+    # Resolve the private voice setting before the glossary and final
+    # transactional re-check; project deletion after this snapshot remains
+    # a ValueError from the existing delete-vs-create conflict guard.
+    voice_settings = project_voice_settings(project_id)
     glossary = project_glossary(project_id)
     catalogue_path = _studio()._project_dir(project_id) / "chapters.json"
     source_indices = None
@@ -919,6 +1006,7 @@ def create_job(project_id: str) -> dict:
         project_id, _studio()._project_dir(project_id), source_indices,
         glossary, VOICE_ID, _model_identity() or "",
         DE_NORMALIZER_VERSION, _narration_prompt, created_at=_now(),
+        voice_settings={"speed": voice_settings["speed"]},
     )
     segments = plan["segments"]
     job_id = uuid.uuid4().hex
@@ -1099,9 +1187,10 @@ def _run(job_id: str):
                 if not prompt:
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
                 infer_started = time.perf_counter()
+                voice_speed = verified_speed(plan.get("voice_settings", {"speed": 1.0})["speed"])
                 for attempt in range(3):
                     try:
-                        seconds = _synthesize(prompt, path)
+                        seconds = _synthesize_with_speed(prompt, path, voice_speed)
                         break
                     except (RuntimeError, ValueError, subprocess.TimeoutExpired, wave.Error):
                         if attempt == 2:

@@ -152,10 +152,28 @@ def main() -> None:
                                  '"reason":"Thorsten-CosyVoice3 ist installiert. Bitte die Hörprobe freigeben."}',
                         ),
                     )
+                    # Speaker controls must persist for the current project.
+                    # Preview immediately uses the selected speed and own
+                    # *spoken* prompt; no fake emotion instruction is sent.
+                    page.get_by_label("Sprechgeschwindigkeit").select_option("1.05")
+                    page.get_by_label("Eigener Vorlese-Prompt (Hörprobentext)").fill(
+                        "Die Qualität einer Opportunity beginnt mit guter Discovery."
+                    )
+                    page.get_by_role("button", name="Für das Buch speichern").click()
+                    page.get_by_text("Sprechtempo und Hörprobentext für dieses Buch gespeichert.").wait_for()
+                    page.get_by_role("button", name="Sprecher").click()
+                    assert page.get_by_label("Sprechgeschwindigkeit").input_value() == "1.05"
+                    assert "Opportunity" in page.get_by_label(
+                        "Eigener Vorlese-Prompt (Hörprobentext)"
+                    ).input_value()
                     page.get_by_label("Länge der Hörprobe").select_option("15")
                     assert page.get_by_label("Länge der Hörprobe").input_value() == "15"
                     def reject_preview(route):
-                        assert route.request.post_data_json["duration_seconds"] == 15
+                        payload = route.request.post_data_json
+                        assert payload["duration_seconds"] == 15
+                        assert payload["speed"] == 1.05
+                        assert "Opportunity" in payload["preview_text"]
+                        assert payload["project_id"]
                         route.fulfill(
                             status=500, content_type="text/plain",
                             body="Internal Server Error",
