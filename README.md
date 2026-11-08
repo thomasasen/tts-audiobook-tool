@@ -12,7 +12,7 @@ Wähle einen **GPU-Pod**, kein Serverless-Endpoint. Erstelle bzw. wähle zuerst 
 | --- | --- |
 | Template-Name | `German Audiobook Studio – Web` |
 | Image | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` |
-| GPU | 1 × RTX 5000 Ada (32 GB) oder RTX 3090 (24 GB); **eine funktionsfähige Host-Zuweisung ist entscheidend** |
+| GPU | **RTX 4090 (24 GB)** empfohlen, alternativ **L40S (48 GB)**, L4 (24 GB), RTX 3090 (24 GB) oder A100; **keine RTX 5090 / andere Blackwell-GPU** für die aktuell festgelegte Thorsten-Laufzeit |
 | Container Disk | **15 GB** als Testwert, bei Bedarf 20 GB |
 | Network Volume | **60 GB Network Volume** als knapper Testwert; für Hörbuchprojekte und Downloads **80 GB oder mehr empfohlen** |
 | Network-Volume-Mount | `/workspace` |
