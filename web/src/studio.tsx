@@ -101,6 +101,7 @@ type Capabilities = {
   audio_export: boolean
   voice_preview_available: boolean
   voice_installed: boolean
+  voice_install_state?: string
   voice_approved: boolean
   reason: string
   asr?: {state: string; message: string; enabled: boolean; model: string | null}
@@ -808,7 +809,7 @@ export default function Studio() {
             {view === 'voices' && active && <>
               <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Deutsche Erzählerstimme</h1><p>Ausschließlich fertig trainierte Stimmen, keine hochgeladenen Referenzen oder Stimmklone.</p></div></div>
               {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice"><LockKeyhole size={21}/><div><strong>{capabilities?.voice_installed ? 'Thorsten installiert – Hörfreigabe noch offen' : 'Thorsten noch nicht betriebsbereit'}</strong><p>{capabilities?.reason ?? 'Installationsstatus wird geprüft.'}</p></div></div>}
-              <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
+              <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : ['initializing', 'checking-cache', 'downloading', 'installing'].includes(capabilities?.voice_install_state ?? '') ? 'Installation läuft' : ['insufficient-space', 'cuda-unavailable', 'download-failed', 'installation-failed', 'voice-cuda-unavailable', 'bootstrap-failed'].includes(capabilities?.voice_install_state ?? '') ? 'Installation fehlgeschlagen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
                 <div className="voice-sample-settings">
                   <label htmlFor="voice-sample-length">Länge der Hörprobe</label>
                   <select id="voice-sample-length" value={previewDurationSeconds} disabled={busy || previewTask?.status === 'running'} onChange={e => setPreviewDurationSeconds(Number(e.target.value) as 5|15|30|60)}>
