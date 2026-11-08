@@ -95,6 +95,7 @@ type Job = {
   done: number
   total: number
   created_at: string
+  updated_at?: string
   chapter: string
   duration: number
   error: string
@@ -103,7 +104,12 @@ type ActivityEvent = {at: string; message: string}
 type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string; duration_seconds?: number; speed?: number; custom_text?: boolean}
 type VoiceSettings = {speed: number; preview_text: string}
 const VERIFIED_SPEEDS = [0.85, 0.90, 0.95, 1, 1.05, 1.10, 1.15] as const
-type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null; eta_sample_count?: number; calculated_at?: string; export?: {processed: number; total: number; percent: number} | null}
+type JobActivity = {
+  id: string; status: string; done: number; total: number; percent: number
+  events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null
+  eta_sample_count?: number; calculated_at?: string; received_at?: number
+  export?: {processed: number; total: number; percent: number; phase?: 'preparing'|'processing'|'finalizing'|'completed'; remaining_seconds?: number | null; eta_sample_count?: number} | null
+}
 type QualityIssue = {index: number; status: string; reason?: string; warnings: string[]; asr_similarity?: number | null; asr_wer?: number | null; asr_cer?: number | null; asr_number_mismatch?: boolean}
 type QualityReport = {checked: number; unchecked?: number; total: number; issues: QualityIssue[]}
 const STATUS_LABELS: Record<string, string> = {
@@ -163,6 +169,14 @@ async function api<T>(path: string, token: string, init: RequestInit = {}): Prom
   } catch {
     throw new Error(`Ungültige JSON-Antwort (HTTP ${response.status}) bei ${path}. Bitte das RunPod-Webserver-Log prüfen.`)
   }
+}
+
+function liveRemaining(remaining: number | null | undefined, receivedAt: number | undefined, now: number): number | null {
+  if (remaining == null || !Number.isFinite(remaining) || remaining <= 0 || receivedAt === undefined) return null
+  const age = Math.max(0, (now - receivedAt) / 1000)
+  // Never keep counting down an estimate from an unresponsive / stale API.
+  if (!Number.isFinite(age) || age > 15 || age >= remaining) return null
+  return Math.max(1, Math.ceil(remaining - age))
 }
 
 function formatDuration(value: number): string {
@@ -250,7 +264,7 @@ export default function Studio() {
       const activity = await api<JobActivity>(
         `/api/projects/${projectId}/jobs/${jobId}/activity`, token
       )
-      setJobActivity(activity)
+      setJobActivity({...activity, received_at: Date.now()})
     } catch {
       // Older pre-update jobs or a transient activity error must not stop
       // polling the canonical persisted job state.
@@ -848,6 +862,14 @@ export default function Studio() {
   const allChapters = active?.chapters ?? []
   const readChapters = allChapters.filter(c => c.index >= start && !c.is_toc && !excluded.includes(c.index))
   const selectedChapter = allChapters.find(c => c.index === start)
+  const matchingActivity = job && jobActivity?.id === job.id && jobActivity.status === job.status
+    ? jobActivity : null
+  const speechEta = matchingActivity && job?.status === 'running' && matchingActivity.done === job.done
+    ? liveRemaining(matchingActivity.remaining_seconds, matchingActivity.received_at, clockNow) : null
+  const exportActivity = job?.status === 'exporting' ? matchingActivity?.export : null
+  const exportEta = exportActivity?.phase === 'processing'
+    ? liveRemaining(exportActivity.remaining_seconds, matchingActivity?.received_at, clockNow) : null
+  const downloadEta = liveRemaining(downloadProgress?.etaSeconds, downloadProgress?.measuredAt, clockNow)
 
   function toggleExcluded(index: number) {
     if (index === start) return
@@ -1117,8 +1139,11 @@ export default function Studio() {
                   <div className="production-time-metrics" aria-label="Produktionsdauer und Restzeit">
                     <div>
                       <span>Vergangene Zeit</span>
-                      <strong>{formatDuration(Math.max(0, (clockNow - Date.parse(job.created_at)) / 1000))}</strong>
-                      <small>Seit Auftragsbeginn, inklusive Pausen</small>
+                      <strong>{formatDuration(Math.max(0, (
+                        (['generated', 'completed', 'failed', 'cancelled'].includes(job.status)
+                          ? Date.parse(job.updated_at || job.created_at) : clockNow)
+                        - Date.parse(job.created_at)) / 1000))}</strong>
+                      <small>Seit Auftragsbeginn, inklusive Pausen; bei Abschluss angehalten</small>
                     </div>
                     <div>
                       <span>Geschätzte Restzeit</span>
@@ -1126,22 +1151,28 @@ export default function Studio() {
                         : job.status === 'queued' ? 'Wartet auf GPU'
                         : job.status === 'failed' ? 'Fehlgeschlagen'
                         : job.status === 'cancelled' ? 'Abgebrochen'
-                        : ['generated','completed'].includes(job.status) ? '0 Min. 00 Sek.'
-                        : job.status === 'exporting' ? 'Export läuft'
-                        : job.status === 'running' && jobActivity?.id === job.id && jobActivity.remaining_seconds != null && jobActivity.calculated_at
-                          ? formatDuration(Math.max(0, jobActivity.remaining_seconds - (clockNow - Date.parse(jobActivity.calculated_at)) / 1000))
-                          : 'Wird ermittelt …'}</strong>
-                      <small>{job.status === 'running' && jobActivity?.remaining_seconds != null
-                        ? 'Schätzung aus echten Segmentlaufzeiten; alle 3 Sekunden neu berechnet'
-                        : job.status === 'running' ? 'Nach mindestens 3 vollständig gemessenen Segmenten'
-                        : job.status === 'exporting' ? 'Exportzeit nicht zuverlässig vorhersagbar'
+                        : job.status === 'completed' ? 'Abgeschlossen'
+                        : job.status === 'generated' ? 'Audio fertig'
+                        : job.status === 'exporting' && exportActivity?.phase === 'finalizing' ? 'Datei wird abgeschlossen'
+                        : job.status === 'exporting' ? (exportEta !== null ? 'ca. ' + formatDuration(exportEta) : 'Wird ermittelt …')
+                        : job.status === 'running' && job.done === job.total ? 'Letzte Verarbeitungsschritte'
+                        : job.status === 'running' ? (speechEta !== null ? 'ca. ' + formatDuration(speechEta) : 'Wird ermittelt …')
+                        : 'Unbekannt'}</strong>
+                      <small>{job.status === 'running' && speechEta !== null
+                        ? 'Messung aus echten Segmentlaufzeiten; inklusive paralleler Worker'
+                        : job.status === 'running' ? 'Nach mindestens 3 gültigen Segmentmessungen; bei Stillstand keine Prognose'
+                        : job.status === 'exporting' && exportActivity?.phase === 'finalizing'
+                          ? 'AAC-Container wird finalisiert; keine belastbare Restzeit'
+                        : job.status === 'exporting' && exportEta !== null
+                          ? 'Schätzung aus gemessener Exportgeschwindigkeit; Finale nicht enthalten'
+                        : job.status === 'exporting' ? 'Nach mindestens 4 Export-Messpunkten; keine erfundene Restzeit'
                         : 'Keine aktive Restzeitprognose'}</small>
                     </div>
                   </div>
                   {(job.status === 'exporting' || exportPending) && <div role="status" aria-live="polite">
-                    <div className="progress-head"><strong>M4B-Export</strong><span>{jobActivity?.export?.percent ?? 0} %</span></div>
-                    <progress max={Math.max(1, jobActivity?.export?.total ?? job.total)} value={jobActivity?.export?.processed ?? 0} aria-label="Fortschritt M4B-Export"/>
-                    <p>{jobActivity?.export?.processed ?? 0} von {jobActivity?.export?.total ?? job.total} Segmenten verarbeitet · Export läuft im Hintergrund.</p>
+                    <div className="progress-head"><strong>M4B-Export</strong><span>{exportActivity?.percent ?? 0} %</span></div>
+                    <progress max={100} value={exportActivity?.percent ?? 0} aria-label="Fortschritt M4B-Export"/>
+                    <p>{exportActivity?.processed ?? 0} von {exportActivity?.total ?? job.total} Segmenten verarbeitet · {exportActivity?.phase === 'finalizing' ? 'Datei wird abgeschlossen.' : 'Export läuft im Hintergrund.'}</p>
                   </div>}
                   <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
                     <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
@@ -1150,7 +1181,7 @@ export default function Studio() {
                   {job.error && <p className="error" role="alert">{job.error}</p>}
                   {job.status === 'completed' && <p className="helper">Download-Modus: {supportsDirectSave() ? 'Direkt auf Datenträger speichern (streaming, ohne großen Browser-Blob)' : 'Browser-Fallback bis 96 MB. Für größere Bücher Chrome oder Edge verwenden.'}</p>}
                   {downloadPending && chapterDownloadIndex === null && !chapterZipPending && <div role="status" aria-live="polite" className="production-time-metrics">
-                    <span>M4B-Download: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen{downloadProgress?.total ? ` von ${(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB` : ''}</span>
+                    <span>M4B-Download: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen{downloadProgress?.total ? ` von ${(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB` : ''} · {downloadEta !== null ? `ca. ${formatDuration(downloadEta)} verbleibend` : 'Restzeit noch nicht bestimmbar'}</span>
                     <progress aria-label="M4B-Download" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
                   </div>}
                   <div className="job-actions">
@@ -1194,7 +1225,7 @@ export default function Studio() {
                   <button className="primary-btn" disabled={busy || downloadPending} onClick={() => {void startChapterZipDownload()}}><FileAudio size={17}/>{chapterZipPending ? 'ZIP wird übertragen …' : 'Alle Kapitel als ZIP herunterladen'}</button>
                 </div>}
                 {chapterZipPending && <div role="status" aria-live="polite" className="chapter-file-download">
-                  <span>Kapitel-ZIP: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen</span>
+                  <span>Kapitel-ZIP: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen · {downloadEta !== null ? `ca. ${formatDuration(downloadEta)} verbleibend` : 'Gesamtgröße nicht übermittelt; Restzeit offen'}</span>
                   <progress aria-label="Download aller Kapitel" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
                   <button className="text-btn" onClick={() => downloadAbort.current?.abort()}>Abbrechen</button>
                 </div>}
@@ -1222,7 +1253,7 @@ export default function Studio() {
                       </div>
                       {audioUrl && chapterPreviewIndex === chapter.index && <div className="chapter-file-audition"><small className="chapter-audition-label">Hörprobe: {formatDuration(chapter.preview_seconds)} aus diesem Kapitel</small><audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte die WAV-Hörprobe nicht abspielen. Bitte die Datei prüfen.')}/></div>}
                       {downloadPending && chapterDownloadIndex === chapter.index && <div className="chapter-file-download" role="status">
-                        <span>{((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB übertragen</span>
+                        <span>{((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB übertragen · {downloadEta !== null ? `ca. ${formatDuration(downloadEta)} verbleibend` : 'Restzeit noch nicht bestimmbar'}</span>
                         <progress aria-label={`Download Kapitel ${chapter.index + 1}`} max={Math.max(1,downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
                         <button className="text-btn" onClick={() => downloadAbort.current?.abort()}>Abbrechen</button>
                       </div>}
