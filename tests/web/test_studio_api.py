@@ -294,6 +294,41 @@ def test_premature_generation_not_exposed(client):
     assert result["candidates"][0]["status"] == "under_review"
 
 
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("downloading", "heruntergeladen"),
+        ("insufficient-space", "25 GiB"),
+        ("cuda-unavailable", "CUDA-Tensortest"),
+        ("download-failed", "Modelldownload"),
+        ("installation-failed", "Installation ist fehlgeschlagen"),
+        ("skipped", "übersprungen"),
+    ],
+)
+def test_capabilities_explain_private_runpod_install_state(client, state, expected):
+    root = Path(os.environ["AUDIOBOOK_STUDIO_DATA_DIR"])
+    (root / "studio-voice-install-state").write_text(state + "\n", encoding="ascii")
+    result = client.get("/api/capabilities", headers=authorized())
+    assert result.status_code == 200
+    capabilities = result.json()
+    assert capabilities["voice_installed"] is False
+    assert capabilities["voice_preview_available"] is False
+    assert capabilities["voice_install_state"] == state
+    assert expected in capabilities["reason"]
+    assert "studio-access-token" not in capabilities["reason"]
+
+
+def test_capabilities_ignore_untrusted_voice_state_contents(client):
+    root = Path(os.environ["AUDIOBOOK_STUDIO_DATA_DIR"])
+    (root / "studio-voice-install-state").write_text(
+        "unauthorized private-path /workspace/audiobook-data/studio-access-token",
+        encoding="ascii",
+    )
+    result = client.get("/api/capabilities", headers=authorized()).json()
+    assert result["voice_install_state"] == "unknown"
+    assert "studio-access-token" not in result["reason"]
+
+
 def test_preface_fallback_and_toc_exclusion():
     chapters = [
         SimpleNamespace(title="Inhaltsverzeichnis", text="Ein Inhaltsverzeichnis"),
