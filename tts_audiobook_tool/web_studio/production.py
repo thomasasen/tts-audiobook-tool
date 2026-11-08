@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 import wave
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -2096,6 +2097,34 @@ def _export_background(project_id: str, job_id: str) -> None:
                 "updated_at=? WHERE id=? AND status='exporting'", (_now(), job_id),
             )
         _job_event(job_id, "M4B-Export fehlgeschlagen. Privates Server-Log prüfen.")
+
+
+def chapter_download_name(index: int, title: str) -> str:
+    """Stable sortable filenames, safe on Windows and in ZIP archives."""
+    clean = "".join(
+        "_" if char in '/\\:*?"<>|' or unicodedata.category(char).startswith("C") else char
+        for char in title
+    )
+    clean = re.sub(r"\s+", " ", clean).strip(" ._")[:90].rstrip(" .")
+    return f"{index + 1:03d} - {clean or 'Kapitel'}.m4a"
+
+
+def chapter_archive_entries(project_id: str, job_id: str) -> list[tuple[Path, str]]:
+    """Only complete chapter renders belonging to a completed book."""
+    job = public_job(project_id, job_id)
+    if job["status"] != "completed":
+        raise ValueError("Bitte den Hörbuchexport zuerst abschließen.")
+    chapters = _chapter_index(job_id)
+    if not chapters:
+        raise ValueError("Keine fertigen Kapitel vorhanden.")
+    entries = []
+    for chapter in chapters:
+        index = chapter["index"]
+        path = completed_chapter_path(project_id, job_id, index)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Eine Kapiteldatei ist nicht mehr verfügbar.")
+        entries.append((path, chapter_download_name(index, chapter["title"])))
+    return entries
 
 
 def export_job(project_id: str, job_id: str, *, _claimed: bool = False) -> Path:
