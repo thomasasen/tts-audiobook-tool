@@ -299,3 +299,33 @@ def test_v3_v2_and_legacy_dispatch_stable_for_saved_jobs():
     ).hexdigest()
     with pytest.raises(ValueError, match="Unbekannte Normalisierungsversion"):
         production._narration_prompt(text, {}, "de-narration-v99")
+
+
+
+def test_v3_product_names_with_digits_support_explicit_full_glossary_matches():
+    source = "Die SAP S/4HANA-Integration nutzt Term499 und CRM2026."
+    glossary = {
+        "SAP S/4HANA": "SAP ERP",
+        "Term499": "Sonderausdruck",
+        "CRM": "Kundenverwaltung",
+    }
+    assert normalize_german_speech_v3(source, glossary) == (
+        "Die SAP ERP-Integration nutzt Sonderausdruck und CRM2026."
+    )
+
+
+def test_v3_glossary_never_crosses_protected_email_url_or_identifier_fragments():
+    source = "CRM crm@example.com CRM2026 https://example.com/CRM 1. Kapitel"
+    glossary = {"CRM": "System", "CRM202": "verkürzt", "1. Kapitel": "unsicher"}
+    result = normalize_german_speech_v3(source, glossary)
+    assert result == "System crm@example.com CRM2026 https://example.com/CRM 1. Kapitel"
+
+
+def test_v3_interleaved_date_technical_token_glossary_and_currency():
+    source = "Am 15.11.2026 erreicht CRM2026 mit ARR 49,90 €. Siehe www.example.org/49,90."
+    glossary = {"ARR": "jährlich wiederkehrender Umsatz"}
+    assert normalize_german_speech_v3(source, glossary) == (
+        "Am fünfzehnten November zweitausendsechsundzwanzig erreicht CRM2026 "
+        "mit jährlich wiederkehrender Umsatz neunundvierzig Euro und neunzig Cent. "
+        "Siehe www.example.org/49,90."
+    )
