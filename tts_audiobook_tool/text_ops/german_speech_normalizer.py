@@ -290,32 +290,12 @@ def _transform_plain_v3(text: str) -> str:
     return text
 
 
-def _transform_with_glossary_v3(text: str, glossary: dict[str, str],
-                                pattern: re.Pattern[str] | None) -> str:
-    if pattern is None:
-        return _transform_plain_v3(text)
-    result: list[str] = []
-    cursor = 0
-    folded = {key.casefold(): value for key, value in glossary.items()}
-    for match in pattern.finditer(text):
-        result.append(_transform_plain_v3(text[cursor:match.start()]))
-        value = folded.get(match.group().casefold())
-        if value is None:
-            result.append(match.group())
-        else:
-            # Do not recursively process a pronunciation override, including
-            # number-like replacement text.
-            result.append(value[0].upper() + value[1:] if match.group()[0].isupper() and value[0].islower() else value)
-        cursor = match.end()
-    result.append(_transform_plain_v3(text[cursor:]))
-    return "".join(result)
-
-
 def normalize_german_speech_v3(text: str, glossary: dict[str, str]) -> str:
-    """Deterministic speech-only transformation for new German Studio jobs.
+    """Produce one deterministic German speech prompt without changing book text.
 
-    Explicit technical identifiers are opaque; non-obvious English/DE acronym
-    pronunciations are left to the model or an operator-approved glossary.
+    Explicit glossary matches take precedence over complete technical *terms*
+    (including product codes), but never over URLs, emails, dates, currency
+    precision, enumeration labels or partial technical identifiers.
     """
     if not isinstance(text, str):
         raise TypeError("Der Vorlesetext muss eine Zeichenfolge sein.")
@@ -324,15 +304,50 @@ def normalize_german_speech_v3(text: str, glossary: dict[str, str]) -> str:
         return ""
     text = text.replace("\u00ad", "").replace("\u00a0", " ")
     pattern = _compiled_glossary_v3(tuple(sorted(glossary)))
+    protections = list(_PROTECTED_V3.finditer(text))
+    covered_protections: set[int] = set()
+    # A single, nonrecursive list of disjoint events. Glossary rules can span
+    # hyphenated product identifiers without opening up URL/email substrings.
+    events: list[tuple[int, int, str, re.Match[str]]] = []
+    if pattern is not None:
+        for match in pattern.finditer(text):
+            overlapped = [
+                p for p in protections
+                if p.start() < match.end() and p.end() > match.start()
+            ]
+            if any(
+                p.lastgroup != "technical"
+                or match.start() > p.start() or match.end() < p.end()
+                for p in overlapped
+            ):
+                continue
+            for item in overlapped:
+                covered_protections.add(item.start())
+            events.append((match.start(), match.end(), "glossary", match))
+    for item in protections:
+        if item.start() not in covered_protections:
+            events.append((item.start(), item.end(), "protected", item))
+    events.sort(key=lambda event: event[0])
+    folded = {" ".join(key.split()).casefold(): value for key, value in glossary.items()}
     pieces: list[str] = []
     cursor = 0
-    for protected in _PROTECTED_V3.finditer(text):
-        pieces.append(_transform_with_glossary_v3(text[cursor:protected.start()], glossary, pattern))
-        if protected.lastgroup == "date":
-            pieces.append(_spoken_date_v3(protected, text))
+    for start, end, kind, match in events:
+        if start < cursor:
+            continue
+        pieces.append(_transform_plain_v3(text[cursor:start]))
+        if kind == "glossary":
+            value = folded.get(" ".join(match.group().split()).casefold())
+            if value is None:
+                pieces.append(match.group())
+            elif match.group()[0].isupper() and value[0].islower():
+                pieces.append(value[0].upper() + value[1:])
+            else:
+                pieces.append(value)
+        elif match.lastgroup == "date":
+            pieces.append(_spoken_date_v3(match, text))
         else:
-            pieces.append(protected.group())
-        cursor = protected.end()
-    pieces.append(_transform_with_glossary_v3(text[cursor:], glossary, pattern))
-    # One common punctuation/spacing pass, with broad digit expansion disabled.
+            pieces.append(match.group())
+        cursor = end
+    pieces.append(_transform_plain_v3(text[cursor:]))
+    # One common punctuation/spacing pass; no broad per-digit expansion.
     return PromptNormalizer.normalize_prompt("".join(pieces), language_code="")
