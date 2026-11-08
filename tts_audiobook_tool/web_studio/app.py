@@ -669,6 +669,7 @@ def capabilities():
     from .production import _model_identity
     installed = _model_identity() is not None
     approved = installed and production.voice_ready()
+    warmup = production.voice_warmup_state() if installed else "unavailable"
     try:
         install_state = (data_dir() / "studio-voice-install-state").read_text(
             encoding="ascii"
@@ -686,6 +687,12 @@ def capabilities():
             "Thorsten-CosyVoice3 ist installiert. Bitte eine echte Hörprobe "
             "erzeugen, vollständig anhören und anschließend freigeben."
         )
+        if warmup == "loading":
+            reason += " Die Stimme wird bereits im Hintergrund in den GPU-Speicher geladen."
+        elif warmup == "ready":
+            reason += " Die Stimme ist bereits im GPU-Speicher vorgeladen."
+        elif warmup == "failed":
+            reason += " Das automatische Vorladen ist fehlgeschlagen; die Hörprobe kann den Worker erneut starten."
     else:
         reason = VOICE_INSTALL_MESSAGES.get(
             install_state,
@@ -701,6 +708,8 @@ def capabilities():
         "voice_installed": installed,
         "voice_approved": approved,
         "voice_preview_available": installed,
+        "voice_model_loaded": installed and production._model_loaded(),
+        "voice_warmup_state": warmup,
         "asr": asr_quality.capabilities(),
         "reason": reason,
     }

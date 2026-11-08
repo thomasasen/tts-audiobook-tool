@@ -159,6 +159,103 @@ class TestStudioWorkerIntegration(TestCase):
         spec.loader.exec_module(module)
         return module
 
+    def test_idle_preload_warms_one_worker_reused_by_all_segments(self):
+        production = self.load_production()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "infer_thorsten.py"
+            script.write_text("# synthetic model path\n")
+            worker = SimpleNamespace(
+                poll=lambda: None,
+                terminate=mock.Mock(),
+                wait=mock.Mock(),
+                stdin=io.StringIO(),
+                stdout=io.StringIO(),
+            )
+            messages = iter([
+                {"ready": True},
+                {"id": "synthetic-request-id", "ok": True},
+                {"id": "synthetic-request-id", "ok": True},
+            ])
+            studio = SimpleNamespace(data_dir=lambda: root)
+            uid = SimpleNamespace(hex="synthetic-request-id")
+            config = (sys.executable, str(script))
+            with mock.patch.dict("os.environ", {"AUDIOBOOK_STUDIO_PRELOAD_VOICE": "1"}), \
+                 mock.patch.object(production, "_studio", return_value=studio), \
+                 mock.patch.object(production, "_config", return_value=config), \
+                 mock.patch.object(production, "_model_identity", return_value="valid-installed-model"), \
+                 mock.patch.object(production.subprocess, "Popen", return_value=worker) as spawn, \
+                 mock.patch.object(production, "_model_message", side_effect=lambda *args: next(messages)), \
+                 mock.patch.object(production.uuid, "uuid4", return_value=uid):
+                production._STOP.clear()
+                production._WARMUP_ATTEMPTED = False
+                production._WARMUP_STATE = "waiting"
+                production._prewarm_idle_voice()
+                self.assertTrue(production._model_loaded())
+                self.assertEqual(production.voice_warmup_state(), "ready")
+                self.assertTrue(production._WARMUP_ATTEMPTED)
+                self.assertFalse(production._WARMUP_ACTIVE.is_set())
+                production._generate_with_worker("Sentence one", root / "a.wav", config)
+                production._generate_with_worker("Sentence two", root / "b.wav", config)
+                production._prewarm_idle_voice()
+                spawn.assert_called_once()
+                self.assertEqual(len(worker.stdin.getvalue().splitlines()), 2)
+                production._close_model()
+                self.assertFalse(production._model_loaded())
+
+    def test_failed_preload_does_not_retry_endlessly_on_paid_gpu(self):
+        production = self.load_production()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "infer_thorsten.py"
+            script.write_text("# synthetic model path\n")
+            worker = SimpleNamespace(
+                poll=lambda: None,
+                terminate=mock.Mock(),
+                wait=mock.Mock(),
+                stdin=io.StringIO(),
+                stdout=io.StringIO(),
+            )
+            config = (sys.executable, str(script))
+            with mock.patch.dict("os.environ", {"AUDIOBOOK_STUDIO_PRELOAD_VOICE": "1"}), \
+                 mock.patch.object(production, "_studio", return_value=SimpleNamespace(data_dir=lambda: root)), \
+                 mock.patch.object(production, "_config", return_value=config), \
+                 mock.patch.object(production, "_model_identity", return_value="valid-installed-model"), \
+                 mock.patch.object(production.subprocess, "Popen", return_value=worker) as spawn, \
+                 mock.patch.object(production, "_model_message", return_value={"ready": False}):
+                production._STOP.clear()
+                production._WARMUP_ATTEMPTED = False
+                production._WARMUP_STATE = "waiting"
+                production._prewarm_idle_voice()
+                self.assertEqual(production.voice_warmup_state(), "failed")
+                self.assertIsNone(production._MODEL_PROC)
+                production._prewarm_idle_voice()
+                spawn.assert_called_once()
+                worker.terminate.assert_called_once()
+
+    def test_preload_can_be_disabled_or_defers_when_gpu_busy(self):
+        production = self.load_production()
+        with tempfile.TemporaryDirectory() as tmp:
+            config = (sys.executable, str(Path(tmp) / "infer_thorsten.py"))
+            with mock.patch.object(production, "_config", return_value=config), \
+                 mock.patch.object(production, "_model_identity", return_value="model"), \
+                 mock.patch.object(production, "_ensure_model_loaded") as load:
+                production._STOP.clear()
+                production._WARMUP_ATTEMPTED = False
+                with mock.patch.dict("os.environ", {"AUDIOBOOK_STUDIO_PRELOAD_VOICE": "0"}):
+                    production._prewarm_idle_voice()
+                    self.assertEqual(production.voice_warmup_state(), "disabled")
+                self.assertFalse(production._WARMUP_ATTEMPTED)
+                acquired = production._GPU.acquire(blocking=False)
+                self.assertTrue(acquired)
+                try:
+                    with mock.patch.dict("os.environ", {"AUDIOBOOK_STUDIO_PRELOAD_VOICE": "1"}):
+                        production._prewarm_idle_voice()
+                finally:
+                    production._GPU.release()
+                self.assertFalse(production._WARMUP_ATTEMPTED)
+                load.assert_not_called()
+
     def test_parent_distinguishes_cuda_unavailable_from_model_failure(self):
         production = self.load_production()
         with tempfile.TemporaryDirectory() as tmp:

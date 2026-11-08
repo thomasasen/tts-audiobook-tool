@@ -100,6 +100,14 @@ Unter **Hörbuch und Export** erscheinen ein realer Segmentfortschritt, die **ve
 
 **Sprechstil-Prompts:** Für den verwendeten, fest trainierten Thorsten-Sprecher kommt `CosyVoice3.inference_sft(text, "thorsten")` zum Einsatz. Der vom Hersteller dokumentierte CosyVoice3-Instruct-Modus (`inference_instruct2`) erfordert dagegen eine Referenzaufnahme. Da wir keine Referenzaufnahmen oder Benutzer-Stimmklone nutzen und eine Anweisung bei Thorstens SFT-Inferenzpfad nicht nachweislich wirksam wäre, gibt es bewusst **kein freies Sprechstil-Prompt-Feld**. Es wird kein vorgetäuschter Effekt versprochen.
 
+### Automatisches Vorladen von Thorsten in den GPU-Speicher
+
+Nach einer erfolgreichen Thorsten-Installation startet der laufende Webserver **automatisch im Hintergrund** den einen persistenten Thorsten-Worker. Er lädt das Modell bereits vor der ersten Hörprobe in den GPU-Speicher und wartet auf dessen echtes Bereitschaftssignal. Das funktioniert sowohl bei einer bestehenden, geprüften Installation beim Webserverstart als auch beim Erststart, wenn der Webserver vor dem Modelldownload verfügbar wird. Der Webserver und die EPUB-Bedienung bleiben erreichbar. Die Seite **Sprecher** zeigt `Modell wird vorgeladen` bzw. `Im GPU-Speicher · Freigabe offen` an.
+
+**Keine zweite Modellkopie:** Hörprobe und anschließende Buchproduktion verwenden denselben Worker im VRAM. Bei paralleler Hörprobeanforderung wartet diese auf eine laufende Initialisierung, statt mit einer fälschlichen `GPU belegt`-Meldung zu scheitern. Ein fehlgeschlagener Preload wird nicht endlos wiederholt; die manuelle Hörprobe kann eine erneute Initialisierung auslösen. Der VRAM bleibt bis zum Webserver-Stopp bzw. Worker-Absturz belegt. Eine erfolgreiche Modellinitialisierung ist **keine Hörqualitätsabnahme** und hebt die Pflicht zur vollständig angehörten und freigegebenen Hörprobe nicht auf.
+
+Bei Bedarf lässt sich nur das Vorladen mit `AUDIOBOOK_STUDIO_PRELOAD_VOICE=0` deaktivieren; die normale spätere Modellinitialisierung bei der ersten Hörprobe bleibt möglich. Der GPU-Pod wird durch das Vorladen nicht billiger, aber die Wartezeit verlagert sich auf die Zeit vor der ersten Benutzeraktion.
+
 ### Hörprobe und Hörbuchproduktion: Live-Fortschritt und Protokolle
 
 Bei **Sprecher → Echte Hörprobe erzeugen** läuft die Modellinitialisierung und GPU-Synthese als **Hintergrundauftrag**, nicht mehr als blockierende Browseranfrage. Die Oberfläche aktualisiert den Status etwa alle 1,5 Sekunden und zeigt die realen Phasen (GPU-Prüfung, Modellladen, Sprachsynthese, WAV-Prüfung) sowie ein aufklappbares **Protokoll der Hörprobe**. Da CosyVoice3 bei einer einzelnen Hörprobe keine verlässlichen Prozentwerte oder Restzeit liefert, ist die Fortschrittsanzeige dort bewusst **unbestimmt**, bis das fertige WAV tatsächlich geprüft wurde.
