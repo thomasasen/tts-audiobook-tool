@@ -132,6 +132,7 @@ def _validated_b01_spans(catalogue: dict | None, source_index: int, text: str) -
         if (row.get("mapping_status") != "mapped" or not isinstance(start, int)
                 or not isinstance(end, int) or not 0 <= start < end <= len(text)
                 or not isinstance(s0, int) or not isinstance(s1, int) or not 0 <= s0 < s1
+                or s1 - s0 != end - start
                 or not isinstance(row.get("source_href"), str) or not row["source_href"]):
             raise ValueError("NarrationPlan: B01-Quelltextspanne ist nicht zuordenbar.")
         spans.append({
