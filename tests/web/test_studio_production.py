@@ -828,24 +828,29 @@ def test_chapters_publish_incrementally_as_authenticated_m4a(env, monkeypatch):
             assert ready[0]["segment_count"] == 2
             assert ready[0]["duration_seconds"] == pytest.approx(2, abs=.12)
             assert ready[0]["bytes"] > 1024
+            assert ready[0]["preview_seconds"] == pytest.approx(2, abs=.12)
             media = env.get(
                 f"/api/projects/{project_id}/jobs/{job_id}/chapters/0/audio",
                 headers=HEADERS,
             )
             assert media.status_code == 200
-            assert media.headers["content-type"].startswith("audio/mp4")
+            assert media.headers["content-type"].startswith("audio/wav")
             assert "no-store" in media.headers["cache-control"]
-            assert b"ftyp" in media.content[:80]
-            with av.open(io.BytesIO(media.content), format="mp4") as container:
-                assert len(container.streams.audio) == 1
-                decoded = list(container.decode(audio=0))
-                assert len(decoded) > 0
+            with wave.open(io.BytesIO(media.content), "rb") as audition:
+                assert audition.getsampwidth() == 2
+                assert audition.getnchannels() == 1
+                assert audition.getnframes() / audition.getframerate() == pytest.approx(2)
             download = env.get(
                 f"/api/projects/{project_id}/jobs/{job_id}/chapters/0/download",
                 headers=HEADERS,
             )
             assert download.status_code == 200
-            assert download.content == media.content
+            assert download.content != media.content
+            assert b"ftyp" in download.content[:80]
+            with av.open(io.BytesIO(download.content), format="mp4") as container:
+                assert len(container.streams.audio) == 1
+                decoded = list(container.decode(audio=0))
+                assert len(decoded) > 0
             assert "Kapitel-001.m4a" in download.headers["content-disposition"]
             assert env.get(
                 f"/api/projects/{project_id}/jobs/{job_id}/chapters/1/audio",
@@ -889,10 +894,13 @@ def test_incomplete_stale_or_wrong_project_chapter_is_not_downloadable(env, monk
     assert len(index) == 2
     path, meta = production._chapter_audio_paths(job_id, 0)
     path.write_bytes(b"x" * 2048)
+    audition = production._chapter_preview_path(job_id, 0)
+    audition.write_bytes(b"w" * 4096)
     production._atomic_json(meta, {
         "version": production.CHAPTER_AUDIO_CACHE_VERSION,
         "fingerprint": index[0]["fingerprint"], "start": 0, "end": 2,
         "duration": 12.0, "byte_size": 2048,
+        "preview_duration": 4.0, "preview_byte_size": 4096,
     })
     # Matching metadata alone must never expose unfinished audio.
     with studio._db() as db:
@@ -912,6 +920,7 @@ def test_incomplete_stale_or_wrong_project_chapter_is_not_downloadable(env, monk
         "version": production.CHAPTER_AUDIO_CACHE_VERSION,
         "fingerprint": "invalid", "start": 0, "end": 2,
         "duration": 12.0, "byte_size": 2048,
+        "preview_duration": 4.0, "preview_byte_size": 4096,
     })
     assert env.get(base, headers=HEADERS).json()["chapters"] == []
     assert env.get(base + "/0/download", headers=HEADERS).status_code == 404
@@ -928,11 +937,14 @@ def test_retry_invalidates_only_affected_chapter_cache(env, monkeypatch):
     for chapter in idx:
         path, meta = production._chapter_audio_paths(job_id, chapter["index"])
         path.write_bytes(b"m4a" * 1000)
+        preview = production._chapter_preview_path(job_id, chapter["index"])
+        preview.write_bytes(b"wav" * 1000)
         production._atomic_json(meta, {
             "version": production.CHAPTER_AUDIO_CACHE_VERSION,
             "fingerprint": chapter["fingerprint"],
             "start": chapter["start"], "end": chapter["end"],
             "duration": 15.0, "byte_size": path.stat().st_size,
+            "preview_duration": 9.0, "preview_byte_size": preview.stat().st_size,
         })
     original = production._jobs_dir(job_id) / "audio" / "0000000.wav"
     original.parent.mkdir(parents=True)
@@ -941,7 +953,9 @@ def test_retry_invalidates_only_affected_chapter_cache(env, monkeypatch):
     first, _ = production._chapter_audio_paths(job_id, 0)
     second, _ = production._chapter_audio_paths(job_id, 1)
     assert not first.exists()
+    assert not production._chapter_preview_path(job_id, 0).exists()
     assert second.is_file()
+    assert production._chapter_preview_path(job_id, 1).is_file()
     # Progress is reset pending rescan; do not expose even retained chapters.
     base = f"/api/projects/{project_id}/jobs/{job_id}/chapters"
     assert env.get(base, headers=HEADERS).json()["chapters"] == []
