@@ -825,7 +825,7 @@ button:disabled { box-shadow: none; }
 .chapter-file-actions .outline-btn { min-width: 134px; }
 .chapter-file-audition { margin: 14px 0 0 58px; max-width: 640px; }
 .chapter-file-audition .chapter-file-player { display: block; width: 100%; margin-top: 8px; }
-.chapter-file-audition caption { font-size: .75rem; color: var(--muted); }
+.chapter-file-audition .chapter-audition-label { display: block; font-size: .75rem; color: var(--muted); }
 .chapter-file-download {
   display: flex;
   flex-wrap: wrap;
