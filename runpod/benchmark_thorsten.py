@@ -172,7 +172,7 @@ def _summary(rows: list[dict], elapsed: float) -> dict:
     }
 
 
-def benchmark(args) -> dict:
+def _benchmark_unlocked(args) -> dict:
     python = Path(args.python)
     model_root = Path(args.model_root)
     if not python.is_file() or not WORKER.is_file():
@@ -287,6 +287,29 @@ def benchmark(args) -> dict:
                     except subprocess.TimeoutExpired:
                         proc.kill()
                         proc.wait(timeout=5)
+
+
+def benchmark(args) -> dict:
+    """Refuse concurrent Studio ownership of the same persistent GPU root."""
+    import fcntl  # Linux RunPod; the Studio uses the identical process lock.
+
+    model_root = Path(args.model_root)
+    if not model_root.is_dir():
+        return _benchmark_unlocked(args)  # Retain the precise missing-install error.
+    lock_path = model_root.parent.parent / ".gpu-worker.lock"
+    lock_path.touch(mode=0o600, exist_ok=True)
+    with lock_path.open("r+") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                "Studio currently owns the GPU worker lock. "
+                "Stop the Web Studio before benchmarking; never run two model instances."
+            ) from exc
+        try:
+            return _benchmark_unlocked(args)
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def main() -> int:
