@@ -655,7 +655,10 @@ def main() -> None:
                       })
                     }""")
                     page.get_by_role("button", name="Hörbuch und Export").click()
-                    assert export_bar.get_attribute("value") == "100"
+                    page.wait_for_function(
+                        "() => document.querySelector('progress[aria-label=\"Fortschritt M4B-Export\"]')?.value === 100",
+                        timeout=10000,
+                    )
                     page.get_by_role("button", name="M4B herunterladen").click()
                     m4b_bar = page.get_by_label("M4B-Download", exact=True)
                     m4b_bar.wait_for()
