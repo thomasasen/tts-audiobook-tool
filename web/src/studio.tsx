@@ -1139,7 +1139,7 @@ export default function Studio() {
                           <FileAudio size={17}/> {chapterDownloadIndex === chapter.index ? 'Wird gespeichert …' : 'M4A herunterladen'}
                         </button>
                       </div>
-                      {audioUrl && chapterPreviewIndex === chapter.index && <div className="chapter-file-audition"><caption>Hörprobe: {formatDuration(chapter.preview_seconds)} aus diesem Kapitel</caption><audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte die WAV-Hörprobe nicht abspielen. Bitte die Datei prüfen.')}/></div>}
+                      {audioUrl && chapterPreviewIndex === chapter.index && <div className="chapter-file-audition"><small className="chapter-audition-label">Hörprobe: {formatDuration(chapter.preview_seconds)} aus diesem Kapitel</small><audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte die WAV-Hörprobe nicht abspielen. Bitte die Datei prüfen.')}/></div>}
                       {downloadPending && chapterDownloadIndex === chapter.index && <div className="chapter-file-download" role="status">
                         <span>{((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB übertragen</span>
                         <progress aria-label={`Download Kapitel ${chapter.index + 1}`} max={Math.max(1,downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
