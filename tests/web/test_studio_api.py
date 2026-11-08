@@ -5,6 +5,7 @@ These tests intentionally use no downloaded books, models or reference voices.
 from __future__ import annotations
 
 import io
+import json
 import os
 import stat
 import struct
@@ -284,6 +285,39 @@ def test_upload_uses_existing_extractor_and_suggests_preface(client, monkeypatch
     assert len(client.get("/api/projects", headers=authorized()).json()["projects"]) == 1
     source = Path(os.environ["AUDIOBOOK_STUDIO_DATA_DIR"]) / "studio-projects" / project_id / "source.epub"
     assert source.is_file()
+
+
+
+def test_resaving_chapters_preserves_existing_pronunciation_glossary(client):
+    """Actual EPUB -> save chapters -> save glossary -> save chapters again."""
+    from runpod.acceptance_epub import build_epub
+
+    uploaded = client.post(
+        "/api/projects", headers=authorized(),
+        files={"file": ("glossar.epub", build_epub(), "application/epub+zip")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    project = uploaded.json()
+    project_id = project["id"]
+    chapters_url = f"/api/projects/{project_id}/chapters"
+    glossary_url = f"/api/projects/{project_id}/glossary"
+    selection = {"start_index": project["suggested_start"], "excluded_indices": []}
+    first = client.put(chapters_url, headers=authorized(), json=selection)
+    assert first.status_code == 200, first.text
+
+    entries = {"MEDDPICC": "M E D D P I C C", "MongoDB": "Mongo De Be"}
+    saved = client.put(glossary_url, headers=authorized(), json={"entries": entries})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["update"]["status"] == "applied"
+    assert client.get(glossary_url, headers=authorized()).json()["entries"] == entries
+
+    repeated = client.put(chapters_url, headers=authorized(), json=selection)
+    assert repeated.status_code == 200, repeated.text
+    assert client.get(glossary_url, headers=authorized()).json()["entries"] == entries
+    persisted = studio._project_dir(project_id) / "engine" / "project.json"
+    stored = json.loads(persisted.read_text(encoding="utf-8"))
+    assert json.loads(stored["word_substitutions_json_string"]) == entries
+    assert "word_substitutions" not in stored, "Obsolete Studio shadow field must not return"
 
 
 def test_premature_generation_not_exposed(client):
