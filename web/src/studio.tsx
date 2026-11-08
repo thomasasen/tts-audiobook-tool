@@ -84,7 +84,9 @@ type Job = {
   error: string
 }
 type ActivityEvent = {at: string; message: string}
-type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string; duration_seconds?: number}
+type PreviewTask = {id: string | null; status: 'idle'|'running'|'ready'|'failed'; stage: string; events: ActivityEvent[]; error: string; duration_seconds?: number; speed?: number; custom_text?: boolean}
+type VoiceSettings = {speed: number; preview_text: string}
+const VERIFIED_SPEEDS = [0.85, 0.90, 0.95, 1, 1.05, 1.10, 1.15] as const
 type JobActivity = {id: string; status: string; done: number; total: number; percent: number; events: ActivityEvent[]; elapsed_seconds?: number; remaining_seconds?: number | null; eta_sample_count?: number; calculated_at?: string}
 type QualityIssue = {index: number; status: string; reason?: string; warnings: string[]; asr_similarity?: number | null; asr_wer?: number | null; asr_cer?: number | null; asr_number_mismatch?: boolean}
 type QualityReport = {checked: number; unchecked?: number; total: number; issues: QualityIssue[]}
@@ -188,6 +190,9 @@ export default function Studio() {
   const [audioUrl, setAudioUrl] = useState('')
   const [previewPlayed, setPreviewPlayed] = useState(false)
   const [previewDurationSeconds, setPreviewDurationSeconds] = useState<5|15|30|60>(5)
+  const [voiceSpeed, setVoiceSpeed] = useState(1)
+  const [voicePreviewText, setVoicePreviewText] = useState('')
+  const [voiceSettingsDirty, setVoiceSettingsDirty] = useState(false)
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [sampleIndex, setSampleIndex] = useState(0)
   const [previewTask, setPreviewTask] = useState<PreviewTask | null>(null)
@@ -261,7 +266,10 @@ export default function Studio() {
       const task = await api<PreviewTask>('/api/voices/preview/start', token, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({duration_seconds: previewDurationSeconds}),
+        body: JSON.stringify({
+          duration_seconds: previewDurationSeconds, speed: voiceSpeed,
+          preview_text: voicePreviewText, project_id: active?.id ?? null,
+        }),
       })
       setPreviewTask(task)
     } catch (err) {
@@ -614,18 +622,36 @@ export default function Studio() {
     if (!active) return
     setBusy(true); setError('')
     try {
-      const catalog = await api<{ready: VoiceCandidate[], candidates: VoiceCandidate[]}>('/api/voices', token)
-      setVoices([...catalog.ready, ...catalog.candidates])
-      setOwnedAudioUrl(''); setPreviewPlayed(false); setPreviewAudioValid(false)
-      setPreviewAudioError(''); handledPreview.current = null
-      const [caps, task] = await Promise.all([
+      const [catalog, caps, task, settings] = await Promise.all([
+        api<{ready: VoiceCandidate[], candidates: VoiceCandidate[]}>('/api/voices', token),
         api<Capabilities>('/api/capabilities', token),
         api<PreviewTask>('/api/voices/preview/status', token),
+        api<VoiceSettings>(`/api/projects/${active.id}/voice-settings`, token),
       ])
+      setVoices([...catalog.ready, ...catalog.candidates])
+      setVoiceSpeed(settings.speed); setVoicePreviewText(settings.preview_text)
+      setVoiceSettingsDirty(false)
+      setOwnedAudioUrl(''); setPreviewPlayed(false); setPreviewAudioValid(false)
+      setPreviewAudioError(''); handledPreview.current = null
       setCapabilities(caps); setPreviewTask(task)
       setView('voices')
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
+  }
+
+  async function saveVoiceSettings() {
+    if (!active) return
+    setSaving(true); setError('')
+    try {
+      const saved = await api<VoiceSettings>(`/api/projects/${active.id}/voice-settings`, token, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({speed:voiceSpeed, preview_text:voicePreviewText}),
+      })
+      setVoiceSpeed(saved.speed); setVoicePreviewText(saved.preview_text)
+      setVoiceSettingsDirty(false)
+      setNotice('Sprechtempo und Hörprobentext für dieses Buch gespeichert.')
+    } catch (err) { setError((err as Error).message) }
+    finally { setSaving(false) }
   }
 
   // Refresh installation state while the user watches this page: RunPod
@@ -822,7 +848,7 @@ export default function Studio() {
                     <option value={30}>Ca. 30 Sekunden</option>
                     <option value={60}>Ca. 60 Sekunden</option>
                   </select>
-                  <p className="helper">Ungefähre Dauer, da das Sprechtempo variieren kann. Keine Sätze werden abgeschnitten.</p>
+                  <p className="helper">Bei der Standard-Hörprobe wird die Länge über ganze Sätze angenähert. Ein eigener Vorlese-Prompt hat seine natürliche Dauer.</p>
                 </div>
                 <div className="voice-actions"><button className="outline-btn" disabled={busy || !capabilities?.voice_preview_available || previewTask?.status === 'running'} onClick={() => {void startPreview()}}>{previewTask?.status === 'running' ? <LoaderCircle className="spinning" size={17}/> : <PlayCircle size={17}/>} {previewTask?.status === 'running' ? 'Hörprobe wird erzeugt …' : 'Echte Hörprobe erzeugen'}</button>
                 <button className="primary-btn" disabled={busy || !previewPlayed || !previewAudioValid || previewTask?.status !== 'ready'} onClick={async () => {
@@ -830,10 +856,34 @@ export default function Studio() {
                   catch (err) { setError((err as Error).message) }
                 }}><Check size={17}/> Nach Anhören freigeben</button></div>
               </div></section>)}</div>
+              <section className="panel voice-config-panel" aria-label="Thorsten Sprechkonfiguration">
+                <div className="panel-head"><h2>Sprechtempo und Vorlese-Prompt</h2><span className="status-chip">Für dieses Buch</span></div>
+                <p className="helper">Thorsten-CosyVoice3 unterstützt nach Herstellerangaben die Sprechgeschwindigkeit. Dieser Regler ändert das echte Modelltempo in Hörprobe und Buchproduktion.</p>
+                <div className="voice-config-grid">
+                  <div>
+                    <label htmlFor="voice-speed">Sprechgeschwindigkeit</label>
+                    <select id="voice-speed" value={voiceSpeed} disabled={busy || saving} onChange={event => {setVoiceSpeed(Number(event.target.value));setVoiceSettingsDirty(true)}}>
+                      {VERIFIED_SPEEDS.map(value => <option key={value} value={value}>{value.toFixed(2)}× {value === 1 ? '· Originaltempo' : value < 1 ? '· ruhiger' : '· schneller'}</option>)}
+                    </select>
+                    <p className="helper">0,85× bis 1,15×. Kein Regler für Emotionen oder Betonung.</p>
+                  </div>
+                  <div>
+                    <label htmlFor="voice-preview-text">Eigener Vorlese-Prompt (Hörprobentext)</label>
+                    <textarea id="voice-preview-text" rows={4} maxLength={600} value={voicePreviewText} disabled={busy || saving} onChange={event => {setVoicePreviewText(event.target.value);setVoiceSettingsDirty(true)}} placeholder="Zum Beispiel einen Absatz aus deinem Fachbuch eingeben …"/>
+                    <p className="helper">Wird tatsächlich gesprochen, nicht als Stilanweisung interpretiert. Leer lassen für die Standard-Hörprobe. Bei eigenem Text richtet sich die Dauer nach dessen Länge.</p>
+                  </div>
+                </div>
+                <div className="voice-config-actions">
+                  <button className="outline-btn" disabled={busy || saving || !voiceSettingsDirty} onClick={() => {void saveVoiceSettings()}}>{saving ? 'Speichere …' : 'Für das Buch speichern'}<Check size={17}/></button>
+                  <span className="helper">{voiceSettingsDirty ? 'Die Hörprobe verwendet bereits diese Werte; die Buchproduktion erst nach dem Speichern.' : 'Die gespeicherte Geschwindigkeit gilt für alle neuen Buchsegmente.'}</span>
+                </div>
+                <p className="helper voice-prompt-notice">Freie Stil-Prompts wie „lebendiger sprechen“ werden für Thorstens SFT-Stimme nicht angeboten, weil eine verlässliche Wirkung dafür nicht belegt ist. Verwende denselben Text mit verschiedenen Geschwindigkeiten für einen hörbaren A/B-Vergleich.</p>
+              </section>
               {previewTask && previewTask.status !== 'idle' && <section className="panel generation-progress" aria-label="Hörproben-Fortschritt">
                 <div className="panel-head"><h2>{previewTask.status === 'ready' ? 'Hörprobe erzeugt' : previewTask.status === 'failed' ? 'Hörprobe fehlgeschlagen' : 'Hörprobe wird erzeugt'}</h2>
                   <span className="status-chip">{previewTask.status === 'running' ? 'In Bearbeitung' : previewTask.status === 'ready' ? 'Bereit zur Hörkontrolle' : 'Fehler'}</span>
                 </div>
+                {previewTask.speed !== undefined && <p className="helper">Getestetes Tempo: {previewTask.speed.toFixed(2)}× · {previewTask.custom_text ? 'Eigener Vorlesetext' : 'Standard-Hörprobe'}</p>}
                 {previewTask.status === 'failed'
                   ? <div className="message error" role="alert"><AlertCircle size={18}/><span>{previewTask.error || previewTask.stage}</span></div>
                   : <p role="status" aria-live="polite">{previewTask.stage}</p>}
