@@ -90,7 +90,7 @@ def test_real_epub_import_foreword_selection_project_v5_and_queue(client, monkey
     assert plan["voice"] == production.VOICE_ID
 
 
-def test_b01_false_skip_restore_source_mapping_and_manual_speaker_versions(client):
+def test_b01_false_skip_restore_source_mapping_and_manual_speaker_versions(client, monkeypatch):
     epub = build_epub(include_audit_cases=True)
     response = client.post(
         "/api/projects", headers=AUTH,
@@ -202,6 +202,21 @@ def test_b01_false_skip_restore_source_mapping_and_manual_speaker_versions(clien
         assert " ".join(speaker_text.split()) in normalized_spoken
     assert "Rohwert 4711" not in spoken
     assert "Rohcaption" not in spoken
+
+    # B03 must build the real plan from already-imported Project V5 plus
+    # approved human speech overrides, without a second EPUB extraction.
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    production._STOP.set()  # no GPU inference in this source-mapping test
+    response = client.post(f'/api/projects/{project["id"]}/jobs', headers=AUTH)
+    assert response.status_code == 201, response.text[:1500]
+    job = response.json()
+    plan = json.loads((production._jobs_dir(job["id"]) / "plan.json").read_text(encoding="utf-8"))
+    from tts_audiobook_tool.web_studio.narration_plan import validate_narration_plan
+    assert validate_narration_plan(plan) is True
+    assert len(plan["segments"]) == len(production._manifest(project["id"]))
+    assert all(s["source"]["mapping_status"] == "mapped" for s in plan["segments"])
+    for speaker_text in speaker_texts.values():
+        assert speaker_text in "".join(s["original_text"] for s in plan["segments"])
 
 
 def test_protected_session_exposes_restart_nonce_but_public_health_does_not(client):
