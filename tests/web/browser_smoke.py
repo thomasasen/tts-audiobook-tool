@@ -396,9 +396,11 @@ def main() -> None:
                     # authenticated playback and an individual M4A download.
                     import json as json_module
                     m4a = browser_aac_chapter()
+                    chapter_preview = browser_pcm16_wav()
                     chapter_row = {
                         "index": 0, "title": "Vorwort", "segment_count": 3,
-                        "duration_seconds": 1.0, "bytes": len(m4a),
+                        "duration_seconds": 1.0, "preview_seconds": 1.0,
+                        "bytes": len(m4a),
                     }
                     page.route(
                         "**/api/projects/*/jobs/*/chapters",
@@ -410,9 +412,9 @@ def main() -> None:
                     page.route(
                         "**/api/projects/*/jobs/*/chapters/0/audio",
                         lambda route: route.fulfill(
-                            status=200, content_type="audio/mp4",
-                            headers={"Content-Length": str(len(m4a))},
-                            body=m4a,
+                            status=200, content_type="audio/wav",
+                            headers={"Content-Length": str(len(chapter_preview))},
+                            body=chapter_preview,
                         ),
                     )
                     page.route(
@@ -436,6 +438,7 @@ def main() -> None:
                         timeout=20000,
                     )
                     assert chapter_player.evaluate("(audio) => audio.error === null")
+                    assert chapter_player.evaluate("(audio) => audio.currentSrc.startsWith('blob:')")
                     page.evaluate("""() => {
                       window.__chapterSavedName = ''
                       window.__chapterWritten = 0
