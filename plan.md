@@ -65,8 +65,8 @@ Eine Zeile ist ein eigenständig prüfbares PR-Arbeitspaket; nur nachgewiesene A
 | [x] | A03 | P1 | keine | M | Reproduzierbare Releases, Abhängigkeiten und Modelle |
 | [x] | A04 | P2 | keine | M | Speicherfreundliche, authentifizierte Downloads |
 | [x] | B01 | P1 | keine | M | EPUB-Struktur-/Auslassungs-Audit und Vorschau |
-| [ ] | B02 | P1 | B01 | M | Deutsche Textnormalisierung/Fachbegriff-Layer |
-| [ ] | B03 | P1 | A02, B01, B02 | L | Versionierter NarrationPlan mit Text-/Sprechmetadaten |
+| [x] | B02 | P1 | B01 | M | Deutsche Textnormalisierung/Fachbegriff-Layer |
+| [x] | B03 | P1 | A02, B01, B02 | L | Versionierter NarrationPlan mit Text-/Sprechmetadaten |
 | [ ] | B04 | P1 | B02, B03 | M | Buchbezogene, produktionsidentische Hörproben |
 | [ ] | C01 | P1 | B03 | M | Natürliche Satz-/Absatz-/Kapitelübergänge |
 | [ ] | C02 | P1 | A02, C01 | M | Audio-Mastering, Metadaten, Exportvalidierung |
@@ -161,13 +161,16 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 
 **Fundstellen:** Project V5 / book.v3, PhraseGroup-/Reason-Strukturen, tts_audiobook_tool/web_studio/production.py (_manifest, Job-Plan), docs-dev/text-segmentation.md.
 
-- [ ] Ein schlankes versioniertes Zwischenformat für **vorzulesende Einheiten** entwerfen: stabile Kapitel-ID, Reihenfolge, Original-Sprechspanne, normalisierter Prompt, Abschnittstyp (Fließtext/Überschrift/Liste usw.), Grenzgrund, geplante Pause und Modell-/Audio-Konfiguration.
-- [ ] Bestehende Phrase-/Section-Metadaten wiederverwenden; keine zweite eigentliche EPUB-Interpretation.
-- [ ] Mapping von originalen Textspannen zu tatsächlich gerenderten Einheiten und Abdeckungsprüfung einführen; Überschriften nur dann sprechen, wenn sie im gewählten Vorlesetext vorgesehen sind.
-- [ ] Version/Hash in Cache- und Wiederaufnahme-Fingerprints aufnehmen; alte Jobs sicher weiterverwenden oder mit expliziter Migration/Neugenerierung behandeln.
-- [ ] Das Format so schneiden, dass alle kompatiblen Backends denselben texttreuen Plan erhalten und nur Inferenzdetails adaptieren.
+- [x] Ein schlankes versioniertes Zwischenformat für **vorzulesende Einheiten** entwerfen: stabile Kapitel-ID, Reihenfolge, Original-Sprechspanne, normalisierter Prompt, Abschnittstyp (Fließtext/Überschrift/Liste usw.), Grenzgrund, geplante Pause und Modell-/Audio-Konfiguration.
+- [x] Bestehende Phrase-/Section-Metadaten wiederverwenden; keine zweite eigentliche EPUB-Interpretation.
+- [x] Mapping von originalen Textspannen zu tatsächlich gerenderten Einheiten und Abdeckungsprüfung einführen; Überschriften nur dann sprechen, wenn sie im gewählten Vorlesetext vorgesehen sind.
+- [x] Version/Hash in Cache- und Wiederaufnahme-Fingerprints aufnehmen; alte Jobs sicher weiterverwenden oder mit expliziter Migration/Neugenerierung behandeln.
+- [x] Das Format so schneiden, dass alle kompatiblen Backends denselben texttreuen Plan erhalten und nur Inferenzdetails adaptieren.
 
 **Akzeptanz:** Deterministische Einheit-/Kapitelabdeckung, identisches Kapitel-Ordering, sichere Resume-Strategie, Tests für verlorene und doppelte Spannen.
+
+**B03-Codeabschluss (08.11.2026):** Implementiert auf `feature/b03-versioned-narration-plan` als [PR #31](https://github.com/thomasasen/tts-audiobook-tool/pull/31), ohne Merge. Neue Jobs verwenden `narration-plan.v1` (Manifestversion 3), bestehende Project-V5-`book.v3`-PhraseGroups und den B02-v3-Dispatcher. Kapitelindex, pro-Phrase-Offsets, B01-Quellmapping, lückenfreie Nicht-Leerzeichen-Abdeckung, Original-/Prompttrennung, Reason-Grenzen, symbolische Pausen, SHA-256-Fingerprints, WAV-Bytehash und M4B-Exportprüfung sind integriert. Bestandsjobs ohne NarrationPlan (Legacy/v2) behalten den unveränderten Resume- und Cachepfad. Neue Tests einschließlich echter synthetischer EPUB-API-Importe, Sprecherfassungen, WAV-Manipulation und Negativfällen sind in `tests/web/test_narration_plan.py` und `tests/web/test_real_epub_e2e.py` integriert. CI der letzten Codeversion siehe [PR #31 Checks](https://github.com/thomasasen/tts-audiobook-tool/pull/31/checks); **finale Dokumentations-Head-SHA ebenfalls prüfen**. GPU-Hörabnahme und RunPod-Live-Neustart gehören weiterhin E03.
+
 
 ### B04 — Buchbezogene Hörprobe mit Produktionsparität
 
@@ -305,8 +308,8 @@ Die dokumentierten CI-Workflows sollen Web/API, isolierte Web-Runtime, Frontend-
 | A03 | CODE-IMPLEMENTIERUNG IN MASTER · LIVE-ABNAHME OFFEN | [PR #24](https://github.com/thomasasen/tts-audiobook-tool/pull/24), Merge e9085c7 | 79 RunPod-Static-Tests, A03 Lock Generation und German Audiobook Studio auf finalem Head 8a1504e grün | Echte RunPod-GPU, Pod-Neustart/Resume, Live-Upgrade/Rollback und Hörabnahme bleiben in E03 offen |
 | A04 | IN MASTER · technische Abnahme bestanden | [Integrations-PR #20](https://github.com/thomasasen/tts-audiobook-tool/pull/20) (ersetzt #18) | Fünf CI-Checks inklusive Browser-Streaming, 96-MB-Fallback und Range-206 grün | Große echte RunPod-M4B noch nicht heruntergeladen |
 | B01 | TECHNISCH UMGESETZT · PRIVATE EPUB-ABNAHME AUSSTEHEND | [PR #22](https://github.com/thomasasen/tts-audiobook-tool/pull/22), [PR #26](https://github.com/thomasasen/tts-audiobook-tool/pull/26), [PR #27](https://github.com/thomasasen/tts-audiobook-tool/pull/27), [PR #28](https://github.com/thomasasen/tts-audiobook-tool/pull/28) | OPF-/Spine-Audit, Quell-/Vorlesetext-Mapping, Abdeckungsquote, korrigierbare Heuristik-Auslassungen, manuelle Sprecherfassungen, Erkennung ausgelagerter Fußnoten außerhalb des Spine; Backend, Chromium-E2E, Frontend, CPU-ASR und isolierte Runtime grün | Ein komplexes privates EPUB muss noch manuell im Studio geprüft und redaktionell abgenommen werden; Mapping-Prozent ersetzt keine semantische Vollständigkeitsprüfung |
-| B02 | TEILWEISE IN MASTER · NICHT ABGESCHLOSSEN | [PR #23](https://github.com/thomasasen/tts-audiobook-tool/pull/23) | Fünf CI-Checks grün; Golden Cases und rückwärtskompatible Versionierung des Cache-Fingerprints | Umfangreiche Spezialfalltests, Vorschauparität B04 und Hörabnahme fehlen |
-| B03 | OFFEN | — | — | — |
+| B02 | IN MASTER · Codeumfang abgeschlossen | [PR #30](https://github.com/thomasasen/tts-audiobook-tool/pull/30), Merge `36cfef12d80ff93a72fa01b3c44fed92df462877` | 287 pytest bestanden (61 Web, 125 EPUB, 101 Normalisierung) und alle fünf CI-Jobs, [Lauf 42429222117](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42429222117) | Buchbezogene Vorschau B04 sowie menschliche GPU-Hörfreigabe E03 getrennt offen |
+| B03 | CODE UMGESETZT · PR #31 OFFEN, KEIN MERGE | [PR #31](https://github.com/thomasasen/tts-audiobook-tool/pull/31) | Determinismus, echte EPUB-/Project-V5-Kapitel und Sprecherfassungen, B01-Quellenabdeckung, Legacy/v2-Fingerprints, gefrorene B02-v3-Prompts, WAV-Checkpoint/Export, Negativfälle; [CI-Checks](https://github.com/thomasasen/tts-audiobook-tool/pull/31/checks) | Finale PR-Head-CI nach Dokumentationsupdate kontrollieren; GPU- und Hörabnahme E03 bleiben offen |
 | B04 | OFFEN | — | — | — |
 | C01 | OFFEN | — | — | — |
 | C02 | OFFEN | — | — | — |
@@ -516,3 +519,14 @@ Fälle), Browser, Frontend, deployed-web-runtime und CPU-ASR-Smoke.
 Reine Textnormalisierung erfordert keine GPU; echte Stimmen-/Hörqualität
 wurde nicht gemessen. Der abschließende Dokumentationscommit muss ebenfalls
 durch PR-CI geprüft werden.
+
+
+### B03 — Abschließender technischer Gegencheck (08.11.2026)
+
+- **EPUB:** Selektierte Spine-/Navigationskapitel werden nicht erneut geparst. B01-Mapping und Project-V5-Originaltext müssen belegbar genau und in gleicher Lesereihenfolge abgedeckt sein. Gleiche Kapitelüberschriften und gleiche Textformulierung an verschiedenen Orten sind zulässig. Echte synthetische EPUB-E2E mit von Menschen verfassten Sprecherfassungen ist ergänzt.
+- **Python-Architektur:** Versionierte Produktionsschnittstelle statt neuer Parser-/Segmentierungspipeline. `plan.json` ist Produktionssnapshot; `book.v3` bleibt kanonisch. Inhaltshashes ignorieren Erstellungszeiten.
+- **Reliability/Security:** Unbekannte Versionen, geänderte Buch-/Prompt-/Glossar-/Modell-/Audio-Konfiguration, fehlende B01-Quellspannen, überlappende Offsets, unpassende Checkpoints und beschädigte WAV-Bytes dürfen keine unbemerkte Wiederaufnahme ermöglichen. Altjobs bleiben im bisherigen Pfad. Größenbegrenzungen für Zahl der Einheiten und Zeichenumfang, private JSON-Dateien ohne Quelltext-Logging.
+- **Speech-AI:** TTS-Worker erhält bei v3-Aufträgen ausschließlich den im Plan persistierten B02-v3-Prompt; keine zweite Normalisierung oder neue Aussprachebehauptung. Symbolische Pausen sind noch keine DSP-Einfügung.
+- **QA:** Tests prüfen absichtliche Auslassung, Duplikat, Vertauschung, Textgleichheit an unterschiedlichen Positionen, beschädigte Metadaten, WAV-Austausch, Legacy-Hashbytes, Exportprüfung und synthetischen End-to-End-Import. Kein echter GPU-/Hörtest, kein privates EPUB oder Stimmprofil in Git.
+
+**Review-Grenzen:** Der B01-Mappingstatus beweist Zeichenherkunft nach Extraktion, nicht semantische Vollständigkeit grafischer Buchbestandteile; eine endgültige redaktionelle und hörbare Freigabe bleibt E03. Der alte Build- und v2-Resume-Pfad wurde absichtlich nicht migriert. B04, C01 und D01 bleiben eigene Folgeschritte.
