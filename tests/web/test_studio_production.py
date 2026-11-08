@@ -25,6 +25,9 @@ HEADERS = {"Authorization": "Bearer " + TOKEN}
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("AUDIOBOOK_STUDIO_TOKEN", TOKEN)
     monkeypatch.setenv("AUDIOBOOK_STUDIO_DATA_DIR", str(tmp_path / "secure"))
+    # Legacy regression cases intentionally exercise serial operation.
+    # The production default of two workers has a separate new-job test.
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_TTS_WORKERS", "1")
     monkeypatch.delenv("AUDIOBOOK_THORSTEN_SCRIPT", raising=False)
     monkeypatch.delenv("AUDIOBOOK_THORSTEN_PYTHON", raising=False)
     with TestClient(studio.app) as client:
@@ -1281,6 +1284,16 @@ def test_parallel_pause_keeps_only_committed_segments(env, monkeypatch):
     assert (root / "0000000.json").is_file()
     assert not (root / "0000001.wav").exists()
     assert not list(root.glob("*.partial.wav"))
+
+
+def test_default_new_job_is_frozen_at_two_workers(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.delenv("AUDIOBOOK_STUDIO_TTS_WORKERS")
+    job_id = production.create_job(project_id)["id"]
+    plan = json.loads((production._jobs_dir(job_id) / "plan.json").read_text())
+    assert plan["parallel_worker_count"] == 2
 
 
 def test_existing_plan_stays_serial_after_parallel_toggle(env, monkeypatch):
