@@ -457,7 +457,8 @@ def test_changed_glossary_fails_resume_instead_of_mixing_prompts(env, monkeypatc
         production._run(job["id"])
 
 
-def test_export_rejects_missing_or_wrong_plan_checkpoint(env, monkeypatch):
+@pytest.mark.parametrize("invalid_checkpoint", [None, "[]"])
+def test_export_rejects_missing_or_wrong_plan_checkpoint(env, monkeypatch, invalid_checkpoint):
     project_id = uuid.uuid4().hex
     _prepared_studio_project(project_id)
     monkeypatch.setattr(production, "voice_ready", lambda: True)
@@ -465,6 +466,9 @@ def test_export_rejects_missing_or_wrong_plan_checkpoint(env, monkeypatch):
     job = production.create_job(project_id)
     with studio._db() as db:
         db.execute("UPDATE studio_jobs SET status='generated', done=1 WHERE id=?", (job["id"],))
-    _tone(production._jobs_dir(job["id"]) / "audio" / "0000000.wav")
+    wav = production._jobs_dir(job["id"]) / "audio" / "0000000.wav"
+    _tone(wav)
+    if invalid_checkpoint is not None:
+        wav.with_suffix(".json").write_text(invalid_checkpoint, encoding="utf-8")
     with pytest.raises(ValueError, match="Checkpoint"):
         production.export_job(project_id, job["id"])

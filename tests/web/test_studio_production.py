@@ -4,9 +4,12 @@ No model weights, cloned voices or user-owned books are needed for these tests.
 """
 from __future__ import annotations
 
+import errno
 import json
+import logging
 import math
 import struct
+import time
 import uuid
 import wave
 from pathlib import Path
@@ -67,6 +70,63 @@ def prepare_project(project_id: str):
         )
 
 
+@pytest.mark.parametrize("failure", ["disk-full", "memory", "cuda-oom", "invalid-wav"])
+def test_worker_failure_cleans_partial_wav_and_allows_retry(env, monkeypatch, caplog, failure):
+    from test_offline_acceptance import write_tone
+
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_model_identity", lambda: "e03a-synthetic-worker")
+    monkeypatch.setattr(production, "_config", lambda: ("synthetic-python", "synthetic-script"))
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_ASR_MODEL", "")
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "1")
+    marker = "synthetic private book passage"
+    errors = {
+        "disk-full": OSError(errno.ENOSPC, marker),
+        "memory": MemoryError(marker),
+        "cuda-oom": RuntimeError("CUDA out of memory: " + marker),
+    }
+    attempts = []
+
+    def broken_inference(text, path, config, on_progress=None):
+        attempts.append(text)
+        path.write_bytes(b"RIFF")
+        if failure in errors:
+            raise errors[failure]
+
+    monkeypatch.setattr(production, "_generate_with_worker", broken_inference)
+    route = f"/api/projects/{project_id}/jobs"
+    job = env.post(route, headers=HEADERS).json()
+    route += f"/{job['id']}"
+
+    def wait_for(status):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            current = env.get(route, headers=HEADERS).json()
+            if current["status"] == status:
+                return current
+            time.sleep(0.05)
+        pytest.fail(f"Job did not reach {status}")
+
+    with caplog.at_level(logging.WARNING, logger="german-audiobook-studio.engine"):
+        production.init()
+        job = wait_for("failed")
+        assert job["done"] == 0
+        assert len(attempts) == (3 if failure in {"cuda-oom", "invalid-wav"} else 1)
+        assert job["error"] and marker not in job["error"]
+        assert marker not in caplog.text
+        audio = production._jobs_dir(job["id"]) / "audio"
+        assert not list(audio.iterdir())
+        assert env.get(route + "/download", headers=HEADERS).status_code == 404
+        monkeypatch.setattr(production, "_generate_with_worker",
+                            lambda text, path, config, on_progress=None: write_tone(text, path))
+        assert env.post(route + "/control", headers=HEADERS, json={"action": "resume"}).is_success
+        recovered = wait_for("generated")
+        assert recovered["done"] == recovered["total"]
+        assert recovered["error"] == ""
+
+
 def test_private_production_endpoints_fail_closed(env):
     project_id = uuid.uuid4().hex
     assert env.get(f"/api/projects/{project_id}/jobs").status_code == 401
@@ -74,6 +134,19 @@ def test_private_production_endpoints_fail_closed(env):
     assert env.post(f"/api/projects/{project_id}/jobs").status_code == 401
     assert env.post("/api/voices/preview").status_code == 401
     assert env.post("/api/voices/approve").status_code == 401
+
+
+def test_legacy_raw_job_errors_are_redacted_on_detail_and_list(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job = production.create_job(project_id)
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='failed',error=? WHERE id=?",
+                   ("synthetic private path from an earlier version", job["id"]))
+    route = f"/api/projects/{project_id}/jobs"
+    assert env.get(f"{route}/{job['id']}", headers=HEADERS).json()["error"] == production.JOB_FAILURE
+    assert env.get(route, headers=HEADERS).json()["jobs"][0]["error"] == production.JOB_FAILURE
 
 
 def test_voice_is_not_available_without_an_engine_or_a_real_sample(env):
@@ -575,6 +648,10 @@ def test_quality_report_counts_disabled_and_missing_as_unchecked(env, monkeypatc
     assert [issue["index"] for issue in report["issues"]] == [1, 2]
     assert report["issues"][0]["status"] == "not_checked"
     assert report["issues"][1]["reason"] == "Kein Segmentprüfbericht vorhanden."
+    (audio_dir / "0000002.json").write_text("null", encoding="utf-8")
+    report = env.get(endpoint, headers=HEADERS).json()
+    assert report["unchecked"] == 2
+    assert report["issues"][1]["reason"] == "Segmentprüfbericht beschädigt."
 
 
 def test_asr_capabilities_are_authenticated_and_explicit(env, monkeypatch):

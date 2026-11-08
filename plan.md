@@ -263,6 +263,8 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 
 ### E03 — Reale RunPod-/Hörbuch-Abnahme und Release-Gate
 
+**E03-A (08.11.2026):** Der GPU-freie technische Kernlauf ist bestanden. Ein selbst verfasstes EPUB lief über Project V5, NarrationPlan, synthetisches PCM und einen echten lokalen Prozessneustart bis zum vollständig decodierten AAC/M4B. Bericht, Testmatrix und Windows-/Linux-Grenzen stehen in der [E03-A-Offline-Abnahme](docs-dev/e03a-offline-acceptance.md). E03-B und das Release-Gate bleiben offen.
+
 **Vorbereitung:** runpod/ACCEPTANCE.md, runpod/VOICE_EVALUATION.md, runpod/acceptance.py. Nur mit tatsächlich autorisierter privater RunPod-Instanz und geeigneter GPU.
 
 - [ ] Echte CUDA-Tensornutzung, Thorsten-Modellladen, Hörprobe und dokumentierte menschliche Sprecherfreigabe.
