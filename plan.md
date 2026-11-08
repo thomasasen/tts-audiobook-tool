@@ -504,3 +504,15 @@ Casing (mittel), potenziell quadratische Überlappung (mittel).
 Ohne GPU keine akustische Prüfung. Buchbezogene Hörprobe und
 Hörfreigabe bleiben B04/D02/E03.
 
+
+
+**Verifizierte CI-Evidenz (08.11.2026):** Code-Commit
+`f704d4cbb0d1e0008d6dbcc8defd50aea1bc1e70`, GitHub-Actions-Lauf
+https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42429222117 .
+Alle fünf Jobs erfolgreich: Backend (Web-API: **61 passed**, EPUB/Project-V5:
+**125 passed**, deutsche Golden-/Negativtests: **101 passed**; zusammen
+**287 bestandene** Pytest-Fälle, keine fehlgeschlagenen oder übersprungenen
+Fälle), Browser, Frontend, deployed-web-runtime und CPU-ASR-Smoke.
+Reine Textnormalisierung erfordert keine GPU; echte Stimmen-/Hörqualität
+wurde nicht gemessen. Der abschließende Dokumentationscommit muss ebenfalls
+durch PR-CI geprüft werden.
