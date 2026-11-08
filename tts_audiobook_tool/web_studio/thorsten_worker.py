@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 # The parent starts this worker with cwd set to the installed CosyVoice root.
 sys.path.insert(0, os.getcwd())
@@ -92,14 +93,25 @@ def main() -> None:
         with _cpu_speech_tokenizer_frontend():
             model = CosyVoice3("pretrained_models/CosyVoice3-0.5B")
         original_frontend = model.frontend.frontend_sft
+        # The official Thorsten SFT patch uses this exact, immutable prompt.
+        # Tokenize it once on the correct frontend device, not once per sentence.
+        prompt_token, prompt_token_len = model.frontend._extract_text_token(
+            "You are a helpful assistant.<|endofprompt|>"
+        )
+
+        uncached_fixed_prompt = False
 
         def patched_frontend_sft(tts_text, spk_id):
             payload = original_frontend(tts_text, spk_id)
-            prompt_token, prompt_token_len = model.frontend._extract_text_token(
-                "You are a helpful assistant.<|endofprompt|>"
-            )
-            payload["prompt_text"] = prompt_token
-            payload["prompt_text_len"] = prompt_token_len
+            # Benchmark-only reproduction of the previous implementation.
+            if uncached_fixed_prompt:
+                fixed_token, fixed_len = model.frontend._extract_text_token(
+                    "You are a helpful assistant.<|endofprompt|>"
+                )
+            else:
+                fixed_token, fixed_len = prompt_token, prompt_token_len
+            payload["prompt_text"] = fixed_token
+            payload["prompt_text_len"] = fixed_len
             return payload
 
         model.frontend.frontend_sft = patched_frontend_sft
@@ -121,7 +133,14 @@ def main() -> None:
                 raise ValueError("Invalid verified speaking speed")
             if not output.is_absolute() or not isinstance(text, str) or not 1 <= len(text) <= 12000:
                 raise ValueError("Invalid generation input")
+            # Benchmark mode is opt-in. Its CUDA synchronizations are not
+            # introduced into normal narration and cannot change TTS settings.
+            benchmark = request.get("benchmark") is True
+            uncached_fixed_prompt = benchmark and request.get("uncached_fixed_prompt") is True
             with redirect_stdout(sys.stderr), torch.inference_mode():
+                if benchmark and hasattr(torch.cuda, "reset_peak_memory_stats"):
+                    torch.cuda.reset_peak_memory_stats()
+                started = time.perf_counter()
                 chunks = [
                     result["tts_speech"]
                     for result in model.inference_sft(
@@ -130,16 +149,27 @@ def main() -> None:
                 ]
                 if not chunks:
                     raise RuntimeError("Empty TTS output")
-                # Explicitly use browser-compatible 16-bit integer PCM. The
-                # default for floating point TTS tensors may be floating
-                # or higher-bit-depth WAV that some browsers cannot decode.
-                # 16-bit PCM is also supported by Python's wave validator
-                # and downstream M4B encoding.
+                if benchmark:
+                    torch.cuda.synchronize()
+                inference_seconds = time.perf_counter() - started
+                # Explicit browser-compatible signed 16-bit integer PCM.
+                started = time.perf_counter()
                 torchaudio.save(
                     str(output), torch.cat(chunks, dim=1), model.sample_rate,
                     format="wav", encoding="PCM_S", bits_per_sample=16,
                 )
-            print(json.dumps({"id": request["id"], "ok": True}), flush=True)
+                wav_seconds = time.perf_counter() - started
+            response = {"id": request["id"], "ok": True}
+            if benchmark:
+                response["metrics"] = {
+                    "inference_seconds": round(inference_seconds, 6),
+                    "wav_seconds": round(wav_seconds, 6),
+                }
+                if hasattr(torch.cuda, "max_memory_allocated"):
+                    response["metrics"]["peak_allocated_vram_bytes"] = int(
+                        torch.cuda.max_memory_allocated()
+                    )
+            print(json.dumps(response), flush=True)
         except Exception as exc:
             # Diagnose in PRIVATE worker logs: error classes and curated
             # categories, never source text, user paths or third-party

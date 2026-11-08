@@ -80,10 +80,16 @@ class TestThorstenProtocol(TestCase):
             def __init__(self, model_dir):
                 models.append(self)
                 self.assert_model_dir = model_dir
+                self.tokenizations = []
                 onnx.InferenceSession("speech_tokenizer_v3.onnx", providers=["CUDAExecutionProvider"])
+
+                def extract(text):
+                    self.tokenizations.append(text)
+                    return ["token"], 1
+
                 self.frontend = SimpleNamespace(
                     frontend_sft=lambda text, speaker: {"text": text, "speaker": speaker},
-                    _extract_text_token=lambda text: (["token"], 1),
+                    _extract_text_token=extract,
                 )
                 self.sample_rate = 24000
 
@@ -128,6 +134,41 @@ class TestThorstenProtocol(TestCase):
             self.assertEqual(models[0].patch_input["prompt_text"], ["token"])
             self.assertEqual(models[0].patch_input["prompt_text_len"], 1)
             self.assertNotIn("Guten Tag", errors)
+
+    def test_fixed_prompt_tokenized_once_across_multiple_segments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = [str(Path(temp) / f"{i}.wav") for i in (1, 2)]
+            requests = "".join(json.dumps({
+                "id": str(i), "text": f"Fachtext {i}", "output": output,
+            }) + "\n" for i, output in enumerate(paths, start=1))
+            messages, _, _, models = self.run_worker(requests)
+            self.assertEqual(messages, [
+                {"ready": True}, {"id": "1", "ok": True}, {"id": "2", "ok": True},
+            ])
+            self.assertEqual(models[0].tokenizations, [
+                "You are a helpful assistant.<|endofprompt|>"
+            ])
+            self.assertTrue(all(Path(path).is_file() for path in paths))
+
+    def test_benchmark_uncached_prompt_reproduces_old_path_without_affecting_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = [str(Path(temp) / f"{i}.wav") for i in (1, 2, 3)]
+            requests = "".join(json.dumps({
+                "id": str(i), "text": f"Fachtext {i}", "output": output,
+                "benchmark": True,
+                "uncached_fixed_prompt": i in (1, 2),
+            }) + "\n" for i, output in enumerate(paths, start=1))
+            messages, _, _, models = self.run_worker(requests)
+            self.assertEqual([item.get("ok") for item in messages[1:]], [True] * 3)
+            self.assertEqual(len(models), 1)
+            # One initial cached tokenization plus two benchmark-only legacy calls.
+            self.assertEqual(len(models[0].tokenizations), 3)
+            for result in messages[1:]:
+                self.assertGreaterEqual(result["metrics"]["inference_seconds"], 0)
+                self.assertGreaterEqual(result["metrics"]["wav_seconds"], 0)
+            self.assertEqual(
+                [item["id"] for item in messages[1:]], ["1", "2", "3"]
+            )
 
     def test_official_thorsten_speed_passes_to_real_sft_entrypoint(self):
         with tempfile.TemporaryDirectory() as temp:
