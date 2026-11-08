@@ -823,12 +823,9 @@ button:disabled { box-shadow: none; }
 .chapter-file-info small { font-size: .74rem; line-height: 1.45; color: var(--muted); }
 .chapter-file-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: 14px 0 0 58px; }
 .chapter-file-actions .outline-btn { min-width: 134px; }
-.chapter-file-player {
-  display: block;
-  width: calc(100% - 58px);
-  max-width: 640px;
-  margin: 14px 0 0 58px;
-}
+.chapter-file-audition { margin: 14px 0 0 58px; max-width: 640px; }
+.chapter-file-audition .chapter-file-player { display: block; width: 100%; margin-top: 8px; }
+.chapter-file-audition caption { font-size: .75rem; color: var(--muted); }
 .chapter-file-download {
   display: flex;
   flex-wrap: wrap;
@@ -847,6 +844,6 @@ button:disabled { box-shadow: none; }
   .chapter-file-icon { width: 37px; height: 37px; }
   .chapter-file-actions { margin-left: 0; flex-direction: column; }
   .chapter-file-actions > button { width: 100%; }
-  .chapter-file-player { width: 100%; margin-left: 0; }
+  .chapter-file-audition { margin-left: 0; }
   .chapter-file-download { padding-left: 0; }
 }
