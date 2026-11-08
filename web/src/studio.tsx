@@ -567,7 +567,7 @@ export default function Studio() {
     downloadAbort.current = controller
     setDownloadPending(true); setChapterDownloadIndex(chapter.index)
     setDownloadProgress(null); setError('')
-    const safe = chapter.title.replace(/[\\/:*?"<>|\\u0000-\\u001f]/g, '_').trim().slice(0, 78) || 'Kapitel'
+    const safe = chapter.title.replace(/[\u0000-\u001f\\/:*?"<>|]/g, '_').trim().slice(0, 78) || 'Kapitel'
     const filename = `${String(chapter.index + 1).padStart(2, '0')}_${safe}.m4a`
     try {
       const result = await downloadAuthenticatedChapter(
