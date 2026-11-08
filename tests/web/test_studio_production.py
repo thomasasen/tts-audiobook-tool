@@ -503,6 +503,62 @@ def test_late_thorsten_installation_is_detected_without_web_restart(env, monkeyp
     assert approved["tts_generation"] is True
 
 
+def test_studio_recognizes_actual_pinned_thorsten_marker_after_install(env):
+    """Regression: installer writes 289-byte marker; the web server starts first.
+
+    No real GPU or model weights are needed: this checks only the lightweight
+    installed-voice identity handshake, not model inference or integrity.
+    """
+    root = studio.data_dir()
+    before = env.get("/api/capabilities", headers=HEADERS).json()
+    assert before["voice_installed"] is False
+
+    pins = (Path(__file__).resolve().parents[2] / "runpod" / "model-pins.env").read_text(
+        encoding="utf-8"
+    )
+    values = dict(
+        line.split("=", 1) for line in pins.splitlines()
+        if line.startswith(("MODEL_RELEASE_ID=", "THORSTEN_PYTHON_VERSION=", "UV_VERSION="))
+    )
+    # Construct exactly the same format as runpod/install-thorsten.sh. The
+    # lock digest is a fixed synthetic hash, never a fake validated model.
+    version = (
+        values["MODEL_RELEASE_ID"].strip('"')
+        + "-deps-" + "a" * 64
+        + "-py-" + values["THORSTEN_PYTHON_VERSION"].strip('"')
+        + "-uv-" + values["UV_VERSION"].strip('"')
+    )
+    assert len((version + "\n").encode("utf-8")) == 289
+
+    model = root / "models" / "CosyVoice"
+    model.mkdir(parents=True)
+    (model / ".studio-ready").write_text(version + "\n", encoding="utf-8")
+    (model / "infer_thorsten.py").write_text("print('synthetic inference')", encoding="utf-8")
+    (root / "models" / "thorsten-model-sha256.txt").write_text(
+        "synthetic-model-manifest-for-test", encoding="utf-8"
+    )
+    python = root / "venvs" / "thorsten" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("synthetic runtime placeholder", encoding="utf-8")
+
+    # No process restart; next authenticated request must see installation.
+    result = env.get("/api/capabilities", headers=HEADERS)
+    assert result.status_code == 200
+    capabilities = result.json()
+    assert capabilities["voice_installed"] is True
+    assert capabilities["voice_preview_available"] is True
+    assert capabilities["voice_approved"] is False
+    assert capabilities["voice_install_state"] == "installed"
+    assert "Hörprobe" in capabilities["reason"]
+    assert production._model_identity() is not None
+
+    # Still reject unexpectedly oversized markers rather than removing bounds.
+    (model / ".studio-ready").write_text("x" * 513, encoding="utf-8")
+    oversized = env.get("/api/capabilities", headers=HEADERS).json()
+    assert oversized["voice_installed"] is False
+    assert oversized["voice_preview_available"] is False
+
+
 def test_voice_approval_is_invalidated_after_model_or_code_change(env, monkeypatch):
     manifest, script = _prepare_fake_installed_voice(monkeypatch)
     assert production.voice_ready() is False
