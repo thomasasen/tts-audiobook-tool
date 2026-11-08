@@ -87,9 +87,9 @@ def test_parallel_pool_rejects_unbounded_or_nonpartial_work(tmp_path):
 
 
 @pytest.mark.parametrize("configured,expected", [
-    (None, 1), ("1", 1), ("2", 2), ("4", 4),
+    (None, 2), ("1", 1), ("2", 2), ("4", 4),
 ])
-def test_worker_count_is_explicit_opt_in(monkeypatch, configured, expected):
+def test_new_job_worker_count_defaults_to_two_but_allows_explicit_override(monkeypatch, configured, expected):
     if configured is None:
         monkeypatch.delenv("AUDIOBOOK_STUDIO_TTS_WORKERS", raising=False)
     else:
