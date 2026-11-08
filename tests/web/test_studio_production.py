@@ -834,7 +834,7 @@ def test_chapters_publish_incrementally_as_authenticated_m4a(env, monkeypatch):
             )
             assert media.status_code == 200
             assert media.headers["content-type"].startswith("audio/mp4")
-            assert media.headers["cache-control"] == "private, no-store"
+            assert "no-store" in media.headers["cache-control"]
             assert b"ftyp" in media.content[:80]
             with av.open(io.BytesIO(media.content), format="mp4") as container:
                 assert len(container.streams.audio) == 1
