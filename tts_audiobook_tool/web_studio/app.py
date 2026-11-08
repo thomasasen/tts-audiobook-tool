@@ -539,7 +539,17 @@ def select_chapters(project_id: str, selection: ChapterSelection):
 
         engine_dir = directory / "engine"
         engine_dir.mkdir(mode=0o700, exist_ok=True)
-        project = Project(dir_path=str(engine_dir), language_code="de")
+        # Re-selecting chapters rebuilds the text/markers, but must never erase
+        # the project's existing pronunciation rules. A fresh Project() would
+        # otherwise silently reset word_substitutions to its empty default.
+        existing_glossary = (
+            production.project_glossary(project_id)
+            if (engine_dir / "project.json").is_file() else {}
+        )
+        project = Project(
+            dir_path=str(engine_dir), language_code="de",
+            word_substitutions=existing_glossary,
+        )
         error = ProjectTextIOUtil.set_phrase_groups_chapters_and_save(
             project, phrase_groups=selected_groups,
             section_start_indices=selected_markers,
