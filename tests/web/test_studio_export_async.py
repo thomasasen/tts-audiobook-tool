@@ -97,7 +97,8 @@ def test_async_export_returns_202_and_is_duplicate_safe(client, monkeypatch):
         activity = client.get(
             f"/api/projects/{project_id}/jobs/{job_id}/activity", headers=AUTH
         ).json()
-        assert activity["export"] == {"processed": 0, "total": 2, "percent": 0}
+        assert {key: activity["export"][key] for key in ("processed", "total", "percent")} == {"processed": 0, "total": 2, "percent": 0}
+        assert activity["export"]["remaining_seconds"] is None
     finally:
         release.set()
     wait_for(lambda: production._job(job_id)["status"] == "completed")
@@ -205,3 +206,81 @@ def test_archive_rejects_missing_chapter_or_unfinished_job(client):
         db.execute("UPDATE studio_jobs SET status='completed' WHERE id=?", (job_id,))
     production._chapter_audio_paths(job_id, 1)[0].unlink()
     assert client.get(url, headers=AUTH).status_code == 409
+
+
+
+def test_export_activity_estimates_only_real_processing_then_finalizes(client):
+    project_id, job_id = seed_job(status="exporting")
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET done=200,total=200 WHERE id=?", (job_id,))
+    production._write_export_progress(job_id, 0, 200, phase="preparing")
+    path = f"/api/projects/{project_id}/jobs/{job_id}/activity"
+    starting = client.get(path, headers=AUTH).json()["export"]
+    assert starting["phase"] == "preparing"
+    assert starting["remaining_seconds"] is None
+
+    for processed, elapsed in ((25, 4), (50, 8), (75, 12), (100, 16)):
+        production._write_export_progress(
+            job_id, processed, 200, elapsed_seconds=elapsed, phase="processing"
+        )
+    middle = client.get(path, headers=AUTH).json()["export"]
+    assert middle["percent"] == 50
+    assert middle["processed"] == 100
+    assert middle["remaining_seconds"] == 16
+    assert middle["eta_sample_count"] == 3
+
+    production._write_export_progress(job_id, 200, 200, phase="finalizing")
+    finalizing = client.get(path, headers=AUTH).json()["export"]
+    assert finalizing["percent"] == 99
+    assert finalizing["remaining_seconds"] is None
+    assert finalizing["phase"] == "finalizing"
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='completed' WHERE id=?", (job_id,))
+    production._write_export_progress(job_id, 200, 200, phase="completed")
+    completed = client.get(path, headers=AUTH).json()["export"]
+    assert completed["percent"] == 100
+    assert completed["remaining_seconds"] is None
+
+
+def test_speech_eta_uses_frozen_spoken_text_and_expires_after_stall(client):
+    project_id, job_id = seed_job(status="running")
+    directory = production._jobs_dir(job_id)
+    plan = {
+        "segments": [
+            {"text": "Kurz", "speech_text": "A" * 100} for _ in range(3)
+        ] + [
+            {"text": "Kurz", "speech_text": "B" * 200},
+            {"text": "Kurz", "speech_text": "C" * 300},
+        ],
+        "glossary": {},
+    }
+    production._atomic_json(directory / "plan.json", plan)
+    with studio._db() as db:
+        db.execute(
+            "UPDATE studio_jobs SET done=3,total=5,updated_at=? WHERE id=?",
+            (production._now(), job_id),
+        )
+    for index in range(3):
+        production._atomic_json(
+            directory / "audio" / f"{index:07d}.json", {
+                "prompt": "A" * 100, "processing_seconds": 4.0,
+            },
+        )
+    path = f"/api/projects/{project_id}/jobs/{job_id}/activity"
+    active = client.get(path, headers=AUTH).json()
+    assert active["remaining_seconds"] == 20
+    assert active["eta_sample_count"] == 3
+    with studio._db() as db:
+        db.execute(
+            "UPDATE studio_jobs SET updated_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+            (job_id,),
+        )
+    stale = client.get(path, headers=AUTH).json()
+    assert stale["remaining_seconds"] is None
+    with studio._db() as db:
+        db.execute(
+            "UPDATE studio_jobs SET done=5,updated_at=? WHERE id=?",
+            (production._now(), job_id),
+        )
+    all_segments_done = client.get(path, headers=AUTH).json()
+    assert all_segments_done["remaining_seconds"] is None

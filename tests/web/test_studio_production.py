@@ -208,7 +208,7 @@ def test_job_eta_uses_real_persisted_processing_times(env, monkeypatch):
     with studio._db() as db:
         db.execute("UPDATE studio_jobs SET status='generated',done=6 WHERE id=?", (job_id,))
     generated = env.get(endpoint, headers=HEADERS).json()
-    assert generated["remaining_seconds"] == 0
+    assert generated["remaining_seconds"] is None  # Stage finished, no active ETA
     assert generated["percent"] == 100
 
 
