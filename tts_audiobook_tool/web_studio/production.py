@@ -432,10 +432,16 @@ def _synthesize(text: str, path: Path, on_progress=None, speed: float = 1.0) -> 
         if os.environ.get("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "1") == "1":
             _generate_with_worker(text, temp, config, on_progress=on_progress, speed=speed)
         else:
-            # Explicit fallback for debugging only; reloads the full model for
-            # every segment and is unsuitable for long production jobs.
+            # The pinned Thorsten CLI at 3ae98d0 does NOT expose --speed.
+            # Only CosyVoice3.inference_sft (our persistent worker) supports
+            # this verified parameter. Do not invoke nonexistent CLI flags.
+            if speed != 1.0:
+                raise RuntimeError(
+                    "Geändertes Sprechtempo erfordert den persistenten Thorsten-Worker."
+                )
+            # Explicit 1.0× fallback for debugging only; reloads each segment.
             run = subprocess.run(
-                [*config, "--text", text, "--output", str(temp), "--speed", str(speed)],
+                [*config, "--text", text, "--output", str(temp)],
                 stdin=subprocess.DEVNULL, capture_output=True,
                 timeout=600, check=False, cwd=str(Path(config[1]).parent),
             )
