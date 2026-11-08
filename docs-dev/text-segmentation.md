@@ -410,69 +410,69 @@ Finally, dialog classification no longer uses group crossing as evidence. Senten
 ## B03: Versioned NarrationPlan for Studio audiobook production
 
 The Studio persists a dedicated **narration-plan.v1** snapshot as a new job's
-\`plan.json\` (\`version: 3\`). This is an intermediate **production** document,
+`plan.json` (`version: 3`). This is an intermediate **production** document,
 not a new EPUB or Project-V5 schema. The authoritative text remains the
-\`book.v3\` sections and ordered \`PhraseGroup.phrases\` written by the canonical
+`book.v3` sections and ordered `PhraseGroup.phrases` written by the canonical
 EPUB importer. There is **no second EPUB parser or segmenter**.
 
 Pipeline:
 
-\`\`\`text
+```text
 EPUB → existing EpubExtractor/optional B01 source audit
      → Project V5: book.v3 + project_text_raw.txt + chapters.json
      → selected logical BookSections and PhraseGroups
      → narration-plan.v1: source references + B02 de-narration-v3 speech text
      → persisted plan.json → single-GPU worker → WAV checkpoint → M4B export
-\`\`\`
+```
 
 - One planned unit is one **existing nonempty PhraseGroup**, in book section
   order. Empty/whitespace-only groups are not spoken. The unit retains exact
-  untrimmed phrase text as \`original_text\`; the legacy-compatible trimmed
-  group source is \`text\`; the single application of the **existing** B02
-  dispatcher is persisted as \`speech_text\`. Inference reads the latter
+  untrimmed phrase text as `original_text`; the legacy-compatible trimmed
+  group source is `text`; the single application of the **existing** B02
+  dispatcher is persisted as `speech_text`. Inference reads the latter
   directly, without calling the normalizer again.
-- \`unit_id\` identifies original EPUB logical chapter index, PhraseGroup index,
-  and source text digest. \`chapter_id\` depends on selected **source index**,
-  never on the display title. \`position\` and \`chapter_position\` record job
+- `unit_id` identifies original EPUB logical chapter index, PhraseGroup index,
+  and source text digest. `chapter_id` depends on selected **source index**,
+  never on the display title. `position` and `chapter_position` record job
   ordering; repeated labels and identical text at distinct positions are valid.
-- The \`source\` object identifies the canonical \`book.v3\` section,
+- The `source` object identifies the canonical `book.v3` section,
   PhraseGroup, each phrase's exact local character range and existing
-  \`Reason\`. When B01 metadata is present, it also provides EPUB
-  \`source_href\`, original normalized-source range and intersecting
+  `Reason`. When B01 metadata is present, it also provides EPUB
+  `source_href`, original normalized-source range and intersecting
   logical-chapter output offsets. These B01 ranges are provenance, **not**
   fictitious precise DOM- or UTF-8-byte offsets for each phrase.
-- New-job planning compares the selected \`project_text_raw.txt\` with all
+- New-job planning compares the selected `project_text_raw.txt` with all
   PhraseGroups in the same chapter by ordered non-whitespace characters.
   Missing, duplicated or reordered speech characters are a hard error.
   The B01 spans must have valid source/output ranges and cover the selected
   non-whitespace characters once each, without overlaps. Unselected chapters
   and intentionally omitted navigation-only/metadata content are outside the
   planned coverage. A project prepared before B01, without its audit, falls
-  back explicitly to \`mapping_status: book-only\`; it does **not** claim EPUB
+  back explicitly to `mapping_status: book-only`; it does **not** claim EPUB
   source-offset coverage.
-- \`section_type\` uses existing \`Reason.HEADING_END\` and dialogue metadata,
+- `section_type` uses existing `Reason.HEADING_END` and dialogue metadata,
   with a conservative list-prefix hint. It does not invent spoken chapter
-  headings or reconstruct lost HTML structure. \`boundary_reason\` follows
+  headings or reconstruct lost HTML structure. `boundary_reason` follows
   the final Phrase reason, including sentence, paragraph, heading, space
-  break, chapter break and technical word limit. \`pause.kind\` is descriptive,
-  with \`duration_ms: null\` until C01 calibrates actual acoustic timing.
+  break, chapter break and technical word limit. `pause.kind` is descriptive,
+  with `duration_ms: null` until C01 calibrates actual acoustic timing.
 - Model and voice identity, German normalizer version, glossary and fixed
-  WAV/AAC format assumptions are captured in \`audio\` and
-  \`config_fingerprint\`. The \`content_fingerprint\` covers ordered units,
-  prompts, source mapping and pause metadata. The \`book_fingerprint\`
+  WAV/AAC format assumptions are captured in `audio` and
+  `config_fingerprint`. The `content_fingerprint` covers ordered units,
+  prompts, source mapping and pause metadata. The `book_fingerprint`
   represents canonical book section text/reasons and labels; the
-  \`plan_fingerprint\` combines these hashes with schema and project identity.
+  `plan_fingerprint` combines these hashes with schema and project identity.
   All are stable across creation timestamps and JSON key ordering.
 - At worker resume and export, schema/version, order, identifiers, phrase-span
   reconstruction, and fingerprints are verified before using new-plan audio.
   The current Project-V5 text and glossary must still agree with the frozen
   snapshot. Each WAV's private sidecar binds its unit ID, exact prompt,
-  config and per-segment fingerprint. A changed source, prompt, speaker,
+  config, per-segment fingerprint and streaming SHA-256 audio byte digest. A changed source, prompt, speaker,
   model identity, plan version or segment order cannot silently reuse an
   incompatible checkpoint. Segments with unchanged position and compatible
   inputs may be retained.
-- Legacy jobs with no \`version\` or \`version: 2\` keep their existing
-  unversioned/\`de-narration-v2\` or B02-v3 prompt dispatcher, byte-for-byte
+- Legacy jobs with no `version` or `version: 2` keep their existing
+  unversioned/`de-narration-v2` or B02-v3 prompt dispatcher, byte-for-byte
   prior SHA-256 cache formula and M4B chapter behavior. They are **never**
   auto-migrated. Unknown versions are rejected rather than guessed.
 
@@ -484,7 +484,7 @@ On restart, the frozen plan is re-verified. A changed glossary or Project-V5
 source requires a deliberate new job rather than mixing old WAVs with new
 prompts. Damaged checkpoints are regenerated from the frozen plan, provided
 the underlying project and model identity are still compatible. Keep
-\`plan.json\` and segment sidecars private: they contain full book passages and
+`plan.json` and segment sidecars private: they contain full book passages and
 spoken prompts.
 
 This change intentionally does **not** implement B04 book-specific previews,
