@@ -399,6 +399,53 @@ def validate_narration_plan(plan: dict) -> bool:
     return True
 
 
+
+def revise_narration_glossary(
+    plan: dict, entries: dict[str, str],
+    speech_prompt: Callable[[str, dict[str, str], str], str],
+) -> tuple[dict, list[int]]:
+    """Rebase the frozen v3 plan without modifying source text or voice settings.
+
+    Only speech_text can change, and only for the segments whose actual
+    normalized spoken output differs. Recalculate all three consistency hashes
+    and verify the fully revised manifest before it can replace the old one.
+    The caller decides which previously verified WAV checkpoints can migrate.
+    """
+    if not validate_narration_plan(plan):
+        raise ValueError("Historische Aufträge können nicht inkrementell angepasst werden.")
+    from tts_audiobook_tool.text_ops.german_speech_normalizer import validate_german_glossary
+    validate_german_glossary(entries)
+    new_segments: list[dict] = []
+    changed: list[int] = []
+    for index, segment in enumerate(plan["segments"]):
+        spoken = speech_prompt(segment["text"], entries, plan["normalizer_version"])
+        if not isinstance(spoken, str) or not spoken.strip() or len(spoken) > 12000:
+            raise ValueError("Die neue Glossarfassung erzeugt einen ungültigen TTS-Text.")
+        if spoken == segment["speech_text"]:
+            new_segments.append(segment)
+        else:
+            new_segments.append({**segment, "speech_text": spoken})
+            changed.append(index)
+    revised = {**plan, "glossary": dict(entries), "segments": new_segments}
+    revised["content_fingerprint"] = _digest(new_segments)
+    config = {
+        "voice": revised["voice"], "model_identity": revised["model_identity"],
+        "audio": revised["audio"], "glossary": revised["glossary"],
+        "normalizer_version": revised["normalizer_version"],
+    }
+    if "voice_settings" in revised:
+        config["voice_settings"] = revised["voice_settings"]
+    revised["config_fingerprint"] = _digest(config)
+    revised["plan_fingerprint"] = _digest({
+        "schema": SCHEMA, "project_id": revised["project_id"],
+        "book_fingerprint": revised["book_fingerprint"],
+        "content_fingerprint": revised["content_fingerprint"],
+        "config_fingerprint": revised["config_fingerprint"],
+    })
+    validate_narration_plan(revised)
+    return revised, changed
+
+
 def assert_book_unchanged(project_dir: Path, plan: dict) -> None:
     if not validate_narration_plan(plan):
         return
