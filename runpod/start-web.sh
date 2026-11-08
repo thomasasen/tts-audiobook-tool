@@ -35,6 +35,18 @@ if (( ${#AUDIOBOOK_STUDIO_TOKEN} < 32 )); then
 fi
 export AUDIOBOOK_STUDIO_TOKEN
 export AUDIOBOOK_STUDIO_DATA_DIR="$AUDIOBOOK_DATA_ROOT"
+# Two independent Thorsten workers for NEW audiobook jobs by default.
+# Operator may override this through RunPod Pod > Edit Pod > Environment Variables.
+# Existing jobs retain their worker count stored in their immutable plan.
+if [[ ! -v AUDIOBOOK_STUDIO_TTS_WORKERS ]]; then
+  AUDIOBOOK_STUDIO_TTS_WORKERS=2
+fi
+case "$AUDIOBOOK_STUDIO_TTS_WORKERS" in
+  1|2|3|4) ;;
+  *) echo "AUDIOBOOK_STUDIO_TTS_WORKERS must be 1, 2, 3 or 4." >&2; exit 2 ;;
+esac
+export AUDIOBOOK_STUDIO_TTS_WORKERS
+echo "Thorsten workers for new jobs: $AUDIOBOOK_STUDIO_TTS_WORKERS"
 # Optional on-device CPU Whisper ASR checks. Installed/verified by install-web.sh.
 # The first quality check downloads the chosen model onto the private pod.
 # Set AUDIOBOOK_STUDIO_ASR_MODEL=off to disable it; skipped checks are visible.
