@@ -22,7 +22,7 @@ import wave
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tts_audiobook_tool.web_studio import asr_quality
+from tts_audiobook_tool.web_studio import asr_quality, narration_plan
 # Keep the module load lightweight for offline RunPod protocol tests.
 DE_V2_NORMALIZER_VERSION = "de-narration-v2"
 DE_NORMALIZER_VERSION = "de-narration-v3"
@@ -816,15 +816,25 @@ def create_job(project_id: str) -> dict:
         raise ValueError("Bitte zuerst die Kapitelauswahl speichern.")
     if not voice_ready():
         raise ValueError("Keine freigegebene deutsche Stimme: zuerst eine echte Hörprobe prüfen.")
-    segments = _manifest(project_id)
+    # Persist the canonical Project-V5 text once as a versioned production
+    # snapshot. B01 source offsets are joined, never re-extracted from EPUB.
     glossary = project_glossary(project_id)
+    catalogue_path = _studio()._project_dir(project_id) / "chapters.json"
+    source_indices = None
+    if catalogue_path.is_file():
+        catalogue = json.loads(catalogue_path.read_text(encoding="utf-8"))
+        excluded = set(project["excluded_indices"])
+        source_indices = [
+            i for i in range(project["selected_start"], len(catalogue["chapters"]))
+            if i not in excluded
+        ]
+    plan = narration_plan.build_narration_plan(
+        project_id, _studio()._project_dir(project_id), source_indices,
+        glossary, VOICE_ID, _model_identity() or "",
+        DE_NORMALIZER_VERSION, _narration_prompt, created_at=_now(),
+    )
+    segments = plan["segments"]
     job_id = uuid.uuid4().hex
-    plan = {
-        "version": 2, "project_id": project_id, "voice": VOICE_ID,
-        "model_identity": _model_identity() or "",
-        "segments": segments, "glossary": glossary,
-        "normalizer_version": DE_NORMALIZER_VERSION, "created_at": _now(),
-    }
     # Serialize the active-job check with job creation across API requests.
     # Without BEGIN IMMEDIATE, simultaneous requests can create duplicate jobs.
     try:
@@ -833,10 +843,11 @@ def create_job(project_id: str) -> dict:
             # Project deletion can race with manifest preparation. Re-check
             # the canonical project row *inside* this same writer transaction:
             # otherwise a deleted project could gain an orphan audio job.
-            if db.execute(
-                "SELECT 1 FROM studio_projects WHERE id=? AND status IN ('Vorbereitet','Fertig')",
+            current = db.execute(
+                "SELECT updated_at FROM studio_projects WHERE id=? AND status IN ('Vorbereitet','Fertig')",
                 (project_id,),
-            ).fetchone() is None:
+            ).fetchone()
+            if current is None or current["updated_at"] != project["updated_at"]:
                 raise ValueError("Das Projekt wurde zwischenzeitlich gelöscht oder verändert.")
             if db.execute(
                 "SELECT 1 FROM studio_jobs WHERE project_id=? AND status IN ('queued','running','paused','exporting')",
@@ -919,6 +930,8 @@ def _loop():
 
 
 def _segment_fingerprint(segment: dict, plan: dict) -> str:
+    if plan.get("version") == narration_plan.PLAN_VERSION:
+        return narration_plan.segment_fingerprint(segment, plan)
     version = plan.get("normalizer_version")
     if version not in (None, DE_V2_NORMALIZER_VERSION, DE_NORMALIZER_VERSION):
         raise ValueError("Unbekannte Normalisierungsversion im gespeicherten Auftrag.")
@@ -939,7 +952,16 @@ def _run(job_id: str):
     try:
         job = _job(job_id)
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
+        is_narration_plan = narration_plan.validate_narration_plan(plan)
         segments = plan["segments"]
+        if is_narration_plan:
+            if plan["project_id"] != job["project_id"] or len(segments) != job["total"]:
+                raise ValueError("NarrationPlan und Produktionsauftrag stimmen nicht überein.")
+            narration_plan.assert_book_unchanged(
+                _studio()._project_dir(job["project_id"]), plan
+            )
+            if project_glossary(job["project_id"]) != plan["glossary"]:
+                raise ValueError("Das Projektglossar wurde seit Auftragsbeginn verändert.")
         if plan.get("model_identity") and plan["model_identity"] != _model_identity():
             raise ValueError("Die Modellgewichte oder der Inferenzcode haben sich seit Auftragsbeginn geändert.")
         chapter = ""
@@ -955,7 +977,15 @@ def _run(job_id: str):
             seconds = 0.0
             if path.exists() and meta.exists():
                 try:
-                    if json.loads(meta.read_text(encoding="utf-8")).get("fingerprint") == fingerprint:
+                    sidecar = json.loads(meta.read_text(encoding="utf-8"))
+                    valid = sidecar.get("fingerprint") == fingerprint
+                    if is_narration_plan:
+                        valid = valid and (
+                            sidecar.get("unit_id") == segment["unit_id"]
+                            and sidecar.get("prompt") == segment["speech_text"]
+                            and sidecar.get("plan_schema") == narration_plan.SCHEMA
+                        )
+                    if valid:
                         seconds = _valid_audio(path)
                 except (ValueError, OSError, wave.Error):
                     seconds = 0.0
@@ -964,7 +994,10 @@ def _run(job_id: str):
                     _job_event(job_id, f"Sprachsynthese: Segment {i + 1} von {len(segments)} läuft.")
                 path.unlink(missing_ok=True)
                 meta.unlink(missing_ok=True)
-                prompt = _narration_prompt(segment["text"], plan["glossary"], normalizer_version)
+                # B03 prompts are already frozen in the validated plan: do not
+                # normalize a second time. Historical v2/legacy stays unchanged.
+                prompt = (segment["speech_text"] if is_narration_plan else
+                          _narration_prompt(segment["text"], plan["glossary"], normalizer_version))
                 if not prompt:
                     raise ValueError("Leeres Sprachsegment nach Textaufbereitung.")
                 infer_started = time.perf_counter()
@@ -985,6 +1018,13 @@ def _run(job_id: str):
                            "processing_seconds": processing_seconds, "quality": quality}
                 if normalizer_version == DE_NORMALIZER_VERSION:
                     sidecar["normalizer_version"] = normalizer_version
+                if is_narration_plan:
+                    sidecar.update({
+                        "plan_schema": narration_plan.SCHEMA,
+                        "unit_id": segment["unit_id"],
+                        "chapter_id": segment["chapter_id"],
+                        "config_fingerprint": plan["config_fingerprint"],
+                    })
                 _atomic_json(meta, sidecar)
             # Pause/cancel/shutdown may have arrived during a long GPU call.
             # Preserve the valid segment, but never overwrite the new status.
@@ -1135,6 +1175,13 @@ def export_job(project_id: str, job_id: str) -> Path:
         import numpy as np
         import soundfile as sf
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
+        is_narration_plan = narration_plan.validate_narration_plan(plan)
+        if is_narration_plan:
+            if plan["project_id"] != project_id or len(plan["segments"]) != job["total"]:
+                raise ValueError("NarrationPlan und Exportauftrag stimmen nicht überein.")
+            narration_plan.assert_book_unchanged(_studio()._project_dir(project_id), plan)
+            if project_glossary(project_id) != plan["glossary"]:
+                raise ValueError("Das Projektglossar wurde seit Auftragsbeginn verändert.")
         path = _jobs_dir(job_id) / "audiobook.m4b"
         start = 0.0
         chapters = []
@@ -1148,6 +1195,17 @@ def export_job(project_id: str, job_id: str) -> Path:
         _job_event(job_id, "M4B-Export gestartet. Audiosegmente werden zusammengeführt.")
         try:
             for i, segment in enumerate(plan["segments"]):
+                if is_narration_plan:
+                    meta = _jobs_dir(job_id) / "audio" / f"{i:07d}.json"
+                    try:
+                        sidecar = json.loads(meta.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, TypeError) as exc:
+                        raise ValueError("NarrationPlan: Segment-Checkpoint fehlt oder ist beschädigt.") from exc
+                    if (sidecar.get("fingerprint") != _segment_fingerprint(segment, plan)
+                            or sidecar.get("unit_id") != segment["unit_id"]
+                            or sidecar.get("prompt") != segment["speech_text"]
+                            or sidecar.get("plan_schema") != narration_plan.SCHEMA):
+                        raise ValueError("NarrationPlan: Audiosegment passt nicht zum Produktionsplan.")
                 audio, sr = sf.read(str(audio_path(project_id,job_id,i)), dtype="float32", always_2d=True)
                 if writer is None:
                     sample_rate = sr
