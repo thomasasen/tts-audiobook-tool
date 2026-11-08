@@ -27,17 +27,18 @@ async function downloadAuthenticatedAudio(
   name: string,
   signal: AbortSignal,
   onProgress: (value: DownloadProgress) => void,
-  format: 'm4b' | 'm4a',
+  format: 'm4b' | 'm4a' | 'zip',
 ): Promise<{ bytes: number; mode: 'stream' | 'fallback' }> {
-  const label = format === 'm4b' ? 'M4B' : 'Kapitel-M4A'
+  const label = format === 'm4b' ? 'M4B' : format === 'm4a' ? 'Kapitel-M4A' : 'Kapitel-ZIP'
   const picker = (window as FilePickerWindow).showSaveFilePicker
   // The picker must be the *first* awaited operation after a button click:
   // Chromium requires transient user activation. Never fetch before it.
   const sink = picker
     ? await (await picker({
       suggestedName: name,
-      types: [{ description: format === 'm4b' ? 'M4B-Hörbuch' : 'M4A-Hörbuchkapitel',
-        accept: { 'audio/mp4': [format === 'm4b' ? '.m4b' : '.m4a'] } }],
+      types: [{ description: format === 'm4b' ? 'M4B-Hörbuch' : format === 'm4a' ? 'M4A-Hörbuchkapitel' : 'Kapitelarchiv',
+        accept: format === 'zip' ? { 'application/zip': ['.zip'] } :
+          { 'audio/mp4': [format === 'm4b' ? '.m4b' : '.m4a'] } }],
     })).createWritable()
     : null
 
@@ -53,8 +54,11 @@ async function downloadAuthenticatedAudio(
     })
     if (!response.ok) throw new Error(`${label}-Download fehlgeschlagen (HTTP ${response.status}).`)
     const type = response.headers.get('content-type') ?? ''
-    if (!type.startsWith('audio/mp4') && !type.startsWith('application/octet-stream')) {
-      throw new Error(`Der Server hat keine ${label}-Audiodatei geliefert.`)
+    const correctType = format === 'zip'
+      ? type.startsWith('application/zip') || type.startsWith('application/octet-stream')
+      : type.startsWith('audio/mp4') || type.startsWith('application/octet-stream')
+    if (!correctType) {
+      throw new Error(`Der Server hat keine gültige ${label}-Datei geliefert.`)
     }
     const lengthHeader = response.headers.get('content-length')
     const length = lengthHeader === null ? null : Number(lengthHeader)
@@ -100,7 +104,7 @@ async function downloadAuthenticatedAudio(
       await sink.close()
     } else {
       // Only the deliberately bounded fallback allocates a browser Blob.
-      const blob = new Blob(chunks, { type: 'audio/mp4' })
+      const blob = new Blob(chunks, { type: format === 'zip' ? 'application/zip' : 'audio/mp4' })
       const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
       try {
@@ -139,4 +143,12 @@ export function downloadAuthenticatedChapter(
   onProgress: (value: DownloadProgress) => void,
 ) {
   return downloadAuthenticatedAudio(url, token, name, signal, onProgress, 'm4a')
+}
+
+/** Streams a named chapter ZIP without buffering multi-hour audio in memory. */
+export function downloadAuthenticatedChapterZip(
+  url: string, token: string, name: string, signal: AbortSignal,
+  onProgress: (value: DownloadProgress) => void,
+) {
+  return downloadAuthenticatedAudio(url, token, name, signal, onProgress, 'zip')
 }
