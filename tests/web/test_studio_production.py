@@ -92,9 +92,9 @@ def test_canonical_book_manifest_and_project_glossary(env):
     assert [item["text"] for item in items] == [
         "Die Pipeline ist wichtig.", "ARR ist eine Kennzahl.", "Die Prognose folgt."
     ]
-    assert env.get(f"/api/projects/{identifier}/glossary", headers=HEADERS).json() == {
-        "entries": {"ARR": "A R R"}
-    }
+    initial = env.get(f"/api/projects/{identifier}/glossary", headers=HEADERS).json()
+    assert initial["entries"] == {"ARR": "A R R"}
+    assert initial["update"]["status"] == "idle"
     result = env.put(
         f"/api/projects/{identifier}/glossary",
         headers=HEADERS,
@@ -127,10 +127,22 @@ def test_job_queue_control_and_cross_project_isolation(env, monkeypatch):
         headers=HEADERS, json={"action": "pause"},
     )
     assert paused.status_code == 200 and paused.json()["status"] == "paused"
-    assert env.put(
+    edited = env.put(
         f"/api/projects/{identifier}/glossary", headers=HEADERS,
         json={"entries": {"ARR": "anders"}}
-    ).status_code == 409
+    )
+    assert edited.status_code == 200
+    assert edited.json()["update"]["status"] == "pending"
+    assert env.get(
+        f"/api/projects/{identifier}/glossary", headers=HEADERS
+    ).json()["entries"] == {"ARR": "anders"}
+    assert production._process_pending_glossary()
+    result = env.get(
+        f"/api/projects/{identifier}/glossary/update", headers=HEADERS
+    ).json()
+    assert result["status"] == "applied"
+    assert result["affected"] == 1
+    assert production._job(job_id)["status"] == "paused"
     resumed = env.post(
         f"/api/projects/{identifier}/jobs/{job_id}/control",
         headers=HEADERS, json={"action": "resume"},
@@ -977,3 +989,185 @@ def test_duplicate_chapter_titles_keep_separate_source_identity():
         (0, 2, "Einleitung"), (2, 3, "Einleitung"), (3, 4, "Kapitel"),
     ]
     assert len({item["fingerprint"] for item in groups}) == 3
+
+
+def _glossary_mock_audio(text: str, path: Path) -> float:
+    """Deterministic actual PCM16 for checkpoint tests; no GPU or personal EPUB."""
+    rate = 16000
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(rate)
+        output.writeframes(struct.pack("<h", 1500) * rate)
+    return 1.0
+
+
+def test_incremental_glossary_keeps_unaffected_segments_and_chapters(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+    calls = []
+    def synth(text, path):
+        calls.append(text)
+        return _glossary_mock_audio(text, path)
+    monkeypatch.setattr(production, "_synthesize", synth)
+    job_id = production.create_job(project_id)["id"]
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert production._job(job_id)["status"] == "generated"
+    assert len(calls) == 3
+    root = production._jobs_dir(job_id)
+    before_audio = [(root / "audio" / f"{i:07d}.wav").read_bytes() for i in range(3)]
+    before_meta = [
+        json.loads((root / "audio" / f"{i:07d}.json").read_text(encoding="utf-8"))
+        for i in range(3)
+    ]
+    before_chapters = production._chapter_index(job_id)
+    assert production._ready_chapter_audio(job_id, before_chapters[0]) is not None
+    assert production._ready_chapter_audio(job_id, before_chapters[1]) is not None
+    update = env.put(
+        f"/api/projects/{project_id}/glossary", headers=HEADERS,
+        json={"entries": {"ARR": "A A R"}} ,
+    )
+    assert update.status_code == 200
+    assert update.json()["update"]["status"] == "pending"
+    # A second edit is blocked until the first change is committed.
+    second = env.put(
+        f"/api/projects/{project_id}/glossary", headers=HEADERS,
+        json={"entries": {"ARR": "Aaa"}},
+    )
+    assert second.status_code == 409
+    assert production._job(job_id)["status"] == "paused"
+    assert production._process_pending_glossary()
+    result = env.get(f"/api/projects/{project_id}/glossary/update", headers=HEADERS).json()
+    assert result["status"] == "applied"
+    assert result["affected"] == 1
+    assert result["preserved"] == 2
+    assert result["total"] == 3
+    assert production._job(job_id)["status"] == "queued"
+    after_chapters = production._chapter_index(job_id)
+    assert production._ready_chapter_audio(job_id, after_chapters[0]) is None
+    assert production._ready_chapter_audio(job_id, after_chapters[1]) is not None
+    assert not (root / "audio" / "0000001.wav").exists()
+    assert not (root / "audio" / "0000001.json").exists()
+    for i in (0, 2):
+        assert (root / "audio" / f"{i:07d}.wav").read_bytes() == before_audio[i]
+        new_meta = json.loads((root / "audio" / f"{i:07d}.json").read_text())
+        assert new_meta["audio_sha256"] == before_meta[i]["audio_sha256"]
+        assert new_meta["fingerprint"] != before_meta[i]["fingerprint"]
+
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert len(calls) == 4, "Only the genuinely changed spoken segment may be resynthesized"
+    assert "A A R" in calls[-1]
+    assert production._job(job_id)["status"] == "generated"
+    assert all(production._ready_chapter_audio(job_id, item) for item in after_chapters)
+
+
+def test_glossary_edit_during_gpu_inference_pauses_at_segment_boundary(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+    job_id = production.create_job(project_id)["id"]
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    calls = []
+    def synth(text, path):
+        calls.append(text)
+        if len(calls) == 1:
+            response = env.put(
+                f"/api/projects/{project_id}/glossary", headers=HEADERS,
+                json={"entries": {"ARR": "A A R"}},
+            )
+            assert response.status_code == 200
+            assert response.json()["update"]["status"] == "pending"
+            assert production._job(job_id)["status"] == "paused"
+        return _glossary_mock_audio(text, path)
+    monkeypatch.setattr(production, "_synthesize", synth)
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert len(calls) == 1
+    assert (production._jobs_dir(job_id) / "audio" / "0000000.json").is_file()
+    assert production._job(job_id)["status"] == "paused"
+    assert production._process_pending_glossary()
+    assert production._job(job_id)["status"] == "queued"
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    # The originally completed segment was retained; two remaining segments
+    # include exactly one with a new pronunciation.
+    assert len(calls) == 3
+    assert production._job(job_id)["status"] == "generated"
+
+
+def test_glossary_rule_not_used_causes_no_audio_regeneration(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job_id = production.create_job(project_id)["id"]
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='generated',done=3 WHERE id=?", (job_id,))
+    result = env.put(
+        f"/api/projects/{project_id}/glossary", headers=HEADERS,
+        json={"entries": {"ARR": "A R R", "Begriff ohne Vorkommen": "neue Form"}},
+    )
+    assert result.status_code == 200
+    assert production._process_pending_glossary()
+    status = env.get(f"/api/projects/{project_id}/glossary/update", headers=HEADERS).json()
+    assert status["affected"] == 0
+    assert production._job(job_id)["status"] == "generated"
+    assert production.project_glossary(project_id)["Begriff ohne Vorkommen"] == "neue Form"
+
+
+def test_glossary_revision_survives_interruption_mid_migration(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job_id = production.create_job(project_id)["id"]
+    assert env.put(
+        f"/api/projects/{project_id}/glossary", headers=HEADERS,
+        json={"entries": {"ARR": "A A R"}},
+    ).status_code == 200
+    orig = production._atomic_json
+    fail_once = [True]
+    def crash_on_project_glossary(path, data):
+        if (Path(path).name == "project.json"
+                and fail_once[0]):
+            fail_once[0] = False
+            raise OSError("simulated process interruption before project commit")
+        return orig(path, data)
+    monkeypatch.setattr(production, "_atomic_json", crash_on_project_glossary)
+    assert production._process_pending_glossary()
+    failed = production.glossary_update_status(project_id)
+    assert failed["status"] == "failed"
+    assert production._job(job_id)["status"] == "paused"
+    assert production._glossary_pending_path(project_id).is_file()
+    monkeypatch.setattr(production, "_atomic_json", orig)
+    production._GLOSSARY_APPLY_FAILED.clear()  # equivalent to recovery initialization
+    assert production._process_pending_glossary()
+    applied = production.glossary_update_status(project_id)
+    assert applied["status"] == "applied"
+    assert applied["affected"] == 1
+    assert not production._glossary_pending_path(project_id).exists()
+    assert production._job(job_id)["status"] == "queued"
+    assert production.project_glossary(project_id)["ARR"] == "A A R"
