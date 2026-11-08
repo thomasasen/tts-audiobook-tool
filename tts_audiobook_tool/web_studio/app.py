@@ -827,9 +827,9 @@ def list_chapter_files(project_id: str, job_id: str):
 def play_chapter(project_id: str, job_id: str, chapter_index: int):
     """Authorized AAC file for the authenticated fetch-to-Blob chapter player."""
     try:
-        path = production.completed_chapter_path(project_id, job_id, chapter_index)
+        path = production.completed_chapter_path(project_id, job_id, chapter_index, preview=True)
         return FileResponse(
-            path, media_type="audio/mp4",
+            path, media_type="audio/wav",
             headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
             content_disposition_type="inline",
         )
