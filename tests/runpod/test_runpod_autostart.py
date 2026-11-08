@@ -220,8 +220,12 @@ class TestRunPodAutostart(unittest.TestCase):
         self.assertIn('for ((cuda_attempt=1; cuda_attempt<=2; cuda_attempt++)); do', source)
         self.assertIn('write_voice_state cuda-unavailable', source)
         self.assertIn("START ABGEBROCHEN: CUDA funktioniert", source)
+        self.assertIn("START ABGEBROCHEN: DIE GPU IST ZU NEU FUER DIE THORSTEN-LAUFZEIT", source)
+        self.assertIn("GPU_ARCH_UNSUPPORTED=1", source)
+        self.assertIn("--require-thorsten-compatible", source)
+        self.assertIn("RTX 4090, L40S, L4, RTX 3090 oder A100", source)
         self.assertIn("kostenpflichtigen Pod im RunPod-Dashboard STOPPEN", source)
-        self.assertIn('exit 1\n  fi\n  echo "CUDA preflight PASSED.', source)
+        self.assertIn('exit 1\n  fi\n  echo "CUDA preflight PASSED:', source)
         self.assertIn('local state="$1" tmp="$VOICE_STATE_FILE.tmp.$"', source)
         self.assertEqual(source.count('python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json'), 1)
 
