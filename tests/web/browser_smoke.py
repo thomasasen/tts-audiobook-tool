@@ -291,6 +291,11 @@ def main() -> None:
                     )
                     page.get_by_role("button", name="Echte Hörprobe erzeugen").click()
                     page.get_by_text("Hörprobe wird vorbereitet.", exact=True).wait_for()
+                    # The TTS model does not emit percentage checkpoints.
+                    # Its native progress element MUST stay indeterminate.
+                    preview_bar = page.get_by_label("Hörprobe wird verarbeitet (Fortschritt der Modellberechnung nicht messbar)")
+                    preview_bar.wait_for()
+                    assert preview_bar.get_attribute("value") is None
                     page.get_by_text("Protokoll der Hörprobe (1 Einträge)").click()
                     page.get_by_text("Hörprobe angefordert.", exact=True).wait_for()
                     state["status"] = "failed"
@@ -428,17 +433,20 @@ def main() -> None:
                             body=json.dumps({"jobs": [production_job]}),
                         ),
                     )
+                    activity_state = {
+                        "status": "running", "done": 3, "total": 6,
+                        "percent": 50, "elapsed_seconds": 120,
+                        "remaining_seconds": 240, "eta_sample_count": 3,
+                        "events": [{"at": simulated_now.isoformat(),
+                                    "message": "3 von 6 Audiosegmenten fertig."}],
+                    }
                     page.route(
                         "**/api/projects/*/jobs/*/activity",
                         lambda route: route.fulfill(
                             status=200, content_type="application/json",
                             body=json.dumps({
-                                "id": "b" * 32, "status": "running", "done": 3, "total": 6,
-                                "percent": 50, "elapsed_seconds": 120,
-                                "remaining_seconds": 240, "eta_sample_count": 3,
+                                "id": "b" * 32, **activity_state,
                                 "calculated_at": datetime.now(timezone.utc).isoformat(),
-                                "events": [{"at": simulated_now.isoformat(),
-                                            "message": "3 von 6 Audiosegmenten fertig."}],
                             }),
                         ),
                     )
@@ -498,12 +506,22 @@ def main() -> None:
                         window.__chapterSavedName = options.suggestedName
                         return {createWritable: async () => ({
                           write: async chunk => {window.__chapterWritten += chunk.byteLength},
-                          close: async () => {window.__chapterClosed = true},
+                          close: async () => {
+                            await new Promise(resolve => setTimeout(resolve, 700))
+                            window.__chapterClosed = true
+                          },
                           abort: async () => {throw new Error('unexpected chapter abort')},
                         })}
                       }
                     }""")
                     page.get_by_role("button", name="M4A herunterladen").click()
+                    chapter_bar = page.get_by_label("Download Kapitel 1", exact=True)
+                    chapter_bar.wait_for()
+                    page.wait_for_function(
+                        "() => document.querySelector('progress[aria-label=\"Download Kapitel 1\"]')?.value === 99",
+                        timeout=10000,
+                    )
+                    assert chapter_bar.get_attribute("max") == "100"
                     page.wait_for_function("() => window.__chapterClosed === true", timeout=12000)
                     assert page.evaluate("window.__chapterWritten") == len(m4a)
                     assert page.evaluate("window.__chapterSavedName").endswith("_Vorwort.m4a")
@@ -519,11 +537,32 @@ def main() -> None:
                         " return e.length === 2 && e[1].textContent?.includes('Min.'); }",
                         timeout=10000,
                     )
-                    assert page.get_by_label("Fertiggestellte Audiosegmente").get_attribute("value") == "3"
+                    speech_bar = page.get_by_label("Fertiggestellte Audiosegmente")
+                    assert speech_bar.get_attribute("value") == "3"
+                    assert speech_bar.get_attribute("max") == "6"
+                    # The real UI must advance from polls, then retain progress
+                    # while paused rather than resetting to zero.
+                    production_job["done"] = 5
+                    activity_state.update(done=5, percent=83)
+                    page.wait_for_function(
+                        "() => document.querySelector('progress[aria-label=\"Fertiggestellte Audiosegmente\"]')?.value === 5",
+                        timeout=12000,
+                    )
+                    production_job["status"] = "paused"
+                    activity_state["status"] = "paused"
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    page.get_by_role("button", name="Fortsetzen").wait_for()
+                    assert speech_bar.get_attribute("value") == "5"
+                    production_job["status"] = "running"
+                    activity_state["status"] = "running"
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    page.get_by_role("button", name="Pausieren").wait_for()
+                    assert speech_bar.get_attribute("value") == "5"
                     # A generated job with missing ASR cannot show a
                     # misleading 'all checked' banner in the built React UI.
                     production_job["status"] = "generated"
                     production_job["done"] = 6
+                    activity_state.update(status="generated", done=6, percent=100, remaining_seconds=None)
                     page.route(
                         "**/api/projects/*/jobs/*/quality",
                         lambda route: route.fulfill(
@@ -539,11 +578,48 @@ def main() -> None:
                     page.get_by_role("button", name="Hörbuch und Export").click()
                     page.get_by_text("5 nicht per ASR geprüft", exact=False).wait_for()
                     page.get_by_text("ASR ist nicht installiert.", exact=False).wait_for()
+                    assert speech_bar.get_attribute("value") == "6"
                     page.unroute("**/api/projects/*/jobs/*/quality")
+                    # The export bar must progress 0 (unmeasured) -> 50 -> 99
+                    # (container finalization) -> 100 (durably completed).
+                    production_job["status"] = "exporting"
+                    activity_state.update(status="exporting", export={
+                        "processed": 0, "total": 6, "percent": 0,
+                        "phase": "preparing", "remaining_seconds": None,
+                    })
+                    page.get_by_role("button", name="Hörbuch und Export").click()
+                    export_bar = page.get_by_label("Fortschritt M4B-Export")
+                    export_bar.wait_for()
+                    assert export_bar.get_attribute("value") is None, (
+                        "No export measurements: progress must be indeterminate."
+                    )
+                    activity_state["export"] = {
+                        "processed": 3, "total": 6, "percent": 50,
+                        "phase": "processing", "remaining_seconds": 120,
+                    }
+                    page.wait_for_function(
+                        "() => document.querySelector('progress[aria-label=\"Fortschritt M4B-Export\"]')?.value === 50",
+                        timeout=12000,
+                    )
+                    activity_state["export"] = {
+                        "processed": 6, "total": 6, "percent": 99,
+                        "phase": "finalizing", "remaining_seconds": None,
+                    }
+                    page.wait_for_function(
+                        "() => document.querySelector('progress[aria-label=\"Fortschritt M4B-Export\"]')?.value === 99",
+                        timeout=12000,
+                    )
+                    assert "abgeschlossen" in page.get_by_text(
+                        "Datei wird abgeschlossen.", exact=False
+                    ).inner_text()
                     # Actual browser download path: file-save picker first,
                     # authenticated fetch, streamed writes, close and errors.
                     production_job["status"] = "completed"
                     production_job["done"] = 6
+                    activity_state.update(status="completed", export={
+                        "processed": 6, "total": 6, "percent": 100,
+                        "phase": "completed", "remaining_seconds": None,
+                    })
                     page.route(
                         "**/api/projects/*/jobs/*/download",
                         lambda route: route.fulfill(
@@ -560,13 +636,25 @@ def main() -> None:
                       window.showSaveFilePicker = async () => ({
                         createWritable: async () => ({
                           write: async part => { window.__fileWritten += part.byteLength },
-                          close: async () => { window.__fileClosed = true },
+                          close: async () => {
+                            await new Promise(resolve => setTimeout(resolve, 700))
+                            window.__fileClosed = true
+                          },
                           abort: async () => { window.__fileAborted = true },
                         }),
                       })
                     }""")
                     page.get_by_role("button", name="Hörbuch und Export").click()
+                    assert export_bar.get_attribute("value") == "100"
                     page.get_by_role("button", name="M4B herunterladen").click()
+                    m4b_bar = page.get_by_label("M4B-Download", exact=True)
+                    m4b_bar.wait_for()
+                    page.wait_for_function(
+                        "() => document.querySelector('progress[aria-label=\"M4B-Download\"]')?.value === 99",
+                        timeout=10000,
+                    )
+                    assert "gespeichert" in m4b_bar.get_attribute("aria-valuetext")
+                    assert m4b_bar.get_attribute("max") == "100"
                     page.wait_for_function("() => window.__fileClosed === true", timeout=10000)
                     assert page.evaluate("window.__fileWritten") == 64
                     assert not page.evaluate("window.__fileAborted")
