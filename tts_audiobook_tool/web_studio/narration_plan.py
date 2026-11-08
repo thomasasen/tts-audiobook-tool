@@ -221,11 +221,18 @@ def build_narration_plan(
     sections = _canonical_sections(book)
     selected, raw_texts, catalogue = _selection(project_dir, sections, source_indices)
     units = []
+    # Source positions, not duplicate word sequences, identify genuinely
+    # duplicated EPUB coverage. Check all *selected* chapters together.
+    source_ranges: dict[str, list[tuple[int, int]]] = {}
     for section_index, section in enumerate(sections):
         original_index = selected[section_index]
         chapter_id = f"epub-chapter:{original_index:06d}"
         raw = raw_texts[section_index] if raw_texts is not None else None
         spans = _validated_b01_spans(catalogue, original_index, raw) if raw is not None else []
+        for span in spans:
+            source_ranges.setdefault(span["source_href"], []).append(
+                (span["source_start"], span["source_end"])
+            )
         ranges = _group_ranges(section, raw)
         for group_index, (group, (start, end)) in enumerate(zip(section["groups"], ranges)):
             original = "".join(p["text"] for p in group["phrases"])
@@ -267,6 +274,13 @@ def build_narration_plan(
             })
     if not units:
         raise ValueError("NarrationPlan enthält keinen sprechbaren Inhalt.")
+    for ranges in source_ranges.values():
+        ranges.sort()
+        previous_end = -1
+        for start, end in ranges:
+            if start < previous_end:
+                raise ValueError("NarrationPlan: dieselbe EPUB-Quelltextspanne wurde mehrfach zugeordnet.")
+            previous_end = end
     plan = {
         "version": PLAN_VERSION, "schema": SCHEMA, "project_id": project_id,
         "voice": voice, "model_identity": model_identity, "audio": dict(AUDIO_CONFIG),
