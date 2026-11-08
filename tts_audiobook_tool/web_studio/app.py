@@ -25,7 +25,7 @@ import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -607,13 +607,15 @@ def preview_voice():
 
 class PreviewOptions(BaseModel):
     duration_seconds: Literal[5, 15, 30, 60] = 5
-    speed: float = 1.0
+    # Preserve JSON types so True / "1.0" cannot silently coerce to 1.0.
+    # The single authoritative validator is verified_speed in production.
+    speed: Any = 1.0
     preview_text: str = Field(default="", max_length=600)
     project_id: str | None = None
 
 
 class VoiceSettingsOptions(BaseModel):
-    speed: float = 1.0
+    speed: Any = 1.0
     preview_text: str = Field(default="", max_length=600)
 
 
