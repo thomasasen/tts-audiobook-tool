@@ -124,6 +124,7 @@ def normalize_german_speech(text: str, glossary: dict[str, str]) -> str:
 
 # B02/v3: operate only on the *speech prompt*. Retain the v2 implementation
 # above byte-for-byte for jobs that already recorded de-narration-v2.
+from bisect import bisect_left
 from datetime import date
 from functools import lru_cache
 
@@ -305,16 +306,22 @@ def normalize_german_speech_v3(text: str, glossary: dict[str, str]) -> str:
     text = text.replace("\u00ad", "").replace("\u00a0", " ")
     pattern = _compiled_glossary_v3(tuple(sorted(glossary)))
     protections = list(_PROTECTED_V3.finditer(text))
+    protected_starts = [item.start() for item in protections]
     covered_protections: set[int] = set()
     # A single, nonrecursive list of disjoint events. Glossary rules can span
     # hyphenated product identifiers without opening up URL/email substrings.
     events: list[tuple[int, int, str, re.Match[str]]] = []
     if pattern is not None:
         for match in pattern.finditer(text):
-            overlapped = [
-                p for p in protections
-                if p.start() < match.end() and p.end() > match.start()
-            ]
+            index = bisect_left(protected_starts, match.start())
+            if index and protections[index - 1].end() > match.start():
+                index -= 1
+            overlapped: list[re.Match[str]] = []
+            while index < len(protections) and protections[index].start() < match.end():
+                item = protections[index]
+                if item.end() > match.start():
+                    overlapped.append(item)
+                index += 1
             if any(
                 p.lastgroup != "technical"
                 or match.start() > p.start() or match.end() < p.end()
