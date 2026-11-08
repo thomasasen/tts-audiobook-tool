@@ -34,7 +34,7 @@ bash -lc '/start.sh & pod_pid=$!; if curl -fsSL https://raw.githubusercontent.co
 
 Dieser Befehl startet `/start.sh` für die üblichen RunPod-Basisdienste und führt anschließend unseren Autostart aus. Er darf **nicht** auf die alte URL `feature/runpod-p0` geändert werden. Die Wiederherstellungsoption `RUNPOD_TTS_SKIP_VOICE_INSTALL=1` ist im regulären Erststart bewusst **nicht gesetzt**.
 
-Ein Pod bleibt bei einem Fehler möglicherweise als laufend markiert und verursacht weiter Kosten. Daher ist **`Web studio health check OK (port 7860)`** im Startprotokoll der relevante Nachweis für die erreichbare lokale Web-API, nicht die RunPod-Statusanzeige.
+Ein Pod bleibt bei einem Fehler möglicherweise als laufend markiert und verursacht weiter Kosten. **`Web studio health check OK (port 7860)` belegt ausschließlich die erreichbare Web-API, nicht die Thorsten-Installation.** Im normalen Startmodus beendet der Autostart sich mit Fehlercode, wenn Thorsten oder dessen CUDA-Test nicht betriebsbereit sind. Da der äußere Docker-Startbefehl den RunPod-Basisdienst weiterlaufen lässt, musst du einen unbrauchbaren GPU-Pod trotzdem selbst stoppen. Der letzte `GERMAN AUDIOBOOK STUDIO`-Block im privaten Container-Log zeigt den Sprecherstatus.
 
 ### Was beim ersten Start automatisch passiert
 
