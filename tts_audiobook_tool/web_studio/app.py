@@ -645,6 +645,22 @@ def approve_voice():
         raise HTTPException(409, "Zuerst eine gültige Hörprobe erzeugen und anhören.") from exc
 
 
+# Only fixed non-secret state codes are accepted from the private RunPod
+# bootstrap. No log contents, token or arbitrary file path reaches the client.
+VOICE_INSTALL_MESSAGES = {
+    "initializing": "Der RunPod-Start bereitet Thorsten vor. Bitte Installationsfortschritt im Container-Log prüfen.",
+    "checking-cache": "Die vorhandene Thorsten-Installation wird auf Unversehrtheit geprüft.",
+    "downloading": "Thorsten-Modellgewichte werden heruntergeladen und geprüft. Die Hörprobe ist noch nicht bereit.",
+    "installing": "Die Thorsten-Laufzeit und Modellgewichte werden installiert und geprüft.",
+    "insufficient-space": "Thorsten wurde nicht installiert: Für den ersten Download müssen mindestens 25 GiB auf dem Network Volume frei sein.",
+    "cuda-unavailable": "Thorsten wurde nicht installiert: Der echte CUDA-Tensortest des GPU-Hosts ist fehlgeschlagen. GPU-Zuweisung und RunPod-Host prüfen.",
+    "download-failed": "Der Thorsten-Modelldownload ist fehlgeschlagen. Das private Thorsten-Prefetch- und Autostart-Log auf RunPod prüfen.",
+    "installation-failed": "Die Thorsten-Installation ist fehlgeschlagen. Das private Autostart-Log enthält den fehlgeschlagenen Installationsschritt.",
+    "voice-cuda-unavailable": "Thorsten wurde installiert, aber CUDA funktioniert in seiner Python-Laufzeit nicht. GPU-Host und Thorsten-CUDA-Test prüfen.",
+    "bootstrap-failed": "Der RunPod-Start wurde vor Abschluss der Sprecherinstallation abgebrochen. Das private Autostart-Log prüfen.",
+    "skipped": "Die Sprecherinstallation wurde ausdrücklich übersprungen (RUNPOD_TTS_SKIP_VOICE_INSTALL=1).",
+}
+ 
 @app.get("/api/capabilities", dependencies=[Depends(require_auth)])
 def capabilities():
     # Installation and explicit approval are independent states. The Web
@@ -653,6 +669,16 @@ def capabilities():
     from .production import _model_identity
     installed = _model_identity() is not None
     approved = installed and production.voice_ready()
+    try:
+        install_state = (data_dir() / "studio-voice-install-state").read_text(
+            encoding="ascii"
+        ).strip()
+    except (OSError, UnicodeError):
+        install_state = "unknown"
+    if install_state not in VOICE_INSTALL_MESSAGES:
+        install_state = "unknown"
+    if installed:
+        install_state = "installed"
     if approved:
         reason = "Thorsten-CosyVoice3 ist installiert und nach Hörprobe freigegeben."
     elif installed:
@@ -661,11 +687,13 @@ def capabilities():
             "erzeugen, vollständig anhören und anschließend freigeben."
         )
     else:
-        reason = (
-            "Thorsten-CosyVoice3 ist noch nicht vollständig installiert oder "
-            "konnte nicht verifiziert werden. Die Hörprobe ist bis dahin gesperrt."
+        reason = VOICE_INSTALL_MESSAGES.get(
+            install_state,
+            "Thorsten-CosyVoice3 ist noch nicht vollständig installiert oder konnte nicht verifiziert werden. Den RunPod-Autostart-Status und "
+            "die privaten Installationslogs prüfen. Die Hörprobe ist gesperrt.",
         )
     return {
+        "voice_install_state": install_state,
         "epub_import": True,
         "chapter_selection": True,
         "tts_generation": approved,

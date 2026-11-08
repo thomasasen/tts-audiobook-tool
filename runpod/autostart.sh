@@ -110,13 +110,23 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 mkdir -p "$DATA_ROOT/logs"
+# The authenticated Web UI reads only this fixed, non-secret state code.
+# An atomic update prevents the browser from seeing partially written values.
+VOICE_STATE_FILE="$DATA_ROOT/studio-voice-install-state"
+write_voice_state() {
+  local state="$1" tmp="$VOICE_STATE_FILE.tmp.$"
+  printf '%s\n' "$state" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$VOICE_STATE_FILE"
+}
+write_voice_state initializing
 LOG_FILE="$DATA_ROOT/logs/autostart-$(date -u +%Y%m%dT%H%M%SZ).log"
 # Save the original Pod stdout on fd 3 BEFORE tee captures installation logs.
 # An auto-generated access token is shown only in the owner's live RunPod logs,
 # never written to persistent autostart-*.log (or to Git).
 exec 3>&1
 exec > >(tee -a "$LOG_FILE") 2>&1
-trap 'status=$?; echo "RunPod audiobook bootstrap FAILED (exit $status). Log: $LOG_FILE" >&2' ERR
+trap 'status=$?; write_voice_state bootstrap-failed; echo "RunPod audiobook bootstrap FAILED (exit $status). Log: $LOG_FILE" >&2' ERR
 
 echo "=== German audiobook RunPod startup ==="
 echo "UTC: $(date -u +%FT%TZ)"
@@ -204,6 +214,7 @@ if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env system --json; then
   CUDA_SYSTEM_READY=1
   echo "System CUDA allocation OK."
 else
+  write_voice_state cuda-unavailable
   echo "WARNING: System CUDA allocation failed. Thorsten downloads are disabled."
   echo "Check RunPod GPU host; Web Studio remains available without TTS."
 fi
@@ -218,15 +229,20 @@ echo "Persistent volume free: ${FREE_GIB} GiB."
 PREFETCH_FAILED=0
 NEED_PREFETCH=0
 if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then
+  write_voice_state skipped
   echo "No-download recovery requested; skipping Thorsten prefetch."
 elif (( ! CUDA_SYSTEM_READY )); then
+  write_voice_state cuda-unavailable
   echo "Skipping Thorsten prefetch: CUDA is not operational."
 elif [[ -s "$DATA_ROOT/models/CosyVoice/.studio-ready" ]]; then
+  write_voice_state checking-cache
   echo "Cached Thorsten model found; installer will validate its SHA-256 manifest."
 elif (( FREE_GIB < MIN_FREE_GIB )); then
+  write_voice_state insufficient-space
   echo "WARNING: Only ${FREE_GIB} GiB free; skip first-time model download (minimum ${MIN_FREE_GIB} GiB)."
 else
   NEED_PREFETCH=1
+  write_voice_state downloading
   PREFETCH_LOG="$DATA_ROOT/logs/thorsten-prefetch-$(date -u +%Y%m%dT%H%M%SZ).log"
   echo "Step 3/5: Background Thorsten download, max $RUNPOD_TTS_DOWNLOAD_WORKERS concurrent files."
   bash "$REPO_DIR/runpod/prefetch-thorsten.sh" >"$PREFETCH_LOG" 2>&1 &
@@ -304,11 +320,14 @@ echo "Step 5/5: Finalize Thorsten installation only after prefetch has finished.
 THORSTEN_INSTALL_OK=0
 CUDA_THORSTEN_READY=0
 if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 1 ]]; then
+  write_voice_state skipped
   echo "Skipping Thorsten installation as requested. No new model weights are downloaded."
 elif (( ! CUDA_SYSTEM_READY )); then
+  write_voice_state cuda-unavailable
   echo "WARNING: Torch CUDA allocation failed; no Thorsten model installation."
 elif (( NEED_PREFETCH )); then
   if ! wait "$PREFETCH_PID"; then
+    write_voice_state download-failed
     echo "WARNING: Thorsten prefetch failed. No immediate duplicate download attempt." >&2
     tail -n 35 "$PREFETCH_LOG" >&2 || true
     PREFETCH_FAILED=1
@@ -318,17 +337,22 @@ fi
 
 if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 && "$CUDA_SYSTEM_READY" == 1 && "$PREFETCH_FAILED" == 0 ]]; then
   if [[ -s "$DATA_ROOT/models/CosyVoice/.studio-ready" || "$NEED_PREFETCH" == 1 ]]; then
+    write_voice_state installing
     if bash "$REPO_DIR/runpod/install-thorsten.sh"; then
       THORSTEN_INSTALL_OK=1
       if python3 "$REPO_DIR/runpod/gpu_preflight.py" --env thorsten --json; then
         CUDA_THORSTEN_READY=1
+        write_voice_state installed
       else
+        write_voice_state voice-cuda-unavailable
         echo "WARNING: Model installed, but Thorsten CUDA allocation failed; inspect host."
       fi
     else
+      write_voice_state installation-failed
       echo "WARNING: Thorsten installation failed; web stays available without narration."
     fi
   else
+    write_voice_state insufficient-space
     echo "WARNING: Not enough free space to begin Thorsten installation."
   fi
 fi
@@ -397,5 +421,15 @@ exec 3>&-
 
 if [[ "$FINAL_WEB_STATUS" != ready ]]; then
   echo "ERROR: RunPod bootstrap incomplete: Web Studio is not reachable." >&2
+  exit 1
+fi
+# A reachable EPUB editor is not a ready audiobook studio. In the normal
+# (voice-enabled) boot mode, make the failure visible to the RunPod operator
+# and to scripts checking the autostart exit status. The explicit web-only
+# recovery mode remains usable for diagnosing a broken GPU or model cache.
+if [[ "$RUNPOD_TTS_SKIP_VOICE_INSTALL" == 0 ]] &&
+   (( ! THORSTEN_INSTALL_OK || ! CUDA_THORSTEN_READY )); then
+  echo "ERROR: RunPod start incomplete: Thorsten narration is not ready." >&2
+  echo "Voice state: $(cat "$VOICE_STATE_FILE"). Inspect $LOG_FILE and the Thorsten prefetch log." >&2
   exit 1
 fi
