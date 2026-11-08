@@ -14,7 +14,9 @@ from typing import Callable
 
 SCHEMA = "narration-plan.v1"
 PLAN_VERSION = 3
+NEW_NORMALIZER = "de-narration-v3"
 MAX_UNITS = 100_000
+MAX_SOURCE_CHARS = 20_000_000
 REASONS = {"undefined", "w", "isqe", "is", "s", "p", "h", "x", "xx"}
 REASON_BOUNDARIES = {
     "undefined": "unspecified", "w": "technical-word-limit",
@@ -45,6 +47,7 @@ def _canonical_sections(book: dict) -> list[dict]:
     if not isinstance(sections, list) or not sections:
         raise ValueError("NarrationPlan: Kapitelstruktur fehlt.")
     result = []
+    total_chars = 0
     for section in sections:
         if not isinstance(section, dict) or not isinstance(section.get("phrase_groups"), list):
             raise ValueError("NarrationPlan: ungültige Kapitel- oder PhraseGroup-Struktur.")
@@ -59,6 +62,9 @@ def _canonical_sections(book: dict) -> list[dict]:
                 reason = phrase.get("reason") or "undefined"
                 if reason not in REASONS:
                     raise ValueError("NarrationPlan: unbekannter Phrase-Reason.")
+                total_chars += len(phrase["text"])
+                if total_chars > MAX_SOURCE_CHARS:
+                    raise ValueError("NarrationPlan: Buchtext überschreitet das sichere Zeichenlimit.")
                 phrases.append({"text": phrase["text"], "reason": reason})
             groups.append({"phrases": phrases, "is_dialog": bool(group.get("is_dialog", False))})
         title = section.get("title") or ""
@@ -111,6 +117,8 @@ def _validated_b01_spans(catalogue: dict | None, source_index: int, text: str) -
     audit = catalogue.get("content_audit")
     mapping = audit.get("source_mapping") if isinstance(audit, dict) else None
     if not isinstance(mapping, list) or not mapping:
+        if isinstance(audit, dict) and audit.get("version") == 2 and text.strip():
+            raise ValueError("NarrationPlan: B01-Quelltextzuordnung fehlt.")
         # Pre-B01 projects retain canonical book.v3 references, not invented EPUB offsets.
         return []
     spans = []
@@ -287,6 +295,8 @@ def validate_narration_plan(plan: dict) -> bool:
         raise ValueError("NarrationPlan: ungültige Anzahl Vorleseeinheiten.")
     if not isinstance(plan.get("glossary"), dict) or not isinstance(plan.get("audio"), dict):
         raise ValueError("NarrationPlan: Produktionskonfiguration fehlt.")
+    if plan.get("normalizer_version") != NEW_NORMALIZER or plan["audio"] != AUDIO_CONFIG:
+        raise ValueError("NarrationPlan: unbekannte Normalisierungs- oder Audio-Konfiguration.")
     seen = set()
     for index, segment in enumerate(segments):
         if not isinstance(segment, dict) or segment.get("position") != index:
@@ -322,6 +332,13 @@ def validate_narration_plan(plan: dict) -> bool:
         if (not isinstance(chapter_source_index, int) or chapter_source_index < 0
                 or segment.get("chapter_id") != f"epub-chapter:{chapter_source_index:06d}"):
             raise ValueError("NarrationPlan: Kapitelidentität beschädigt.")
+        group_index = source.get("group_index")
+        if not isinstance(group_index, int) or group_index < 0:
+            raise ValueError("NarrationPlan: PhraseGroup-Identität beschädigt.")
+        expected_id = (f"epub-chapter:{chapter_source_index:06d}:g{group_index:06d}:"
+                       f"{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}")
+        if unit_id != expected_id:
+            raise ValueError("NarrationPlan: Einheitenidentität weicht vom Originaltext ab.")
         if segment.get("pause", {}).get("kind") != segment.get("boundary_reason"):
             raise ValueError("NarrationPlan: Segmentgrenze und Pausenplanung weichen ab.")
     expected_config = _digest({
