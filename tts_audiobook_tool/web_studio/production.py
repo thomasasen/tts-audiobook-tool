@@ -1157,7 +1157,12 @@ def _job_eta(job_id: str, done: int, total: int) -> tuple[int | None, int]:
                     samples.append((chars, duration))
             except (OSError, ValueError, TypeError, KeyError):
                 continue
-        remaining_chars = sum(len(item["text"]) for item in segments[done:])
+        # NarrationPlan V3 speaks frozen speech_text, not the source text.
+        # Acronyms and glossary substitutions can change its length materially.
+        remaining_chars = sum(
+            len(item.get("speech_text") or item["text"])
+            for item in segments[done:]
+        )
         return remaining_seconds(samples, remaining_chars), min(len(samples), 12)
     except (OSError, ValueError, TypeError, KeyError):
         return None, 0
@@ -1179,7 +1184,8 @@ def job_activity(project_id: str, job_id: str) -> dict:
     # M4B muxing has a separate progress stage; do not attach a fabricated
     # export ETA to the finished speech synthesis progress.
     eta, sample_count = _job_eta(job_id, done, total) if done < total else (0, 0)
-    if job["status"] not in ("running", "generated", "completed"):
+    if job["status"] != "running" or done >= total:
+        # Even 100% of segments can still require chapter finalization.
         eta = None
     now = datetime.now(timezone.utc)
     try:
@@ -1189,15 +1195,35 @@ def job_activity(project_id: str, job_id: str) -> dict:
         elapsed = 0
     export = None
     if job["status"] in ("exporting", "completed"):
+        from .progress_estimate import export_remaining_seconds
         try:
             progress = json.loads((_jobs_dir(job_id) / "export-progress.json").read_text(encoding="utf-8"))
-            processed = max(0, min(total, int(progress["processed"])))
-            if int(progress["total"]) == total:
+            processed = int(progress["processed"])
+            recorded_total = int(progress["total"])
+            if total > 0 and recorded_total == total and 0 <= processed <= total:
+                phase = progress.get("phase", "processing")
+                if phase not in ("preparing", "processing", "finalizing", "completed"):
+                    phase = "preparing"
+                points = progress.get("checkpoints", [])
+                checkpoints = []
+                if isinstance(points, list):
+                    for point in points[-9:]:
+                        if isinstance(point, (list, tuple)) and len(point) == 2:
+                            checkpoints.append(tuple(point))
+                export_eta = (
+                    export_remaining_seconds(checkpoints, processed, total)
+                    if phase == "processing" and job["status"] == "exporting"
+                    else None
+                )
+                finished = job["status"] == "completed"
                 export = {
                     "processed": processed, "total": total,
-                    "percent": round(100 * processed / total) if total else 0,
+                    "percent": (100 if finished else min(99, (100 * processed) // total)),
+                    "phase": "completed" if finished else phase,
+                    "remaining_seconds": export_eta,
+                    "eta_sample_count": max(0, len(checkpoints) - 1) if export_eta is not None else 0,
                 }
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, ValueError, TypeError, KeyError, OverflowError):
             pass
     return {
         "id": job_id, "status": job["status"],
@@ -2024,9 +2050,39 @@ def completed_chapter_path(project_id: str, job_id: str, index: int, *, preview:
             else _chapter_audio_paths(job_id, index)[0])
 
 
-def _write_export_progress(job_id: str, processed: int, total: int) -> None:
-    _atomic_json(_jobs_dir(job_id) / "export-progress.json", {
-        "processed": processed, "total": total, "updated_at": _now(),
+def _write_export_progress(
+    job_id: str, processed: int, total: int, *,
+    elapsed_seconds: float | None = None, phase: str | None = None,
+) -> None:
+    """Persist stage and at most nine actual encoding checkpoints.
+
+    A fresh request with zero processed segments discards stale measurements.
+    The measured rate does not claim to predict AAC container finalization.
+    """
+    path = _jobs_dir(job_id) / "export-progress.json"
+    checkpoints: list[list[int | float]] = []
+    if processed > 0:
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+            if old.get("total") == total and old.get("phase") in (
+                "preparing", "processing", "finalizing", "completed"
+            ):
+                checkpoints = old.get("checkpoints", [])[-9:]
+                if not isinstance(checkpoints, list):
+                    checkpoints = []
+        except (OSError, ValueError, TypeError):
+            pass
+    if elapsed_seconds is not None:
+        if (not isinstance(elapsed_seconds, (int, float))
+                or not 0 <= elapsed_seconds < 7 * 86400):
+            raise ValueError("Ungültige Exportmessung.")
+        if not checkpoints or processed > checkpoints[-1][0]:
+            checkpoints.append([processed, round(elapsed_seconds, 3)])
+            checkpoints = checkpoints[-9:]
+    current_phase = phase or ("preparing" if processed == 0 else "processing")
+    _atomic_json(path, {
+        "processed": processed, "total": total, "phase": current_phase,
+        "updated_at": _now(), "checkpoints": checkpoints,
     })
 
 
@@ -2169,6 +2225,7 @@ def export_job(project_id: str, job_id: str, *, _claimed: bool = False) -> Path:
         with _studio()._db() as db:
             db.execute("UPDATE studio_jobs SET status='exporting',updated_at=? WHERE id=?", (_now(),job_id))
         _job_event(job_id, "M4B-Export gestartet. Audiosegmente werden zusammengeführt.")
+        export_started = time.perf_counter()
         try:
             for i, segment in enumerate(plan["segments"]):
                 if is_narration_plan:
@@ -2201,12 +2258,20 @@ def export_job(project_id: str, job_id: str, *, _claimed: bool = False) -> Path:
                 writer.write(np.asarray(audio, dtype=np.float32))
                 start += len(audio) / sr
                 if (i + 1) % 25 == 0 or i + 1 == len(plan["segments"]):
-                    _write_export_progress(job_id, i + 1, len(plan["segments"]))
+                    _write_export_progress(
+                        job_id, i + 1, len(plan["segments"]),
+                        elapsed_seconds=time.perf_counter() - export_started,
+                        phase="processing",
+                    )
                     _job_event(job_id, f"M4B-Export: {i + 1} von {len(plan['segments'])} Segmenten verarbeitet.")
             if chapter_key is not None:
                 chapters.append(Chapter(chapter_start, start, chapter_title))
             if writer is None:
                 raise ValueError("Keine Audiodaten für den Export.")
+            _write_export_progress(
+                job_id, len(plan["segments"]), len(plan["segments"]),
+                phase="finalizing",
+            )
             writer.set_chapters(chapters)
             writer.close()
         except Exception:
@@ -2216,7 +2281,10 @@ def export_job(project_id: str, job_id: str, *, _claimed: bool = False) -> Path:
                 db.execute("UPDATE studio_jobs SET status='generated',error='Export fehlgeschlagen',updated_at=? WHERE id=?", (_now(),job_id))
             _job_event(job_id, "M4B-Export fehlgeschlagen. Privates Server-Log prüfen.")
             raise
-        _write_export_progress(job_id, len(plan["segments"]), len(plan["segments"]))
+        _write_export_progress(
+            job_id, len(plan["segments"]), len(plan["segments"]),
+            phase="completed",
+        )
         with _studio()._db() as db:
             db.execute("UPDATE studio_jobs SET status='completed',error='',updated_at=? WHERE id=?", (_now(),job_id))
             db.execute("UPDATE studio_projects SET status='Fertig',updated_at=? WHERE id=?", (_now(),project_id))
