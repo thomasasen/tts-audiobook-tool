@@ -135,7 +135,7 @@ class TestThorstenProtocol(TestCase):
             msg = json.dumps({
                 "id": "speed-1-10", "text": "Das ist ein kontrollierter Hörbuchtest.",
                 "output": str(audio), "speed": 1.1,
-            }) + "\\n"
+            }) + "\n"
             messages, _, _, models = self.run_worker(msg)
             self.assertEqual(messages[0], {"ready": True})
             self.assertTrue(messages[1]["ok"])
@@ -148,7 +148,7 @@ class TestThorstenProtocol(TestCase):
             msg = json.dumps({
                 "id": "invalid-speed", "text": "Das darf nicht gesprochen werden.",
                 "output": str(audio), "speed": 1.37,
-            }) + "\\n"
+            }) + "\n"
             messages, errors, _, models = self.run_worker(msg)
             self.assertEqual(messages[0], {"ready": True})
             self.assertFalse(messages[1]["ok"])
