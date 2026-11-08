@@ -80,6 +80,14 @@ type CompletedChapter = {
   preview_seconds: number
   bytes: number
 }
+type GlossaryUpdate = {
+  status: 'idle' | 'unchanged' | 'pending' | 'applied' | 'failed'
+  affected?: number
+  preserved?: number
+  total?: number
+  message?: string
+}
+
 type Job = {
   id: string
   project_id: string
@@ -200,6 +208,7 @@ export default function Studio() {
   const [quality, setQuality] = useState<QualityReport | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [glossary, setGlossary] = useState('')
+  const [glossaryUpdate, setGlossaryUpdate] = useState<GlossaryUpdate>({status: 'idle'})
   const [audioUrl, setAudioUrl] = useState('')
   const [previewPlayed, setPreviewPlayed] = useState(false)
   const [previewDurationSeconds, setPreviewDurationSeconds] = useState<5|15|30|60>(5)
@@ -376,12 +385,33 @@ export default function Studio() {
     if (!active) return
     setBusy(true); setError('')
     try {
-      const response = await api<{entries: Record<string, string>}>(`/api/projects/${active.id}/glossary`, token)
+      const response = await api<{entries: Record<string, string>; update: GlossaryUpdate}>(`/api/projects/${active.id}/glossary`, token)
       setGlossary(Object.entries(response.entries).map(([key, value]) => `${key} = ${value}`).join('\n'))
+      setGlossaryUpdate(response.update)
       setView('glossary')
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
   }
+
+  useEffect(() => {
+    if (!token || !active || view !== 'glossary' || glossaryUpdate.status !== 'pending') return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void api<GlossaryUpdate>(`/api/projects/${active.id}/glossary/update`, token)
+        .then(result => {
+          if (cancelled) return
+          setGlossaryUpdate(result)
+          if (result.status === 'applied') {
+            setNotice(result.message || 'Glossaränderung wurde übernommen.')
+            void refreshProjects()
+          } else if (result.status === 'failed') {
+            setError(result.message || 'Glossaränderung konnte nicht übernommen werden.')
+          }
+        })
+        .catch(error => { if (!cancelled) setError((error as Error).message) })
+    }, 2000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [token, active?.id, view, glossaryUpdate.status])
 
   async function saveGlossary() {
     if (!active) return
@@ -396,8 +426,15 @@ export default function Studio() {
     }
     setSaving(true); setError('')
     try {
-      await api(`/api/projects/${active.id}/glossary`, token, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries})})
-      setNotice('Das bestehende Projekt-Ausspracheglossar wurde aktualisiert.')
+      const response = await api<{entries: Record<string, string>; update: GlossaryUpdate}>(
+        `/api/projects/${active.id}/glossary`, token,
+        {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({entries})},
+      )
+      setGlossaryUpdate(response.update)
+      setNotice(response.update.status === 'pending'
+        ? 'Änderungen angenommen. Die laufende Vertonung wird an der nächsten sicheren Segmentgrenze angepasst.'
+        : response.update.message || 'Das Projektglossar wurde aktualisiert.')
+      if (response.update.status === 'applied') await refreshProjects()
     } catch (err) { setError((err as Error).message) }
     finally { setSaving(false) }
   }
@@ -943,8 +980,12 @@ export default function Studio() {
               <div className="panel glossary-panel">
                 <label htmlFor="glossary">Begriff = gesprochene Form</label>
                 <textarea id="glossary" rows={12} value={glossary} onChange={e => setGlossary(e.target.value)} placeholder={'MEDDPICC = M E D D P I C C\nSaaS = Säss'} spellCheck={false}/>
-                <p className="helper">Nur gezielt geprüfte Fachbegriffe eintragen. Die Originalfassung des Buchs bleibt unverändert. Dieses Glossar nutzt die vorhandenen Wortersetzungen des Projektmodells.</p>
-                <button className="primary-btn" disabled={saving || !['Vorbereitet','Fertig','Audio bereit','Entwurf'].includes(active.status)} onClick={saveGlossary}>{saving ? 'Speichere …' : 'Glossar speichern'}<Check size={18}/></button>
+                <p className="helper">Nur gezielt geprüfte Fachbegriffe eintragen. Der Buchtext bleibt unverändert. Bei einem laufenden Auftrag wird die Vertonung an einer sicheren Segmentgrenze angehalten. Nur Segmente mit geänderter tatsächlicher Aussprache werden neu erzeugt; gültige andere Audiodateien bleiben erhalten.</p>
+                {glossaryUpdate.status === 'pending' && <p className="message" role="status" aria-live="polite"><LoaderCircle className="spinning" size={18}/>Glossaränderung wird sicher übernommen. Bereits laufende Sprachsegmente werden zuerst abgeschlossen.</p>}
+                {glossaryUpdate.status === 'applied' && glossaryUpdate.total !== undefined && <p className="message success" role="status"><Check size={18}/>{glossaryUpdate.affected} von {glossaryUpdate.total} Segmenten betroffen; {glossaryUpdate.preserved} bereits erzeugte Audiodateien bleiben erhalten.</p>}
+                {glossaryUpdate.status === 'failed' && <p className="message error" role="alert"><AlertCircle size={18}/>{glossaryUpdate.message || 'Glossaränderung konnte nicht sicher übernommen werden. Die Produktion bleibt pausiert.'}</p>}
+                <button className="primary-btn" disabled={saving || glossaryUpdate.status === 'pending' || glossaryUpdate.status === 'failed'} onClick={saveGlossary}>{saving ? 'Speichere …' : glossaryUpdate.status === 'pending' ? 'Übernahme läuft …' : 'Glossaränderung übernehmen'}<Check size={18}/></button>
+                <p className="helper">Während des M4B-Exports ist die Änderung aus Sicherheitsgründen gesperrt. Nach der Übernahme läuft eine zuvor aktive Produktion automatisch weiter; eine zuvor pausierte Produktion bleibt pausiert.</p>
               </div>
             </>}
             {view === 'voices' && active && <>
