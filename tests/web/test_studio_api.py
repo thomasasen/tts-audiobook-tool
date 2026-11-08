@@ -315,7 +315,9 @@ def test_resaving_chapters_preserves_existing_pronunciation_glossary(client):
     assert repeated.status_code == 200, repeated.text
     assert client.get(glossary_url, headers=authorized()).json()["entries"] == entries
     persisted = studio._project_dir(project_id) / "engine" / "project.json"
-    assert json.loads(persisted.read_text(encoding="utf-8"))["word_substitutions"] == entries
+    stored = json.loads(persisted.read_text(encoding="utf-8"))
+    assert json.loads(stored["word_substitutions_json_string"]) == entries
+    assert "word_substitutions" not in stored, "Obsolete Studio shadow field must not return"
 
 
 def test_premature_generation_not_exposed(client):
