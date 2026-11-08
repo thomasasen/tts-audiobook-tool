@@ -63,7 +63,9 @@ class TestStartSummary(unittest.TestCase):
                 RUNPOD_SUMMARY_CUDA_THORSTEN="not-tested",
             )
         self.assertEqual(got.returncode, 0, got.stderr)
-        self.assertIn("WEB BEREIT (MIT WARNUNGEN)", got.stdout)
+        self.assertIn("WEB BEREIT: SPRECHER NOCH NICHT BETRIEBSBEREIT", got.stdout)
+        self.assertIn("AKTION ERFORDERLICH", got.stdout)
+        self.assertNotIn("Echte Hoerprobe erzeugen", got.stdout)
         self.assertIn("Noch nicht betriebsbereit", got.stdout)
         self.assertNotIn("WEB + THORSTEN INSTALLIERT", got.stdout)
         self.assertNotIn("ZUGANGSSCHLUESSEL", got.stdout)
