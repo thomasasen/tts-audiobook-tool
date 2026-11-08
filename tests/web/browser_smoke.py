@@ -101,10 +101,25 @@ def main() -> None:
                             return
                         output = Path(screenshot_dir)
                         output.mkdir(parents=True, exist_ok=True)
-                        page.screenshot(
-                            path=str(output / filename), full_page=True,
-                            animations="disabled",
-                        )
+                        # Playwright interactions can leave the viewport midway
+                        # down a long document. Reset scrolling so the sticky
+                        # app header appears at the top of the full-page capture.
+                        page.evaluate("window.scrollTo(0, 0)")
+                        page.wait_for_timeout(120)
+                        # Transient success/error notices may originate from
+                        # simulated test requests; they are not a page feature.
+                        # Suppress them ONLY for the screenshot, restoring DOM
+                        # styles immediately afterwards (no synthetic UI).
+                        temporary_style = page.add_style_tag(content=(
+                            ".message.error, .message.success { visibility:hidden !important; }"
+                        ))
+                        try:
+                            page.screenshot(
+                                path=str(output / filename), full_page=True,
+                                animations="disabled",
+                            )
+                        finally:
+                            temporary_style.evaluate("(node) => node.remove()")
                     errors = []
                     page.on("pageerror", lambda err: errors.append(str(err)))
                     page.goto(base, wait_until="networkidle")
@@ -442,6 +457,7 @@ def main() -> None:
                         "done": 3, "total": 6, "chapter": "Kapitel 1",
                         "duration": 19.1, "error": "",
                         "created_at": (simulated_now - timedelta(minutes=2)).isoformat(),
+                        "updated_at": simulated_now.isoformat(),
                     }
                     import json
                     page.route(
