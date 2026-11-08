@@ -156,8 +156,10 @@ def _group_ranges(section: dict, raw: str | None) -> list[tuple[int | None, int 
     groups = section["groups"]
     if raw is None:
         return [(None, None)] * len(groups)
-    positions = [i for i, c in enumerate(raw) if not c.isspace()]
-    actual = "".join(raw[i] for i in positions)
+    # Non-whitespace characters are the canonical coverage domain from B01.
+    # Avoid a per-character Python integer position list: multi-million-character
+    # technical books otherwise multiply memory by dozens of bytes per char.
+    actual = "".join(c for c in raw if not c.isspace())
     from_groups = "".join(
         c for group in groups for phrase in group["phrases"] for c in phrase["text"]
         if not c.isspace()
@@ -167,14 +169,22 @@ def _group_ranges(section: dict, raw: str | None) -> list[tuple[int | None, int 
     cursor = 0
     ranges = []
     for group in groups:
-        length = sum(not c.isspace() for phrase in group["phrases"] for c in phrase["text"])
-        if length:
-            ranges.append((positions[cursor], positions[cursor + length - 1] + 1))
-            cursor += length
-        else:
+        remaining = sum(not c.isspace() for phrase in group["phrases"] for c in phrase["text"])
+        if not remaining:
             ranges.append((None, None))
-    if cursor != len(positions):
-        raise ValueError("NarrationPlan: Kapitelabdeckung ist unvollständig.")
+            continue
+        while cursor < len(raw) and raw[cursor].isspace():
+            cursor += 1
+        start = cursor
+        last_end = start
+        while remaining:
+            if cursor >= len(raw):
+                raise ValueError("NarrationPlan: Kapitelabdeckung ist unvollständig.")
+            if not raw[cursor].isspace():
+                remaining -= 1
+                last_end = cursor + 1
+            cursor += 1
+        ranges.append((start, last_end))
     return ranges
 
 
