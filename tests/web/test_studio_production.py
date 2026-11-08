@@ -773,3 +773,20 @@ def test_historical_plan_without_voice_speed_remains_valid(env, monkeypatch):
     })
     assert production.narration_plan.validate_narration_plan(plan) is True
     assert production.verified_speed(plan.get("voice_settings", {"speed": 1.0})["speed"]) == 1.0
+
+
+def test_nondefault_speed_never_uses_unverified_pinned_cli_flag(
+    env, monkeypatch, tmp_path,
+):
+    """Pinned Thorsten infer_thorsten.py has no --speed (Python API does)."""
+    from unittest.mock import Mock
+
+    cli = tmp_path / "infer_thorsten.py"
+    cli.write_text("# no --speed argument", encoding="utf-8")
+    monkeypatch.setattr(production, "_config", lambda: ("/usr/bin/python3", str(cli)))
+    monkeypatch.setenv("AUDIOBOOK_STUDIO_PERSISTENT_TTS", "0")
+    forbidden = Mock(side_effect=AssertionError("Old CLI must not execute with --speed"))
+    monkeypatch.setattr(production.subprocess, "run", forbidden)
+    with pytest.raises(RuntimeError, match="persistenten Thorsten-Worker"):
+        production._synthesize("Ein Testsatz.", tmp_path / "sample.wav", speed=1.05)
+    forbidden.assert_not_called()
