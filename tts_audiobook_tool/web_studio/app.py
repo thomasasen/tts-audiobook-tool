@@ -689,7 +689,7 @@ def capabilities():
     else:
         reason = VOICE_INSTALL_MESSAGES.get(
             install_state,
-            "Thorsten-CosyVoice3 ist nicht betriebsbereit. Den RunPod-Autostart-Status und "
+            "Thorsten-CosyVoice3 ist noch nicht vollständig installiert oder konnte nicht verifiziert werden. Den RunPod-Autostart-Status und "
             "die privaten Installationslogs prüfen. Die Hörprobe ist gesperrt.",
         )
     return {
