@@ -21,20 +21,23 @@ export function supportsDirectSave(): boolean {
   return typeof (window as FilePickerWindow).showSaveFilePicker === 'function'
 }
 
-export async function downloadAuthenticatedM4b(
+async function downloadAuthenticatedAudio(
   url: string,
   token: string,
   name: string,
   signal: AbortSignal,
   onProgress: (value: DownloadProgress) => void,
+  format: 'm4b' | 'm4a',
 ): Promise<{ bytes: number; mode: 'stream' | 'fallback' }> {
+  const label = format === 'm4b' ? 'M4B' : 'Kapitel-M4A'
   const picker = (window as FilePickerWindow).showSaveFilePicker
   // The picker must be the *first* awaited operation after a button click:
   // Chromium requires transient user activation. Never fetch before it.
   const sink = picker
     ? await (await picker({
       suggestedName: name,
-      types: [{ description: 'M4B-Hörbuch', accept: { 'audio/mp4': ['.m4b'] } }],
+      types: [{ description: format === 'm4b' ? 'M4B-Hörbuch' : 'M4A-Hörbuchkapitel',
+        accept: { 'audio/mp4': [format === 'm4b' ? '.m4b' : '.m4a'] } }],
     })).createWritable()
     : null
 
@@ -48,18 +51,18 @@ export async function downloadAuthenticatedM4b(
       cache: 'no-store',
       signal,
     })
-    if (!response.ok) throw new Error(`M4B-Download fehlgeschlagen (HTTP ${response.status}).`)
+    if (!response.ok) throw new Error(`${label}-Download fehlgeschlagen (HTTP ${response.status}).`)
     const type = response.headers.get('content-type') ?? ''
     if (!type.startsWith('audio/mp4') && !type.startsWith('application/octet-stream')) {
-      throw new Error('Der Server hat keine M4B-Audiodatei geliefert.')
+      throw new Error(`Der Server hat keine ${label}-Audiodatei geliefert.`)
     }
     const lengthHeader = response.headers.get('content-length')
     const length = lengthHeader === null ? null : Number(lengthHeader)
     if (length !== null && (!Number.isSafeInteger(length) || length < 0)) {
-      throw new Error('Ungültige M4B-Dateigröße vom Server.')
+      throw new Error(`Ungültige ${label}-Dateigröße vom Server.`)
     }
     if (!sink && length !== null && length > FALLBACK_MAX_BYTES) {
-      throw new Error('Dieses Hörbuch überschreitet 96 MB. Bitte Chrome oder Edge zum direkten Speichern verwenden.')
+      throw new Error(`Diese ${label}-Datei überschreitet 96 MB. Bitte Chrome oder Edge zum direkten Speichern verwenden.`)
     }
     if (!response.body) {
       throw new Error('Der Browser unterstützt keinen sicheren gestreamten Dateiempfang.')
@@ -74,7 +77,7 @@ export async function downloadAuthenticatedM4b(
         if (signal.aborted) throw new DOMException('Download abgebrochen.', 'AbortError')
         received += value.byteLength
         if (!sink && received > FALLBACK_MAX_BYTES) {
-          throw new Error('M4B überschreitet das Speicherlimit von 96 MB. Chrome oder Edge verwenden.')
+          throw new Error(`${label} überschreitet das Speicherlimit von 96 MB. Chrome oder Edge verwenden.`)
         }
         if (sink) {
           await sink.write(value)
@@ -90,7 +93,7 @@ export async function downloadAuthenticatedM4b(
       reader.releaseLock()
     }
     if (!received || (length !== null && received !== length)) {
-      throw new Error('Unvollständiger M4B-Transfer: Datei wurde nicht gespeichert.')
+      throw new Error(`Unvollständiger ${label}-Transfer: Datei wurde nicht gespeichert.`)
     }
     if (signal.aborted) throw new DOMException('Download abgebrochen.', 'AbortError')
     if (sink) {
@@ -120,4 +123,20 @@ export async function downloadAuthenticatedM4b(
       await response.body.cancel().catch(() => undefined)
     }
   }
+}
+
+/** Existing full-book download contract, including browser test semantics. */
+export function downloadAuthenticatedM4b(
+  url: string, token: string, name: string, signal: AbortSignal,
+  onProgress: (value: DownloadProgress) => void,
+) {
+  return downloadAuthenticatedAudio(url, token, name, signal, onProgress, 'm4b')
+}
+
+/** Chapter download uses the same memory-bounded, authenticated streaming. */
+export function downloadAuthenticatedChapter(
+  url: string, token: string, name: string, signal: AbortSignal,
+  onProgress: (value: DownloadProgress) => void,
+) {
+  return downloadAuthenticatedAudio(url, token, name, signal, onProgress, 'm4a')
 }
