@@ -711,12 +711,28 @@ def project_glossary(project_id: str) -> dict[str, str]:
     _studio()._project(project_id)
     try:
         obj = json.loads(path.read_text(encoding="utf-8"))
-        raw = obj.get("word_substitutions", {})
+        # Project.save() uses word_substitutions_json_string in the canonical
+        # Project V5 schema. Older Studio builds instead wrote a separate
+        # word_substitutions dict. Honor that dict first so existing saved
+        # Studio edits are not silently discarded during migration.
+        if "word_substitutions" in obj:
+            raw = obj["word_substitutions"]
+        else:
+            serialized = obj.get("word_substitutions_json_string", "{}")
+            if not isinstance(serialized, str):
+                raise ValueError("Ungültiges Glossarformat.")
+            raw = json.loads(serialized)
         if not isinstance(raw, dict):
             raise ValueError("Ungültiges Glossar.")
         return {str(k): str(v) for k, v in raw.items()}
     except FileNotFoundError:
         return {}
+
+
+def _set_project_glossary(obj: dict, entries: dict[str, str]) -> None:
+    """Write the actual Project V5 field and drop the obsolete Studio shadow."""
+    obj["word_substitutions_json_string"] = json.dumps(entries, ensure_ascii=False)
+    obj.pop("word_substitutions", None)
 
 
 def _glossary_pending_path(project_id: str) -> Path:
@@ -786,7 +802,7 @@ def save_glossary(project_id: str, entries: dict[str, str]) -> dict:
         ).fetchone()
         if jobs is None:
             obj = json.loads(path.read_text(encoding="utf-8"))
-            obj["word_substitutions"] = requested
+            _set_project_glossary(obj, requested)
             _atomic_json(path, obj)
             _atomic_json(_glossary_result_path(project_id), {
                 "status": "applied", "affected": 0, "preserved": 0,
@@ -945,7 +961,7 @@ def _apply_pending_glossary_revision(project_id: str) -> None:
         })
         project_file = _studio()._project_dir(project_id) / "engine" / "project.json"
         project_data = json.loads(project_file.read_text(encoding="utf-8"))
-        project_data["word_substitutions"] = new_entries
+        _set_project_glossary(project_data, new_entries)
         _atomic_json(project_file, project_data)
         old_status = request["previous_status"]
         # Previously paused/failed work stays paused for explicit resumption.
