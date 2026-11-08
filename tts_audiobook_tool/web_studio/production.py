@@ -1315,6 +1315,10 @@ def create_job(project_id: str) -> dict:
         DE_NORMALIZER_VERSION, _narration_prompt, created_at=_now(),
         voice_settings={"speed": voice_settings["speed"]},
     )
+    # Job-local choice: restarting or changing host environment must never
+    # turn a previously created/partially completed serial book into a parallel
+    # one. Historical plans without this field always stay serial.
+    plan["parallel_worker_count"] = _parallel_worker_count()
     segments = plan["segments"]
     job_id = uuid.uuid4().hex
     # Serialize the active-job check with job creation across API requests.
@@ -1466,7 +1470,11 @@ def _run(job_id: str):
             raise ValueError("Die Modellgewichte oder der Inferenzcode haben sich seit Auftragsbeginn geändert.")
         chapter_ranges = _chapter_index(job_id, plan)
         chapter_by_last_segment = {item["end"] - 1: item for item in chapter_ranges}
-        workers = _parallel_worker_count()
+        planned_workers = plan.get("parallel_worker_count", 1)
+        if type(planned_workers) is not int or planned_workers not in (1, 2, 3, 4):
+            raise ValueError("Ungültige Workeranzahl im Produktionsplan.")
+        # Runtime can reduce worker concurrency, never silently increase it.
+        workers = min(planned_workers, _parallel_worker_count())
         # V3 plans have frozen speech_text and exact fingerprints. Legacy plans
         # retain the original serial path; parallel prefetch never re-normalizes.
         if workers > 1 and is_narration_plan:
