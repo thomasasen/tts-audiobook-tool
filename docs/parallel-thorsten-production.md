@@ -5,9 +5,10 @@ ein echter GPU-Durchsatz- und Hörqualitätsvergleich ist noch ausstehend.**
 
 ## Zweck und Grenzen
 
-Mit `AUDIOBOOK_STUDIO_TTS_WORKERS=2` können **neue** NarrationPlan-v3-Jobs
-zwei unabhängige, persistente Thorsten-CosyVoice3-SFT-Prozesse auf derselben
-L40S einsetzen. Unterstützte Werte: `1` (Standard), `2`, `3`, `4`.
+**Standard seit 2026-11-08: zwei Worker für neue Aufträge**, ohne dass eine
+RunPod-Umgebungsvariable angelegt werden muss. Neue NarrationPlan-v3-Jobs
+können zwei unabhängige, persistente Thorsten-CosyVoice3-SFT-Prozesse auf
+derselben L40S einsetzen. Unterstützte Werte: `1`, `2` (Standard), `3`, `4`.
 
 Die Anzahl wird beim Erstellen des Auftrags als
 `parallel_worker_count` in seinem privaten Plan eingefroren. Für alle
@@ -28,9 +29,17 @@ Ein höherer Worker-Wert ist nicht automatisch schneller.
   neustarten. Der bestehende Auftrag nutzt weiterhin seinen eingefrorenen
   seriellen Modus.
 * Nach Abschluss der Produktion im RunPod-Pod die GPU frei geben.
-* Web Studio mit `AUDIOBOOK_STUDIO_TTS_WORKERS=2` starten (z. B. über
-  `export AUDIOBOOK_STUDIO_TTS_WORKERS=2` in derselben Start-Shell vor
-  `bash runpod/start-web.sh`).
+* Bei unverändertem Startskript werden für **neue** Aufträge automatisch
+  zwei Worker verwendet. Eine manuelle Einstellung ist dafür nicht nötig.
+* Für eine andere Workerzahl in RunPod unter **Pods → Edit Pod →
+  Environment Variables** die Variable `AUDIOBOOK_STUDIO_TTS_WORKERS`
+  mit dem gewünschten Wert `1`, `2`, `3` oder `4` setzen. Änderungen an
+  einer laufenden Pod-Konfiguration führen zu einem Neustart. Alternativ
+  vor einem **manuellen** Webserverstart aus derselben Shell
+  `export AUDIOBOOK_STUDIO_TTS_WORKERS=1` ausführen.
+* **Nicht während einer laufenden Produktion** an der Pod-Konfiguration
+  arbeiten. Der aktive Auftrag bleibt dank eingefrorenem Plan zwar seriell,
+  aber ein Pod-Neustart unterbricht die Arbeit vorübergehend.
 * Neue Hörprobe und anschließend **ein kleines Testbuch** erzeugen. Mit
   `1` und `2` Workern dieselben synthetischen Texte und Speed-Einstellungen
   verwenden; Dauer, GPU-Spitzenlast, VRAM, ASR-Warnungen und Audio manuell vergleichen.
@@ -81,6 +90,8 @@ exklusive GPU-Sperre hält.
 5. Unvollständige WAVs und Sidecars dürfen weder für Resume noch für
    den fertigen M4B-Export akzeptiert werden.
 
-**Freigabestatus:** Nicht auf dem aktuellen produktiven RunPod-Job
-aktivieren. Erst GPU- und Audioabnahme durchführen und danach optional
-für einen **neu angelegten** Hörbuchauftrag einschalten.
+**Freigabestatus:** Standard für neu angelegte Aufträge ist nun 2. Die
+L40S-Performance und die tatsächliche Audioqualität mit zwei Arbeitern
+sind noch nicht mit dem echten Modell abgenommen. Bereits vorhandene
+Aufträge ohne `parallel_worker_count` behalten unverändert einen Worker.
+Aktuelle Produktionen nicht für den Konfigurationswechsel unterbrechen.
