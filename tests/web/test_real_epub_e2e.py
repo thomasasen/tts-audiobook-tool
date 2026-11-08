@@ -31,8 +31,9 @@ def client(tmp_path, monkeypatch):
         yield target
 
 
-def test_real_epub_import_foreword_selection_project_v5_and_queue(client, monkeypatch):
-    epub = build_epub(repeat=2)
+@pytest.mark.parametrize("repeat", [2, 50])
+def test_real_epub_import_foreword_selection_project_v5_and_queue(client, monkeypatch, repeat):
+    epub = build_epub(repeat=repeat)
     response = client.post("/api/projects", headers=AUTH,
                            files={"file": ("original-test.epub", epub, "application/epub+zip")})
     assert response.status_code == 201, response.text[:1500]
@@ -74,7 +75,8 @@ def test_real_epub_import_foreword_selection_project_v5_and_queue(client, monkey
         part["text"] for section in sections for group in section["phrase_groups"]
         for part in group["phrases"]
     )
-    assert "Testbuch" in text and "Bedarfsanalyse" in text
+    assert text.count("Dieses Testbuch erklärt") == repeat
+    assert text.count("Bedarfsanalyse") == repeat
     assert "Vorwort · Kapitel 1" not in text, "Inhaltsverzeichnis must not be spoken"
 
     # Verify that the new job engine uses exactly the canonical saved book.

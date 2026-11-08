@@ -36,7 +36,8 @@ def _wave_file(path, seconds=1.0):
         out.writeframes(struct.pack("<" + "h" * len(samples), *samples))
 
 
-def test_production_exports_playable_m4b_with_two_chapter_titles(env):
+@pytest.mark.parametrize("fault", [None, "short-plan", "empty-wav", "writer-error"])
+def test_production_exports_playable_m4b_with_two_chapter_titles(env, monkeypatch, fault):
     identifier = uuid.uuid4().hex
     job = uuid.uuid4().hex
     directory = studio._project_dir(identifier)
@@ -52,15 +53,37 @@ def test_production_exports_playable_m4b_with_two_chapter_titles(env):
             "", now, now,
         ))
     job_dir = production._jobs_dir(job)
-    production._atomic_json(job_dir / "plan.json", {
-        "segments": [
-            {"chapter": 0, "title": "Vorwort", "text": "Guten Tag."},
-            {"chapter": 1, "title": "Kapitel 1", "text": "Das ist eine Einführung."}
-        ],
-        "glossary": {},
-    })
+    segments = [
+        {"chapter": 0, "title": "Vorwort", "text": "Guten Tag."},
+        {"chapter": 1, "title": "Kapitel 1", "text": "Das ist eine Einführung."},
+    ]
+    if fault == "short-plan":
+        segments.pop()
+    production._atomic_json(job_dir / "plan.json", {"segments": segments, "glossary": {}})
     _wave_file(job_dir / "audio" / "0000000.wav")
-    _wave_file(job_dir / "audio" / "0000001.wav")
+    _wave_file(job_dir / "audio" / "0000001.wav", seconds=0 if fault == "empty-wav" else 1)
+    if fault:
+        marker = "synthetic private export path"
+        if fault == "writer-error":
+            from tts_audiobook_tool.sound.audio_writers import AacWriter
+
+            def fail_chapters(self, chapters):
+                raise RuntimeError(marker)
+
+            monkeypatch.setattr(AacWriter, "set_chapters", fail_chapters)
+        route = f"/api/projects/{identifier}/jobs/{job}"
+        client = TestClient(studio.app)
+        headers = {"Authorization": "Bearer " + "x" * 48}
+        response = client.post(route + "/export", headers=headers)
+        assert response.status_code == 409
+        assert marker not in response.text
+        assert production._job(job)["status"] == "generated"
+        assert client.get(route + "/download", headers=headers).status_code == 404
+        assert not list(job_dir.glob("audiobook.m4b*"))
+        if fault == "short-plan":
+            with pytest.raises(ValueError, match="Produktionsplan"):
+                production._run(job)
+        return
     exported = production.export_job(identifier, job)
     assert exported.suffix == ".m4b"
     assert exported.is_file() and exported.stat().st_size > 1000

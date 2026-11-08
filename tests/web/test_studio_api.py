@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from runpod.acceptance_epub import build_epub
 from tts_audiobook_tool.web_studio import app as studio
 
 
@@ -252,6 +253,48 @@ def test_unsafe_epub_rejected_without_persistent_project(client, bad):
         files={"file": ("sample.epub", bad, "application/epub+zip")},
     )
     assert response.status_code == 422
+    assert client.get("/api/projects", headers=authorized()).json() == {"projects": []}
+
+
+@pytest.mark.parametrize(("case", "message"), [
+    ("upload-limit", "größer als 60 MB"),
+    ("uncompressed-limit", "Größenlimit"),
+    ("entry-limit", "zu viele Archiveinträge"),
+    ("compression-ratio", "Kompressionsverhältnis"),
+    ("missing-spine-resource", "keine auslesbaren Kapitel"),
+    ("invalid-opf-xml", "keine auslesbaren Kapitel"),
+    ("empty-chapters", "keine auslesbaren Kapitel"),
+])
+def test_epub_limits_and_invalid_resources_leave_no_partial_project(client, monkeypatch, case, message):
+    source = "OEBPS/chapter1.xhtml"
+    if case == "upload-limit":
+        monkeypatch.setattr(studio, "MAX_UPLOAD_BYTES", 1024)
+    if case == "uncompressed-limit":
+        monkeypatch.setattr(studio, "MAX_UNCOMPRESSED_BYTES", 1024)
+    if case == "entry-limit":
+        monkeypatch.setattr(studio, "MAX_ZIP_ENTRIES", 3)
+    payload = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(build_epub())) as original, zipfile.ZipFile(payload, "w") as edited:
+        for entry in original.infolist():
+            name = entry.filename
+            if case == "missing-spine-resource" and name == source:
+                continue
+            content = original.read(entry)
+            if case == "invalid-opf-xml" and name == "OEBPS/content.opf":
+                content = b"<package><broken></package>"
+            if case == "empty-chapters" and name.endswith(".xhtml") and name != "OEBPS/nav.xhtml":
+                content = b'<html xmlns="http://www.w3.org/1999/xhtml"><body></body></html>'
+            edited.writestr(entry, content)
+        if case == "compression-ratio":
+            edited.writestr("bomb.bin", b"a" * (10 * 1024 * 1024 + 1), compress_type=zipfile.ZIP_DEFLATED)
+    response = client.post(
+        "/api/projects", headers=authorized(),
+        files={"file": ("negative.epub", payload.getvalue(), "application/epub+zip")},
+    )
+    assert response.status_code == 422
+    assert message in response.json()["detail"]
+    assert str(studio.data_dir()) not in response.text
+    assert not list((studio.data_dir() / "studio-projects").iterdir())
     assert client.get("/api/projects", headers=authorized()).json() == {"projects": []}
 
 

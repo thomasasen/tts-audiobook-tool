@@ -88,6 +88,7 @@ def build_epub(*, repeat: int = 1, include_audit_cases: bool = False, include_at
            'unique-identifier="bookid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
            '<dc:identifier id="bookid">urn:uuid:3c1f99b6-3589-4f59-a781-7f4080a5e344</dc:identifier>'
            '<dc:title>Prüfbuch für deutsche Hörbücher</dc:title><dc:language>de</dc:language>'
+           '<meta property="dcterms:modified">2026-11-08T00:00:00Z</meta>'
            '</metadata><manifest>'
            f'{manifest}<item id="nav" href="nav.xhtml" '
            'media-type="application/xhtml+xml" properties="nav"/>'
