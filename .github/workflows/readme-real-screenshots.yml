@@ -53,7 +53,8 @@ jobs:
         env:
           PYTHONPATH: .
           README_SCREENSHOT_DIR: docs/screenshots
-        run: "$RUNNER_TEMP/audiobook-venv/bin/python" tests/web/browser_smoke.py
+        run: |
+          "$RUNNER_TEMP/audiobook-venv/bin/python" tests/web/browser_smoke.py
 
       - name: Verify all seven files are real nonempty PNG screenshots
         run: |
