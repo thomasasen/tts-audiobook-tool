@@ -929,6 +929,15 @@ def _loop():
             )
 
 
+def _audio_digest(path: Path) -> str:
+    """Stream WAV integrity digest; do not load multi-hour audio into RAM."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _segment_fingerprint(segment: dict, plan: dict) -> str:
     if plan.get("version") == narration_plan.PLAN_VERSION:
         return narration_plan.segment_fingerprint(segment, plan)
@@ -984,6 +993,7 @@ def _run(job_id: str):
                             sidecar.get("unit_id") == segment["unit_id"]
                             and sidecar.get("prompt") == segment["speech_text"]
                             and sidecar.get("plan_schema") == narration_plan.SCHEMA
+                            and sidecar.get("audio_sha256") == _audio_digest(path)
                         )
                     if valid:
                         seconds = _valid_audio(path)
@@ -1024,6 +1034,7 @@ def _run(job_id: str):
                         "unit_id": segment["unit_id"],
                         "chapter_id": segment["chapter_id"],
                         "config_fingerprint": plan["config_fingerprint"],
+                        "audio_sha256": _audio_digest(path),
                     })
                 _atomic_json(meta, sidecar)
             # Pause/cancel/shutdown may have arrived during a long GPU call.
@@ -1204,7 +1215,10 @@ def export_job(project_id: str, job_id: str) -> Path:
                     if (sidecar.get("fingerprint") != _segment_fingerprint(segment, plan)
                             or sidecar.get("unit_id") != segment["unit_id"]
                             or sidecar.get("prompt") != segment["speech_text"]
-                            or sidecar.get("plan_schema") != narration_plan.SCHEMA):
+                            or sidecar.get("plan_schema") != narration_plan.SCHEMA
+                            or sidecar.get("audio_sha256") != _audio_digest(
+                                audio_path(project_id, job_id, i)
+                            )):
                         raise ValueError("NarrationPlan: Audiosegment passt nicht zum Produktionsplan.")
                 audio, sr = sf.read(str(audio_path(project_id,job_id,i)), dtype="float32", always_2d=True)
                 if writer is None:
