@@ -106,20 +106,20 @@ def main() -> None:
                         # app header appears at the top of the full-page capture.
                         page.evaluate("window.scrollTo(0, 0)")
                         page.wait_for_timeout(120)
-                        # Transient success/error notices may originate from
-                        # simulated test requests; they are not a page feature.
-                        # Suppress them ONLY for the screenshot, restoring DOM
-                        # styles immediately afterwards (no synthetic UI).
-                        temporary_style = page.add_style_tag(content=(
-                            ".message.error, .message.success { visibility:hidden !important; }"
-                        ))
-                        try:
-                            page.screenshot(
-                                path=str(output / filename), full_page=True,
-                                animations="disabled",
-                            )
-                        finally:
-                            temporary_style.evaluate("(node) => node.remove()")
+                        # Use the application's real close controls to
+                        # dismiss transient test-only notifications. The site
+                        # enforces CSP style-src 'self'; never inject styles or
+                        # draw invented elements into screenshots.
+                        for label in ("Fehlermeldung schließen", "Hinweis schließen"):
+                            close = page.get_by_role("button", name=label)
+                            if close.count() and close.is_visible():
+                                close.click()
+                        page.evaluate("window.scrollTo(0, 0)")
+                        page.wait_for_timeout(120)
+                        page.screenshot(
+                            path=str(output / filename), full_page=True,
+                            animations="disabled",
+                        )
                     errors = []
                     page.on("pageerror", lambda err: errors.append(str(err)))
                     page.goto(base, wait_until="networkidle")
