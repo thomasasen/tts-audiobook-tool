@@ -342,6 +342,7 @@ def test_new_studio_job_synthesizes_the_frozen_prompt_and_reuses_safe_checkpoint
     monkeypatch.setattr(production, "_audio_quality", lambda *a: {"status": "not_checked"})
     with studio._db() as db:
         db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    production._STOP.clear()
     production._run(job_id)
     assert used_prompts == [plan["segments"][0]["speech_text"]]
     sidecar = json.loads((production._jobs_dir(job_id) / "audio" / "0000000.json").read_text())
@@ -369,7 +370,7 @@ def test_changed_glossary_fails_resume_instead_of_mixing_prompts(env, monkeypatc
     )
     with studio._db() as db:
         db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job["id"],))
-    with pytest.raises(ValueError, match="Glossar"):
+    with pytest.raises(ValueError, match="glossar"):
         production._run(job["id"])
 
 
