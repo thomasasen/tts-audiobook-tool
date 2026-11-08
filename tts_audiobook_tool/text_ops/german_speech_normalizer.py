@@ -147,8 +147,8 @@ _PROTECTED_V3 = re.compile(
     r"(?:\d{1,3}\.){3}\d{1,3}|"
     r"(?:v?\d+\.){2,}\d+(?:[-+][\w.]+)?|"
     r"\d{4}-\d{2}-\d{2}|"
-    r"[A-Za-zÄÖÜäöüß][\w.-]*\d[\w.-]*|"
-    r"\d+[A-Za-zÄÖÜäöüß][\w.-]*|"
+    r"[A-Za-zÄÖÜäöüß][\w.]*\d[\w.]*|"
+    r"\d+[A-Za-zÄÖÜäöüß][\w.]*|"
     r"\d{1,2}:\d{2}(?!\s*Uhr\b))\b)",
     re.IGNORECASE | re.UNICODE,
 )
@@ -346,7 +346,7 @@ def normalize_german_speech_v3(text: str, glossary: dict[str, str]) -> str:
             value = folded.get(" ".join(match.group().split()).casefold())
             if value is None:
                 pieces.append(match.group())
-            elif match.group()[0].isupper() and value[0].islower():
+            elif match.group()[0].isupper() and not match.group().isupper() and value[0].islower():
                 pieces.append(value[0].upper() + value[1:])
             else:
                 pieces.append(value)
