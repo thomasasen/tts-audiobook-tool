@@ -434,6 +434,15 @@ def main() -> None:
                             body=json.dumps({"jobs": [production_job]}),
                         ),
                     )
+                    # Unlike the collection endpoint, periodic 3-second
+                    # polling fetches the individual job resource.
+                    page.route(
+                        "**/api/projects/*/jobs/*",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body=json.dumps(production_job),
+                        ),
+                    )
                     activity_state = {
                         "status": "running", "done": 3, "total": 6,
                         "percent": 50, "elapsed_seconds": 120,
@@ -717,6 +726,7 @@ def main() -> None:
                     page.unroute("**/api/projects/*/jobs/*/chapters/0/audio")
                     page.unroute("**/api/projects/*/jobs/*/chapters/0/download")
                     page.unroute("**/api/projects/*/jobs/*/chapters")
+                    page.unroute("**/api/projects/*/jobs/*")
                     page.unroute("**/api/projects/*/jobs")
 
                     page.get_by_role("button", name="Dunkles Design").click()
