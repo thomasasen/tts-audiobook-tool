@@ -1,0 +1,83 @@
+name: README screenshots from real Chromium UI
+
+on:
+  push:
+    branches:
+      - feature/readme-authentic-browser-screenshots-20261108
+    paths:
+      - "tests/web/browser_smoke.py"
+      - "web/**"
+      - "README.md"
+      - ".github/workflows/readme-real-screenshots.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: readme-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshot-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the actual development branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.16"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the same pinned Web runtime and Chromium as CI
+        run: |
+          python -m pip install --disable-pip-version-check "uv==0.13.7"
+          uv python install 3.12.16
+          uv venv --python 3.12.16 --seed "$RUNNER_TEMP/audiobook-venv"
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --require-hashes --requirement web/requirements-runtime.lock.txt
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" --no-deps --require-hashes --requirement web/torch-cpu.lock.txt
+          uv pip install --python "$RUNNER_TEMP/audiobook-venv/bin/python" playwright==1.56.0
+          "$RUNNER_TEMP/audiobook-venv/bin/python" -m playwright install --with-deps chromium
+
+      - name: Build the actual React web UI
+        run: cd web && npm ci --no-audit --no-fund && npm run build
+
+      - name: Capture true UI from synthetic EPUB and mocked progression
+        env:
+          PYTHONPATH: .
+          README_SCREENSHOT_DIR: docs/screenshots
+        run: "$RUNNER_TEMP/audiobook-venv/bin/python" tests/web/browser_smoke.py
+
+      - name: Verify all seven files are real nonempty PNG screenshots
+        run: |
+          set -euo pipefail
+          for name in \
+            01-bibliothek \
+            02-kapitelpruefung \
+            03-ausspracheglossar \
+            04-sprecher-hoerprobe \
+            05-vertont-wird \
+            06-m4b-export \
+            07-fertiges-hoerbuch; do
+            test -s "docs/screenshots/$name.png"
+            file "docs/screenshots/$name.png" | grep -q "PNG image data"
+          done
+          ls -lh docs/screenshots/*.png
+
+      - name: Commit original Chromium screenshots to the README branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots/*.png
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: add seven actual browser screenshots using synthetic demo data"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
