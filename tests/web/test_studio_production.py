@@ -790,3 +790,190 @@ def test_nondefault_speed_never_uses_unverified_pinned_cli_flag(
     with pytest.raises(RuntimeError, match="persistenten Thorsten-Worker"):
         production._synthesize("Ein Testsatz.", tmp_path / "sample.wav", speed=1.05)
     forbidden.assert_not_called()
+
+
+def test_chapters_publish_incrementally_as_authenticated_m4a(env, monkeypatch):
+    """Real PyAV audio encoder, fake GPU speech, live API between chapters."""
+    import io
+    import av
+
+    project_id = uuid.uuid4().hex
+    other_project = uuid.uuid4().hex
+    prepare_project(project_id)
+    prepare_project(other_project)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    created = production.create_job(project_id)
+    job_id = created["id"]
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job_id,))
+    endpoint = f"/api/projects/{project_id}/jobs/{job_id}/chapters"
+    assert env.get(endpoint).status_code == 401
+    assert env.get(endpoint, headers=HEADERS).json()["chapters"] == []
+    assert env.get(
+        f"/api/projects/{other_project}/jobs/{job_id}/chapters", headers=HEADERS,
+    ).status_code == 404
+
+    monkeypatch.setattr(production, "_audio_quality", lambda *_: {"status": "not_checked"})
+    calls = []
+
+    def fake_synthesis(text, path):
+        calls.append(text)
+        # First two segments make Vorwort, the third starts Kapitel 1.
+        if len(calls) == 3:
+            response = env.get(endpoint, headers=HEADERS)
+            assert response.status_code == 200
+            ready = response.json()["chapters"]
+            assert len(ready) == 1
+            assert ready[0]["title"] == "Vorwort"
+            assert ready[0]["segment_count"] == 2
+            assert ready[0]["duration_seconds"] == pytest.approx(2, abs=.12)
+            assert ready[0]["bytes"] > 1024
+            assert ready[0]["preview_seconds"] == pytest.approx(2, abs=.12)
+            media = env.get(
+                f"/api/projects/{project_id}/jobs/{job_id}/chapters/0/audio",
+                headers=HEADERS,
+            )
+            assert media.status_code == 200
+            assert media.headers["content-type"].startswith("audio/wav")
+            assert "no-store" in media.headers["cache-control"]
+            with wave.open(io.BytesIO(media.content), "rb") as audition:
+                assert audition.getsampwidth() == 2
+                assert audition.getnchannels() == 1
+                assert audition.getnframes() / audition.getframerate() == pytest.approx(2)
+            download = env.get(
+                f"/api/projects/{project_id}/jobs/{job_id}/chapters/0/download",
+                headers=HEADERS,
+            )
+            assert download.status_code == 200
+            assert download.content != media.content
+            assert b"ftyp" in download.content[:80]
+            with av.open(io.BytesIO(download.content), format="mp4") as container:
+                assert len(container.streams.audio) == 1
+                decoded = list(container.decode(audio=0))
+                assert len(decoded) > 0
+            assert "Kapitel-001.m4a" in download.headers["content-disposition"]
+            assert env.get(
+                f"/api/projects/{project_id}/jobs/{job_id}/chapters/1/audio",
+                headers=HEADERS,
+            ).status_code == 404
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(struct.pack("<h", 1200) * 16000)
+        return 1.0
+
+    monkeypatch.setattr(production, "_synthesize", fake_synthesis)
+    production._STOP.clear()
+    try:
+        production._run(job_id)
+    finally:
+        production._STOP.set()
+    assert len(calls) == 3
+    assert production._job(job_id)["status"] == "generated"
+    chapters = env.get(endpoint, headers=HEADERS).json()["chapters"]
+    assert [row["title"] for row in chapters] == ["Vorwort", "Kapitel 1"]
+    assert [row["index"] for row in chapters] == [0, 1]
+    assert chapters[1]["duration_seconds"] == pytest.approx(1, abs=.12)
+    # Metadata and output persist without regenerating from model after restart.
+    assert production._ready_chapter_audio(job_id, production._chapter_index(job_id)[0])
+    assert env.get(endpoint, headers=HEADERS).json()["chapters"] == chapters
+    assert (production._jobs_dir(job_id) / "chapters" / "00000.m4a").is_file()
+    assert (production._jobs_dir(job_id) / "chapters" / "00001.m4a").is_file()
+
+
+def test_incomplete_stale_or_wrong_project_chapter_is_not_downloadable(env, monkeypatch):
+    project_id, other = uuid.uuid4().hex, uuid.uuid4().hex
+    prepare_project(project_id)
+    prepare_project(other)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job_id = production.create_job(project_id)["id"]
+    base = f"/api/projects/{project_id}/jobs/{job_id}/chapters"
+    index = production._chapter_index(job_id)
+    assert len(index) == 2
+    path, meta = production._chapter_audio_paths(job_id, 0)
+    path.write_bytes(b"x" * 2048)
+    audition = production._chapter_preview_path(job_id, 0)
+    audition.write_bytes(b"w" * 4096)
+    production._atomic_json(meta, {
+        "version": production.CHAPTER_AUDIO_CACHE_VERSION,
+        "fingerprint": index[0]["fingerprint"], "start": 0, "end": 2,
+        "duration": 12.0, "byte_size": 2048,
+        "preview_duration": 4.0, "preview_byte_size": 4096,
+    })
+    # Matching metadata alone must never expose unfinished audio.
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running', done=1 WHERE id=?", (job_id,))
+    assert env.get(base, headers=HEADERS).json()["chapters"] == []
+    assert env.get(base + "/0/audio", headers=HEADERS).status_code == 404
+    assert env.get(base + "/0/download", headers=HEADERS).status_code == 404
+    assert env.get(
+        f"/api/projects/{other}/jobs/{job_id}/chapters/0/audio", headers=HEADERS,
+    ).status_code == 404
+    assert env.get(base + "/-1/audio", headers=HEADERS).status_code == 404
+    assert env.get(base + "/30/audio", headers=HEADERS).status_code == 404
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET done=2 WHERE id=?", (job_id,))
+    assert len(env.get(base, headers=HEADERS).json()["chapters"]) == 1
+    production._atomic_json(meta, {
+        "version": production.CHAPTER_AUDIO_CACHE_VERSION,
+        "fingerprint": "invalid", "start": 0, "end": 2,
+        "duration": 12.0, "byte_size": 2048,
+        "preview_duration": 4.0, "preview_byte_size": 4096,
+    })
+    assert env.get(base, headers=HEADERS).json()["chapters"] == []
+    assert env.get(base + "/0/download", headers=HEADERS).status_code == 404
+
+
+def test_retry_invalidates_only_affected_chapter_cache(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    prepare_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    job_id = production.create_job(project_id)["id"]
+    idx = production._chapter_index(job_id)
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='generated', done=3 WHERE id=?", (job_id,))
+    for chapter in idx:
+        path, meta = production._chapter_audio_paths(job_id, chapter["index"])
+        path.write_bytes(b"m4a" * 1000)
+        preview = production._chapter_preview_path(job_id, chapter["index"])
+        preview.write_bytes(b"wav" * 1000)
+        production._atomic_json(meta, {
+            "version": production.CHAPTER_AUDIO_CACHE_VERSION,
+            "fingerprint": chapter["fingerprint"],
+            "start": chapter["start"], "end": chapter["end"],
+            "duration": 15.0, "byte_size": path.stat().st_size,
+            "preview_duration": 9.0, "preview_byte_size": preview.stat().st_size,
+        })
+    original = production._jobs_dir(job_id) / "audio" / "0000000.wav"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"cached segment")
+    production.retry_segment(project_id, job_id, 0)
+    first, _ = production._chapter_audio_paths(job_id, 0)
+    second, _ = production._chapter_audio_paths(job_id, 1)
+    assert not first.exists()
+    assert not production._chapter_preview_path(job_id, 0).exists()
+    assert second.is_file()
+    assert production._chapter_preview_path(job_id, 1).is_file()
+    # Progress is reset pending rescan; do not expose even retained chapters.
+    base = f"/api/projects/{project_id}/jobs/{job_id}/chapters"
+    assert env.get(base, headers=HEADERS).json()["chapters"] == []
+
+
+def test_duplicate_chapter_titles_keep_separate_source_identity():
+    from tts_audiobook_tool.web_studio import narration_plan
+    plan = {
+        "segments": [
+            {"chapter": 0, "title": "Einleitung", "text": "A"},
+            {"chapter": 0, "title": "Einleitung", "text": "B"},
+            {"chapter": 1, "title": "Einleitung", "text": "C"},
+            {"chapter": 2, "title": "Kapitel", "text": "D"},
+        ],
+        "glossary": {}, "model_identity": "", "normalizer_version": None,
+    }
+    groups = production._chapter_ranges(plan)
+    assert [(item["start"], item["end"], item["title"]) for item in groups] == [
+        (0, 2, "Einleitung"), (2, 3, "Einleitung"), (3, 4, "Kapitel"),
+    ]
+    assert len({item["fingerprint"] for item in groups}) == 3

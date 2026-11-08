@@ -813,6 +813,45 @@ def download_segment(project_id: str, job_id: str, index: int):
         raise HTTPException(404, str(exc)) from exc
 
 
+@app.get("/api/projects/{project_id}/jobs/{job_id}/chapters", dependencies=[Depends(require_auth)])
+def list_chapter_files(project_id: str, job_id: str):
+    """Only fully checkpointed, encoded chapters appear; works mid-production."""
+    try:
+        return {"chapters": production.completed_chapter_files(project_id, job_id)}
+    except (ValueError, OSError) as exc:
+        raise HTTPException(404, "Keine Kapiteldateien für diesen Auftrag verfügbar.") from exc
+
+
+@app.get("/api/projects/{project_id}/jobs/{job_id}/chapters/{chapter_index}/audio",
+         dependencies=[Depends(require_auth)])
+def play_chapter(project_id: str, job_id: str, chapter_index: int):
+    """Authorized AAC file for the authenticated fetch-to-Blob chapter player."""
+    try:
+        path = production.completed_chapter_path(project_id, job_id, chapter_index, preview=True)
+        return FileResponse(
+            path, media_type="audio/wav",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+            content_disposition_type="inline",
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(404, "Das Kapitel ist noch nicht als vollständige Audiodatei verfügbar.") from exc
+
+
+@app.get("/api/projects/{project_id}/jobs/{job_id}/chapters/{chapter_index}/download",
+         dependencies=[Depends(require_auth)])
+def download_chapter(project_id: str, job_id: str, chapter_index: int):
+    """Only numeric, application-derived names. Never expose private file paths."""
+    try:
+        path = production.completed_chapter_path(project_id, job_id, chapter_index)
+        return FileResponse(
+            path, media_type="audio/mp4",
+            filename=f"Kapitel-{chapter_index + 1:03d}.m4a",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(404, "Das Kapitel ist noch nicht als vollständige Audiodatei verfügbar.") from exc
+
+
 @app.get("/api/projects/{project_id}/jobs/{job_id}/quality", dependencies=[Depends(require_auth)])
 def get_quality(project_id: str, job_id: str):
     try:

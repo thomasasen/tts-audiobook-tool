@@ -4,7 +4,7 @@ import {
   FolderOpen, Headphones, LockKeyhole, Moon, ShieldCheck, Sun,
   Volume2, AlertCircle, RotateCcw, Trash2, PlayCircle, PauseCircle, StopCircle
 } from 'lucide-react'
-import { downloadAuthenticatedM4b, supportsDirectSave, type DownloadProgress } from './download'
+import { downloadAuthenticatedM4b, downloadAuthenticatedChapter, supportsDirectSave, type DownloadProgress } from './download'
 
 type Chapter = {
   index: number
@@ -72,6 +72,14 @@ type VoiceCandidate = {
 }
 type ApiError = { detail?: string }
 type View = 'library' | 'chapters' | 'voices' | 'export' | 'glossary'
+type CompletedChapter = {
+  index: number
+  title: string
+  segment_count: number
+  duration_seconds: number
+  preview_seconds: number
+  bytes: number
+}
 type Job = {
   id: string
   project_id: string
@@ -184,6 +192,11 @@ export default function Studio() {
   const [speakerDrafts, setSpeakerDrafts] = useState<Record<string, string>>({})
   const fileRef = useRef<HTMLInputElement>(null)
   const [job, setJob] = useState<Job | null>(null)
+  const [completedChapters, setCompletedChapters] = useState<CompletedChapter[]>([])
+  const [chapterListError, setChapterListError] = useState('')
+  const [chapterPreviewIndex, setChapterPreviewIndex] = useState<number | null>(null)
+  const [chapterPreviewPending, setChapterPreviewPending] = useState<number | null>(null)
+  const [chapterDownloadIndex, setChapterDownloadIndex] = useState<number | null>(null)
   const [quality, setQuality] = useState<QualityReport | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [glossary, setGlossary] = useState('')
@@ -279,9 +292,22 @@ export default function Studio() {
     }
   }
 
+  async function refreshCompletedChapters(projectId: string, jobId: string) {
+    try {
+      const response = await api<{chapters: CompletedChapter[]}>(
+        `/api/projects/${projectId}/jobs/${jobId}/chapters`, token,
+      )
+      setCompletedChapters(response.chapters)
+      setChapterListError('')
+    } catch (error) {
+      setChapterListError((error as Error).message)
+    }
+  }
+
   async function refreshJob(id: string, projectId: string) {
     const latest = await api<Job>(`/api/projects/${projectId}/jobs/${id}`, token)
     setJob(latest)
+    void refreshCompletedChapters(projectId, id)
     void refreshActivity(projectId, id)
     if (['generated','completed'].includes(latest.status)) {
       const report = await api<QualityReport>('/api/projects/' + projectId + '/jobs/' + id + '/quality', token)
@@ -330,6 +356,7 @@ export default function Studio() {
   }, [token, view, previewTask?.id, previewTask?.status])
 
   async function loadAudio(path: string, method = 'GET') {
+    setChapterPreviewIndex(null)
     setBusy(true); setError('')
     try {
       const response = await fetch(path, {method, headers: {Authorization: `Bearer ${token}`}, cache: 'no-store'})
@@ -383,7 +410,12 @@ export default function Studio() {
     const selected = list.jobs[0] ?? null
     setJob(selected); setCapabilities(caps)
     setJobActivity(null)
-    if (selected) void refreshActivity(projectId, selected.id)
+    setCompletedChapters([]); setChapterListError('')
+    setChapterPreviewIndex(null); setOwnedAudioUrl('')
+    if (selected) {
+      void refreshActivity(projectId, selected.id)
+      void refreshCompletedChapters(projectId, selected.id)
+    }
     if (selected && ['generated','completed'].includes(selected.status)) {
       setQuality(await api<QualityReport>('/api/projects/' + projectId + '/jobs/' + selected.id + '/quality', token))
     } else setQuality(null)
@@ -396,6 +428,8 @@ export default function Studio() {
       if (action === 'start') {
         const next = await api<Job>(`/api/projects/${active.id}/jobs`, token, {method: 'POST'})
         setJob(next)
+        setCompletedChapters([]); setChapterListError('')
+        setChapterPreviewIndex(null); setOwnedAudioUrl('')
       } else if (action === 'export' && job) {
         setExportPending(true)
         await api(`/api/projects/${active.id}/jobs/${job.id}/export`, token, {method: 'POST'})
@@ -460,6 +494,7 @@ export default function Studio() {
     setDownloadPending(true)
     setDownloadProgress(null)
     setError('')
+    setChapterDownloadIndex(null)
     const filename = (active.title || 'Hoerbuch').replace(/[\\/:*?"<>|]/g, '_').slice(0, 90) + '.m4b'
     try {
       const result = await downloadAuthenticatedM4b(
@@ -480,10 +515,85 @@ export default function Studio() {
     }
   }
 
+  async function previewChapter(chapter: CompletedChapter) {
+    if (!active || !job) return
+    const path = `/api/projects/${active.id}/jobs/${job.id}/chapters/${chapter.index}/audio`
+    setBusy(true); setChapterPreviewPending(chapter.index); setError('')
+    try {
+      const response = await fetch(path, {
+        headers: {Authorization: `Bearer ${token}`}, cache: 'no-store',
+      })
+      if (!response.ok) throw await apiResponseError(response, path)
+      if (!(response.headers.get('content-type') ?? '').startsWith('audio/wav')) {
+        throw new Error('Der Server hat keine browserkompatible WAV-Hörprobe zurückgegeben.')
+      }
+      const limit = 20 * 1024 * 1024
+      const header = response.headers.get('content-length')
+      if (header && Number(header) > limit) {
+        throw new Error('Die WAV-Hörprobe ist ungewöhnlich groß. Bitte die M4A-Datei herunterladen.')
+      }
+      if (!response.body) throw new Error('Der Browser unterstützt keinen sicheren Audioempfang.')
+      const reader = response.body.getReader()
+      const chunks: Uint8Array[] = []
+      let count = 0
+      try {
+        while (true) {
+          const {done, value} = await reader.read()
+          if (done) break
+          count += value.byteLength
+          if (count > limit) throw new Error('Die Hörprobe überschreitet 20 MB. Bitte das Kapitel herunterladen.')
+          chunks.push(value)
+        }
+      } catch (error) {
+        await reader.cancel().catch(() => undefined)
+        throw error
+      } finally {
+        reader.releaseLock()
+      }
+      if (count < 1024 || (header && Number(header) !== count)) {
+        throw new Error('Unvollständige Kapiteldatei empfangen.')
+      }
+      setOwnedAudioUrl(URL.createObjectURL(new Blob(chunks, {type: 'audio/wav'})))
+      setChapterPreviewIndex(chapter.index)
+    } catch (error) {
+      setError((error as Error).message)
+    } finally {
+      setBusy(false); setChapterPreviewPending(null)
+    }
+  }
+
+  async function startChapterDownload(chapter: CompletedChapter) {
+    if (!active || !job || downloadPending) return
+    const controller = new AbortController()
+    downloadAbort.current = controller
+    setDownloadPending(true); setChapterDownloadIndex(chapter.index)
+    setDownloadProgress(null); setError('')
+    const safe = chapter.title.replace(/[\u0000-\u001f\\/:*?"<>|]/g, '_').trim().slice(0, 78) || 'Kapitel'
+    const filename = `${String(chapter.index + 1).padStart(2, '0')}_${safe}.m4a`
+    try {
+      const result = await downloadAuthenticatedChapter(
+        `/api/projects/${active.id}/jobs/${job.id}/chapters/${chapter.index}/download`,
+        token, filename, controller.signal, setDownloadProgress,
+      )
+      setNotice(`Kapitel ${chapter.index + 1} gespeichert (${(result.bytes / (1024 * 1024)).toFixed(1)} MB).`)
+    } catch (error) {
+      const exc = error as Error
+      if (controller.signal.aborted || exc.name === 'AbortError') {
+        setNotice('Kapitel-Download abgebrochen. Unvollständige Datei verworfen.')
+      } else {
+        setError(exc.message || 'Kapitel-Download fehlgeschlagen.')
+      }
+    } finally {
+      if (downloadAbort.current === controller) downloadAbort.current = null
+      setDownloadPending(false); setChapterDownloadIndex(null)
+    }
+  }
+
   function signOut() {
     downloadAbort.current?.abort()
     setToken(''); setTokenInput(''); setProjects([]); setActive(null)
     setOwnedAudioUrl(''); setJob(null); setJobActivity(null); setQuality(null); setPreviewTask(null)
+    setCompletedChapters([]); setChapterListError(''); setChapterPreviewIndex(null); setChapterDownloadIndex(null)
     setPreviewAudioError(''); setPreviewAudioValid(false); setPreviewPlayed(false); setExportPending(false)
     setNotice(''); setError(''); setView('library')
   }
@@ -501,7 +611,8 @@ export default function Studio() {
       setStart(project.selected_start)
       setExcluded(project.excluded_indices)
       setSpeakerDrafts({})
-      setJob(null); setJobActivity(null)
+      setJob(null); setJobActivity(null); setCompletedChapters([])
+      setChapterPreviewIndex(null); setChapterListError('')
       if (next === 'export') await refreshProduction(id)
       setView(next)
     } catch (err) { setError((err as Error).message) }
@@ -965,7 +1076,7 @@ export default function Studio() {
                   </details>
                   {job.error && <p className="error" role="alert">{job.error}</p>}
                   {job.status === 'completed' && <p className="helper">Download-Modus: {supportsDirectSave() ? 'Direkt auf Datenträger speichern (streaming, ohne großen Browser-Blob)' : 'Browser-Fallback bis 96 MB. Für größere Bücher Chrome oder Edge verwenden.'}</p>}
-                  {downloadPending && <div role="status" aria-live="polite" className="production-time-metrics">
+                  {downloadPending && chapterDownloadIndex === null && <div role="status" aria-live="polite" className="production-time-metrics">
                     <span>M4B-Download: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen{downloadProgress?.total ? ` von ${(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB` : ''}</span>
                     <progress aria-label="M4B-Download" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
                   </div>}
@@ -997,9 +1108,46 @@ export default function Studio() {
                       </li>
                     )}</ul>}
                   </section>}
-                  {audioUrl && <audio src={audioUrl} controls className="chapter-player"/>}
+                  {audioUrl && chapterPreviewIndex === null && <audio src={audioUrl} controls className="chapter-player"/>}
                 </>}
               </div>
+              {job && <section className="panel completed-chapters" aria-label="Fertige Hörbuchkapitel">
+                <div className="panel-head">
+                  <h2>Fertige Kapitel</h2>
+                  <span className="status-chip">{completedChapters.length} verfügbar</span>
+                </div>
+                <p className="helper">Jedes fertiggestellte Kapitel steht als vollständige M4A-Datei zum Download bereit. Zum Vorhören gibt es einen browserkompatiblen WAV-Ausschnitt mit ungefähr einer Minute, ohne Wörter mitten im Segment abzuschneiden.</p>
+                {chapterListError && <p className="message error" role="alert">Kapiteldateien konnten nicht geladen werden: {chapterListError}</p>}
+                {completedChapters.length === 0
+                  ? <p className="chapter-empty">Noch kein Kapitel vollständig vertont und als Audiodatei bereitgestellt.</p>
+                  : <ol className="chapter-files">
+                    {completedChapters.map(chapter => <li className="chapter-file" key={chapter.index}>
+                      <div className="chapter-file-header">
+                        <span className="chapter-file-icon"><FileAudio size={21}/></span>
+                        <div className="chapter-file-info">
+                          <strong>{chapter.title}</strong>
+                          <small>Kapitel {chapter.index + 1} · {formatDuration(chapter.duration_seconds)} · {(chapter.bytes / (1024 * 1024)).toFixed(1)} MB · M4A</small>
+                        </div>
+                        <span className="audit-status ok">Fertig</span>
+                      </div>
+                      <div className="chapter-file-actions">
+                        <button className="outline-btn" disabled={busy || downloadPending} onClick={() => {void previewChapter(chapter)}}>
+                          {chapterPreviewPending === chapter.index ? <LoaderCircle className="spinning" size={17}/> : <PlayCircle size={17}/>}
+                          {chapterPreviewPending === chapter.index ? 'Lade Hörprobe …' : 'Vorhören'}
+                        </button>
+                        <button className="outline-btn" disabled={busy || downloadPending} onClick={() => {void startChapterDownload(chapter)}}>
+                          <FileAudio size={17}/> {chapterDownloadIndex === chapter.index ? 'Wird gespeichert …' : 'M4A herunterladen'}
+                        </button>
+                      </div>
+                      {audioUrl && chapterPreviewIndex === chapter.index && <div className="chapter-file-audition"><small className="chapter-audition-label">Hörprobe: {formatDuration(chapter.preview_seconds)} aus diesem Kapitel</small><audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte die WAV-Hörprobe nicht abspielen. Bitte die Datei prüfen.')}/></div>}
+                      {downloadPending && chapterDownloadIndex === chapter.index && <div className="chapter-file-download" role="status">
+                        <span>{((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB übertragen</span>
+                        <progress aria-label={`Download Kapitel ${chapter.index + 1}`} max={Math.max(1,downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
+                        <button className="text-btn" onClick={() => downloadAbort.current?.abort()}>Abbrechen</button>
+                      </div>}
+                    </li>)}
+                  </ol>}
+              </section>}
             </>}
             <footer className="footer">German Audiobook Studio <span>·</span> Fachbücher. Deutsche Sprachausgabe. Geschützte Verarbeitung.</footer>
           </main>

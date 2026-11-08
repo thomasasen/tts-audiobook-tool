@@ -40,6 +40,22 @@ def browser_pcm16_wav() -> bytes:
     return out.getvalue()
 
 
+def browser_aac_chapter() -> bytes:
+    """Real one-second AAC/M4A from our production writer, no GPU involved."""
+    import numpy as np
+    from tts_audiobook_tool.sound.audio_writers import AacWriter
+
+    with tempfile.TemporaryDirectory(prefix="chapter-e2e-") as directory:
+        target = Path(directory) / "chapter.m4a"
+        with AacWriter(str(target), 24000, 1, "96k") as writer:
+            pcm = np.array(
+                [0.2 * math.sin(2 * math.pi * 440 * i / 24000) for i in range(24000)],
+                dtype=np.float32,
+            )
+            writer.write(pcm)
+        return target.read_bytes()
+
+
 def main() -> None:
     assert (ROOT / "web" / "dist" / "index.html").exists(), "Build frontend before browser test"
     with socket.socket() as sock:
@@ -375,8 +391,73 @@ def main() -> None:
                             }),
                         ),
                     )
+                    # One entire chapter completed while subsequent TTS
+                    # work remains running. The UI must immediately expose
+                    # authenticated playback and an individual M4A download.
+                    import json as json_module
+                    m4a = browser_aac_chapter()
+                    chapter_preview = browser_pcm16_wav()
+                    chapter_row = {
+                        "index": 0, "title": "Vorwort", "segment_count": 3,
+                        "duration_seconds": 1.0, "preview_seconds": 1.0,
+                        "bytes": len(m4a),
+                    }
+                    page.route(
+                        "**/api/projects/*/jobs/*/chapters",
+                        lambda route: route.fulfill(
+                            status=200, content_type="application/json",
+                            body=json_module.dumps({"chapters": [chapter_row]}),
+                        ),
+                    )
+                    page.route(
+                        "**/api/projects/*/jobs/*/chapters/0/audio",
+                        lambda route: route.fulfill(
+                            status=200, content_type="audio/wav",
+                            headers={"Content-Length": str(len(chapter_preview))},
+                            body=chapter_preview,
+                        ),
+                    )
+                    page.route(
+                        "**/api/projects/*/jobs/*/chapters/0/download",
+                        lambda route: route.fulfill(
+                            status=200, content_type="audio/mp4",
+                            headers={"Content-Length": str(len(m4a))},
+                            body=m4a,
+                        ),
+                    )
                     page.get_by_role("button", name="Hörbuch und Export").click()
                     page.get_by_text("3 von 6 Segmenten tatsächlich fertig", exact=False).wait_for()
+                    page.get_by_role("heading", name="Fertige Kapitel").wait_for()
+                    page.get_by_text("1 verfügbar", exact=True).wait_for()
+                    page.get_by_role("button", name="Vorhören").click()
+                    chapter_player = page.get_by_label("Kapitel 1 vorhören")
+                    chapter_player.wait_for(state="visible", timeout=20000)
+                    page.wait_for_function(
+                        "() => { const el = document.querySelector('.chapter-file-player'); "
+                        "return !!el && Number.isFinite(el.duration) && el.duration > 0.5; }",
+                        timeout=20000,
+                    )
+                    assert chapter_player.evaluate("(audio) => audio.error === null")
+                    assert chapter_player.evaluate("(audio) => audio.currentSrc.startsWith('blob:')")
+                    page.evaluate("""() => {
+                      window.__chapterSavedName = ''
+                      window.__chapterWritten = 0
+                      window.__chapterClosed = false
+                      window.showSaveFilePicker = async options => {
+                        window.__chapterSavedName = options.suggestedName
+                        return {createWritable: async () => ({
+                          write: async chunk => {window.__chapterWritten += chunk.byteLength},
+                          close: async () => {window.__chapterClosed = true},
+                          abort: async () => {throw new Error('unexpected chapter abort')},
+                        })}
+                      }
+                    }""")
+                    page.get_by_role("button", name="M4A herunterladen").click()
+                    page.wait_for_function("() => window.__chapterClosed === true", timeout=12000)
+                    assert page.evaluate("window.__chapterWritten") == len(m4a)
+                    assert page.evaluate("window.__chapterSavedName").endswith("_Vorwort.m4a")
+                    page.evaluate("() => {window.showSaveFilePicker = undefined}")
+
                     page.get_by_text("Vergangene Zeit", exact=True).wait_for()
                     page.get_by_text("Geschätzte Restzeit", exact=True).wait_for()
                     metrics = page.locator(".production-time-metrics strong")
@@ -455,6 +536,9 @@ def main() -> None:
                     page.get_by_text("überschreitet 96 MB", exact=False).wait_for()
                     page.unroute("**/api/projects/*/jobs/*/download")
                     page.unroute("**/api/projects/*/jobs/*/activity")
+                    page.unroute("**/api/projects/*/jobs/*/chapters/0/audio")
+                    page.unroute("**/api/projects/*/jobs/*/chapters/0/download")
+                    page.unroute("**/api/projects/*/jobs/*/chapters")
                     page.unroute("**/api/projects/*/jobs")
 
                     page.get_by_role("button", name="Dunkles Design").click()

@@ -1030,6 +1030,7 @@ def create_job(project_id: str) -> dict:
             ).fetchone():
                 raise ValueError("Für dieses Projekt ist bereits ein Auftrag aktiv.")
             _atomic_json(_jobs_dir(job_id) / "plan.json", plan)
+            _chapter_index(job_id, plan)
             db.execute("INSERT INTO studio_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
                 job_id, project_id, VOICE_ID, "queued", 0, len(segments), "", 0.0, "", _now(), _now()
             ))
@@ -1149,6 +1150,8 @@ def _run(job_id: str):
                 raise ValueError("Das Projektglossar wurde seit Auftragsbeginn verändert.")
         if plan.get("model_identity") and plan["model_identity"] != _model_identity():
             raise ValueError("Die Modellgewichte oder der Inferenzcode haben sich seit Auftragsbeginn geändert.")
+        chapter_ranges = _chapter_index(job_id, plan)
+        chapter_by_last_segment = {item["end"] - 1: item for item in chapter_ranges}
         chapter = ""
         duration = 0.0
         done = 0
@@ -1226,6 +1229,21 @@ def _run(job_id: str):
                            (done,duration,chapter,_now(),job_id))
             if done == 1 or done % 10 == 0 or done == len(segments):
                 _job_event(job_id, f"{done} von {len(segments)} Audiosegmenten fertig.")
+            # Publish the chapter only after its final segment is fully
+            # checkpointed. The writer uses CPU, never a second GPU model.
+            completed_chapter = chapter_by_last_segment.get(i)
+            if completed_chapter is not None:
+                try:
+                    if _assemble_chapter_audio(job_id, completed_chapter, plan):
+                        _job_event(job_id,
+                            f"Kapitel {completed_chapter['index'] + 1} fertig: M4A zum Anhören und Herunterladen bereit.")
+                except Exception:
+                    logging.getLogger("german-audiobook-studio.engine").exception(
+                        "Chapter AAC rendering failed: job=%s chapter=%d",
+                        job_id, completed_chapter["index"],
+                    )
+                    _job_event(job_id,
+                        f"Kapitel {completed_chapter['index'] + 1}: separate M4A-Datei konnte nicht erstellt werden; Buchproduktion läuft weiter.")
         with _studio()._db() as db:
             completed = db.execute(
                 "UPDATE studio_jobs SET status='generated',done=?,duration=?,updated_at=? WHERE id=? AND status='running'",
@@ -1314,6 +1332,18 @@ def retry_segment(project_id: str, job_id: str, index: int) -> dict:
                 raise ValueError("Der Auftragsstatus hat sich inzwischen geändert.")
             path.unlink(missing_ok=True)
             path.with_suffix(".json").unlink(missing_ok=True)
+            # The old independently downloadable chapter must not survive
+            # invalidation of any of its constituent voice segments.
+            # Historical test/recovery jobs may not carry a full plan.
+            # They cannot have a derived chapter file to invalidate.
+            if (_jobs_dir(job_id) / "plan.json").is_file():
+                for item in _chapter_index(job_id):
+                    if item["start"] <= index < item["end"]:
+                        chapter_file, chapter_meta = _chapter_audio_paths(job_id, item["index"])
+                        chapter_meta.unlink(missing_ok=True)
+                        chapter_file.unlink(missing_ok=True)
+                        _chapter_preview_path(job_id, item["index"]).unlink(missing_ok=True)
+                        break
             # Retain the previous completed M4B until the replacement is
             # exported atomically. It remains inaccessible while queued.
             db.execute(
@@ -1341,6 +1371,250 @@ def _export_chapter_key(segment: dict) -> tuple[str, object]:
     if index is not None:
         return ("section", index)
     return ("legacy_title", segment.get("title") or "")
+
+
+CHAPTER_AUDIO_FORMAT = "m4a"
+CHAPTER_AUDIO_CACHE_VERSION = "chapter-aac-v1"
+
+
+def _chapter_ranges(plan: dict) -> list[dict]:
+    """Derive stable chapter identity from source section, not a title string.
+
+    Exactly the same boundary key as full-M4B export; repeated titles do not
+    merge distinct chapters. Audio segment indices remain contiguous.
+    """
+    segments = plan["segments"]
+    chapters: list[dict] = []
+    previous = None
+    for i, segment in enumerate(segments):
+        key = _export_chapter_key(segment)
+        if key != previous:
+            if chapters:
+                chapters[-1]["end"] = i
+            chapters.append({
+                "index": len(chapters), "start": i, "end": len(segments),
+                "title": (segment.get("title") or "").strip()[:180]
+                    or f"Kapitel {len(chapters) + 1}",
+            })
+            previous = key
+    for chapter in chapters:
+        digest = hashlib.sha256()
+        digest.update(CHAPTER_AUDIO_CACHE_VERSION.encode("ascii"))
+        digest.update(str(chapter["index"]).encode("ascii"))
+        digest.update(str(plan.get("plan_fingerprint") or "").encode("ascii"))
+        for i in range(chapter["start"], chapter["end"]):
+            digest.update(_segment_fingerprint(segments[i], plan).encode("ascii"))
+        chapter["fingerprint"] = digest.hexdigest()
+        chapter["segments"] = chapter["end"] - chapter["start"]
+    return chapters
+
+
+def _chapter_index(job_id: str, plan: dict | None = None) -> list[dict]:
+    """Small persisted index avoids loading a many-megabyte book every 3 s."""
+    file = _jobs_dir(job_id) / "chapters" / "index.json"
+    if file.is_file():
+        try:
+            index = json.loads(file.read_text(encoding="utf-8"))
+            if (isinstance(index, dict)
+                    and index.get("version") == CHAPTER_AUDIO_CACHE_VERSION
+                    and isinstance(index.get("chapters"), list)):
+                return index["chapters"]
+        except (OSError, ValueError, TypeError):
+            pass
+    if plan is None:
+        plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
+        narration_plan.validate_narration_plan(plan)
+    chapters = _chapter_ranges(plan)
+    _atomic_json(file, {"version": CHAPTER_AUDIO_CACHE_VERSION, "chapters": chapters})
+    return chapters
+
+
+def _chapter_audio_paths(job_id: str, chapter_index: int) -> tuple[Path, Path]:
+    if type(chapter_index) is not int or chapter_index < 0 or chapter_index > 100_000:
+        raise ValueError("Ungültiger Kapitelindex.")
+    audio = _jobs_dir(job_id) / "chapters" / f"{chapter_index:05d}.m4a"
+    return audio, audio.with_suffix(".json")
+
+
+def _chapter_preview_path(job_id: str, chapter_index: int) -> Path:
+    audio, _ = _chapter_audio_paths(job_id, chapter_index)
+    return audio.with_name(audio.stem + "-preview.wav")
+
+
+def _write_chapter_preview(job_id: str, chapter: dict) -> tuple[float, int]:
+    """Take whole finished speech segments, approximately 60 s, as PCM-16.
+
+    Browser-independent playback: Playwright's open-source Chromium often
+    lacks AAC decoding even though Chrome/Edge can decode the M4A download.
+    Avoid cutting words by stopping at segment boundaries, not PCM samples.
+    """
+    target = _chapter_preview_path(job_id, chapter["index"])
+    staging = target.with_name(target.stem + "." + uuid.uuid4().hex + ".partial.wav")
+    try:
+        written_frames = 0
+        sample_rate = None
+        params = None
+        with wave.open(str(staging), "wb") as result:
+            for i in range(chapter["start"], chapter["end"]):
+                path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
+                with wave.open(str(path), "rb") as source:
+                    current = (source.getnchannels(), source.getsampwidth(), source.getframerate())
+                    if current[1] != 2 or current[0] not in (1, 2):
+                        raise ValueError("Vorhörprobe benötigt signiertes 16-Bit-PCM.")
+                    if params is None:
+                        params = current
+                        sample_rate = current[2]
+                        result.setnchannels(current[0])
+                        result.setsampwidth(current[1])
+                        result.setframerate(current[2])
+                    elif current != params:
+                        raise ValueError("Vorhörprobe enthält unterschiedliche WAV-Formate.")
+                    while True:
+                        chunk = source.readframes(32768)
+                        if not chunk:
+                            break
+                        result.writeframesraw(chunk)
+                        written_frames += len(chunk) // (current[0] * current[1])
+                if sample_rate and written_frames >= 60 * sample_rate:
+                    break
+        duration = _valid_browser_preview(staging)
+        os.chmod(staging, 0o600)
+        os.replace(staging, target)
+        return duration, target.stat().st_size
+    finally:
+        staging.unlink(missing_ok=True)
+
+
+def _ready_chapter_audio(job_id: str, chapter: dict) -> dict | None:
+    """Only expose atomically finalized AAC with a matching source fingerprint."""
+    path, meta_path = _chapter_audio_paths(job_id, chapter["index"])
+    preview = _chapter_preview_path(job_id, chapter["index"])
+    if not path.is_file() or not preview.is_file() or not meta_path.is_file():
+        return None
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        stat = path.stat()
+        preview_stat = preview.stat()
+        if (metadata.get("version") != CHAPTER_AUDIO_CACHE_VERSION
+                or metadata.get("fingerprint") != chapter["fingerprint"]
+                or metadata.get("start") != chapter["start"]
+                or metadata.get("end") != chapter["end"]
+                or metadata.get("byte_size") != stat.st_size
+                or stat.st_size < 1024
+                or metadata.get("preview_byte_size") != preview_stat.st_size
+                or preview_stat.st_size < 1024
+                or not isinstance(metadata.get("preview_duration"), (int, float))
+                or not 0 < metadata["preview_duration"] < 180
+                or not isinstance(metadata.get("duration"), (int, float))
+                or not 0 < metadata["duration"] < 24 * 3600):
+            return None
+        return {"duration": round(float(metadata["duration"]), 2),
+                "bytes": stat.st_size,
+                "preview_duration": round(float(metadata["preview_duration"]), 2)}
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _assemble_chapter_audio(job_id: str, chapter: dict, plan: dict) -> bool:
+    """Create one self-contained, fast-start AAC/M4A per complete chapter.
+
+    Already rendered PCM WAV segments are validated against the immutable job
+    plan. The existing PyAV streaming writer never buffers entire chapters.
+    No TTS calls or model reloads. Output and manifest are committed
+    separately: a missing/mismatched manifest is never advertised as ready.
+    """
+    if _ready_chapter_audio(job_id, chapter) is not None:
+        return False
+    from tts_audiobook_tool.sound.audio_writers import AacWriter
+    import soundfile as sf
+    import numpy as np
+
+    path, meta_path = _chapter_audio_paths(job_id, chapter["index"])
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    meta_path.unlink(missing_ok=True)
+    writer = None
+    try:
+        for i in range(chapter["start"], chapter["end"]):
+            segment = plan["segments"][i]
+            audio_path = _jobs_dir(job_id) / "audio" / f"{i:07d}.wav"
+            checkpoint = audio_path.with_suffix(".json")
+            sidecar = json.loads(checkpoint.read_text(encoding="utf-8"))
+            if sidecar.get("fingerprint") != _segment_fingerprint(segment, plan):
+                raise ValueError("Kapitelquelle: Segment-Fingerprint stimmt nicht.")
+            if plan.get("schema") == narration_plan.SCHEMA:
+                if (sidecar.get("unit_id") != segment["unit_id"]
+                        or sidecar.get("prompt") != segment["speech_text"]
+                        or sidecar.get("plan_schema") != narration_plan.SCHEMA
+                        or sidecar.get("audio_sha256") != _audio_digest(audio_path)):
+                    raise ValueError("Kapitelquelle: unvollständiger Audio-Checkpoint.")
+            _valid_audio(audio_path)
+            with sf.SoundFile(str(audio_path)) as source:
+                if writer is None:
+                    writer = AacWriter(
+                        str(path), source.samplerate, source.channels, "96k",
+                        {"title": chapter["title"]},
+                    )
+                if source.samplerate != writer.sample_rate or source.channels != writer.channels:
+                    raise ValueError("Kapitelquelle: inkompatible Audiodateien.")
+                while True:
+                    chunk = source.read(65536, dtype="float32", always_2d=True)
+                    if len(chunk) == 0:
+                        break
+                    writer.write(np.asarray(chunk, dtype=np.float32))
+        if writer is None:
+            raise ValueError("Kapitelquelle enthält keine Audioteile.")
+        duration = writer.duration
+        writer.close()
+        preview_duration, preview_bytes = _write_chapter_preview(job_id, chapter)
+        _atomic_json(meta_path, {
+            "version": CHAPTER_AUDIO_CACHE_VERSION,
+            "fingerprint": chapter["fingerprint"], "start": chapter["start"],
+            "end": chapter["end"], "duration": round(duration, 4),
+            "byte_size": path.stat().st_size,
+            "preview_duration": round(preview_duration, 4),
+            "preview_byte_size": preview_bytes,
+        })
+        return True
+    except Exception:
+        if writer is not None:
+            writer.abort()
+        # No incomplete output is served, even if a new M4A was created but
+        # the manifest write failed (or stale files were left by an old run).
+        meta_path.unlink(missing_ok=True)
+        raise
+
+
+def completed_chapter_files(project_id: str, job_id: str) -> list[dict]:
+    """Cheap authenticated list, even while the GPU generates later chapters."""
+    job = public_job(project_id, job_id)
+    chapters = _chapter_index(job_id)
+    ready = []
+    for chapter in chapters:
+        if chapter["end"] > job["done"]:
+            break
+        audio = _ready_chapter_audio(job_id, chapter)
+        if audio is not None:
+            ready.append({
+                "index": chapter["index"], "title": chapter["title"],
+                "segment_count": chapter["segments"],
+                "duration_seconds": audio["duration"],
+                "preview_seconds": audio["preview_duration"],
+                "bytes": audio["bytes"],
+            })
+    return ready
+
+
+def completed_chapter_path(project_id: str, job_id: str, index: int, *, preview: bool = False) -> Path:
+    """Fail closed on wrong project, incomplete chapter, or stale cache."""
+    job = public_job(project_id, job_id)
+    chapters = _chapter_index(job_id)
+    if type(index) is not int or index < 0 or index >= len(chapters):
+        raise ValueError("Kapitel nicht gefunden.")
+    chapter = chapters[index]
+    if chapter["end"] > job["done"] or _ready_chapter_audio(job_id, chapter) is None:
+        raise ValueError("Kapitel ist noch nicht vollständig als Audiodatei verfügbar.")
+    return (_chapter_preview_path(job_id, index) if preview
+            else _chapter_audio_paths(job_id, index)[0])
 
 
 def export_job(project_id: str, job_id: str) -> Path:
