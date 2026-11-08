@@ -533,7 +533,8 @@ def test_previously_planned_job_cannot_mix_changed_voice_weights(env, monkeypatc
     production.approve_sample()
     job = production.create_job(project_id)
     plan = json.loads((production._jobs_dir(job["id"]) / "plan.json").read_text(encoding="utf-8"))
-    assert plan["version"] == 2
+    assert plan["version"] == production.narration_plan.PLAN_VERSION
+    assert production.narration_plan.validate_narration_plan(plan)
     assert plan["model_identity"] == production._model_identity()
     assert len(plan["model_identity"]) == 64
 
