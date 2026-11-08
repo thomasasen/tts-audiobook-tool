@@ -823,7 +823,7 @@ def create_job(project_id: str) -> dict:
     source_indices = None
     if catalogue_path.is_file():
         catalogue = json.loads(catalogue_path.read_text(encoding="utf-8"))
-        excluded = set(project["excluded_indices"])
+        excluded = set(json.loads(project["excluded_json"]))
         source_indices = [
             i for i in range(project["selected_start"], len(catalogue["chapters"]))
             if i not in excluded
