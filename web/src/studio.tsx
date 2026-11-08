@@ -264,7 +264,15 @@ export default function Studio() {
       const activity = await api<JobActivity>(
         `/api/projects/${projectId}/jobs/${jobId}/activity`, token
       )
-      setJobActivity({...activity, received_at: Date.now()})
+      setJobActivity(previous => {
+        // Responses may arrive out of order when periodic polls overlap.
+        // Keep the newest server snapshot for the same job.
+        if (previous?.id === activity.id && previous.calculated_at && activity.calculated_at) {
+          const older = Date.parse(activity.calculated_at) < Date.parse(previous.calculated_at)
+          if (older) return previous
+        }
+        return {...activity, received_at: Date.now()}
+      })
     } catch {
       // Older pre-update jobs or a transient activity error must not stop
       // polling the canonical persisted job state.
@@ -330,7 +338,13 @@ export default function Studio() {
 
   async function refreshJob(id: string, projectId: string) {
     const latest = await api<Job>(`/api/projects/${projectId}/jobs/${id}`, token)
-    setJob(latest)
+    setJob(previous => {
+      // Never render an older status after a newer poll completed first.
+      if (previous?.id === latest.id && previous.updated_at && latest.updated_at) {
+        if (Date.parse(latest.updated_at) < Date.parse(previous.updated_at)) return previous
+      }
+      return latest
+    })
     void refreshCompletedChapters(projectId, id)
     void refreshActivity(projectId, id)
     if (['generated','completed'].includes(latest.status)) {
@@ -866,10 +880,24 @@ export default function Studio() {
     ? jobActivity : null
   const speechEta = matchingActivity && job?.status === 'running' && matchingActivity.done === job.done
     ? liveRemaining(matchingActivity.remaining_seconds, matchingActivity.received_at, clockNow) : null
-  const exportActivity = job?.status === 'exporting' ? matchingActivity?.export : null
+  const exportActivity = job && ['exporting', 'completed'].includes(job.status) ? matchingActivity?.export : null
+  // An unmeasured preparation step is not 0% of encoding. During a completed
+  // export, the committed job status is authoritative even for legacy jobs
+  // without a persisted export-progress file.
+  const exportPercent = job?.status === 'completed' ? 100
+    : exportActivity?.phase === 'preparing' ? null : exportActivity?.percent ?? null
+  const exportProcessed = job?.status === 'completed' ? job.total : exportActivity?.processed
   const exportEta = exportActivity?.phase === 'processing'
     ? liveRemaining(exportActivity.remaining_seconds, matchingActivity?.received_at, clockNow) : null
   const downloadEta = liveRemaining(downloadProgress?.etaSeconds, downloadProgress?.measuredAt, clockNow)
+  const transferTotal = downloadProgress?.total
+  const transferReceived = downloadProgress?.received ?? 0
+  const transferPercent = transferTotal != null && Number.isFinite(transferTotal) && transferTotal > 0
+    ? Math.min(99, Math.max(0, Math.floor(100 * transferReceived / transferTotal))) : null
+  const transferFinishing = transferTotal != null && transferTotal > 0 && transferReceived >= transferTotal
+  const transferLabel = transferPercent === null ? 'Übertragung läuft (Gesamtgröße unbekannt)'
+    : transferFinishing ? 'Übertragung vollständig, Datei wird gespeichert'
+    : `${transferPercent} % übertragen`
 
   function toggleExcluded(index: number) {
     if (index === start) return
@@ -1169,11 +1197,14 @@ export default function Studio() {
                         : 'Keine aktive Restzeitprognose'}</small>
                     </div>
                   </div>
-                  {(job.status === 'exporting' || exportPending) && <div role="status" aria-live="polite">
-                    <div className="progress-head"><strong>M4B-Export</strong><span>{exportActivity?.percent ?? 0} %</span></div>
-                    <progress max={100} value={exportActivity?.percent ?? 0} aria-label="Fortschritt M4B-Export"/>
-                    <p>{exportActivity?.processed ?? 0} von {exportActivity?.total ?? job.total} Segmenten verarbeitet · {exportActivity?.phase === 'finalizing' ? 'Datei wird abgeschlossen.' : 'Export läuft im Hintergrund.'}</p>
-                  </div>}
+                  {(job.status === 'exporting' || exportPending || job.status === 'completed') && <div role="status" aria-live="polite">
+                    <div className="progress-head"><strong>M4B-Export</strong><span>{exportPercent === null ? 'Vorbereitung …' : `${exportPercent} %`}</span></div>
+                    <progress max={100} value={exportPercent ?? undefined} aria-label="Fortschritt M4B-Export"/>
+                    <p>{job.status === 'completed' ? 'M4B-Datei vollständig erstellt und gespeichert.'
+                      : exportActivity?.phase === 'finalizing' ? `${exportProcessed ?? job.total} von ${job.total} Segmenten verarbeitet · Datei wird abgeschlossen.`
+                      : exportProcessed == null ? 'Export wird vorbereitet; noch keine bestätigten Segmente.'
+                      : `${exportProcessed} von ${exportActivity?.total ?? job.total} Segmenten verarbeitet · Export läuft im Hintergrund.`}</p>
+                  </div>
                   <details className="activity-log" open={job.status === 'failed' ? true : undefined}>
                     <summary>Auftragsprotokoll ({jobActivity?.events.length ?? 0} Einträge)</summary>
                     <ol>{jobActivity?.events.map((entry, i) => <li key={i}><time dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time><span>{entry.message}</span></li>) ?? <li>Noch keine Einträge vorhanden.</li>}</ol>
@@ -1182,7 +1213,8 @@ export default function Studio() {
                   {job.status === 'completed' && <p className="helper">Download-Modus: {supportsDirectSave() ? 'Direkt auf Datenträger speichern (streaming, ohne großen Browser-Blob)' : 'Browser-Fallback bis 96 MB. Für größere Bücher Chrome oder Edge verwenden.'}</p>}
                   {downloadPending && chapterDownloadIndex === null && !chapterZipPending && <div role="status" aria-live="polite" className="production-time-metrics">
                     <span>M4B-Download: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen{downloadProgress?.total ? ` von ${(downloadProgress.total / (1024 * 1024)).toFixed(1)} MB` : ''} · {downloadEta !== null ? `ca. ${formatDuration(downloadEta)} verbleibend` : 'Restzeit noch nicht bestimmbar'}</span>
-                    <progress aria-label="M4B-Download" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
+                    <progress aria-label="M4B-Download" aria-valuetext={transferLabel} max={100} value={transferPercent ?? undefined}/>
+                    <small>{transferLabel}</small>
                   </div>}
                   <div className="job-actions">
                     {['queued','running'].includes(job.status) && <button className="outline-btn" disabled={busy} onClick={() => productionAction('pause')}><PauseCircle size={17}/> Pausieren</button>}
@@ -1226,7 +1258,8 @@ export default function Studio() {
                 </div>}
                 {chapterZipPending && <div role="status" aria-live="polite" className="chapter-file-download">
                   <span>Kapitel-ZIP: {((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB empfangen · {downloadEta !== null ? `ca. ${formatDuration(downloadEta)} verbleibend` : 'Gesamtgröße nicht übermittelt; Restzeit offen'}</span>
-                  <progress aria-label="Download aller Kapitel" max={Math.max(1, downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
+                  <progress aria-label="Download aller Kapitel" aria-valuetext={transferLabel} max={100} value={transferPercent ?? undefined}/>
+                  <small>{transferLabel}</small>
                   <button className="text-btn" onClick={() => downloadAbort.current?.abort()}>Abbrechen</button>
                 </div>}
                 {chapterListError && <p className="message error" role="alert">Kapiteldateien konnten nicht geladen werden: {chapterListError}</p>}
@@ -1254,7 +1287,8 @@ export default function Studio() {
                       {audioUrl && chapterPreviewIndex === chapter.index && <div className="chapter-file-audition"><small className="chapter-audition-label">Hörprobe: {formatDuration(chapter.preview_seconds)} aus diesem Kapitel</small><audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte die WAV-Hörprobe nicht abspielen. Bitte die Datei prüfen.')}/></div>}
                       {downloadPending && chapterDownloadIndex === chapter.index && <div className="chapter-file-download" role="status">
                         <span>{((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB übertragen · {downloadEta !== null ? `ca. ${formatDuration(downloadEta)} verbleibend` : 'Restzeit noch nicht bestimmbar'}</span>
-                        <progress aria-label={`Download Kapitel ${chapter.index + 1}`} max={Math.max(1,downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
+                        <progress aria-label={`Download Kapitel ${chapter.index + 1}`} aria-valuetext={transferLabel} max={100} value={transferPercent ?? undefined}/>
+                        <small>{transferLabel}</small>
                         <button className="text-btn" onClick={() => downloadAbort.current?.abort()}>Abbrechen</button>
                       </div>}
                     </li>)}
