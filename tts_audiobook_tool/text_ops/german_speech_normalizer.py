@@ -138,6 +138,8 @@ _PROTECTED_V3 = re.compile(
     r"(?P<url>(?:https?://|www\.)[^\s<>\"']+)|"
     r"(?P<email>\b[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}\b)|"
     r"(?P<date>\b\d{1,2}\.\d{1,2}\.\d{4}\b)|"
+    r"(?P<list>(?<!\w)\d{1,3}\.(?=\s+))|"
+    r"(?P<precision>\b\d+,\d{3,}\s*€)|"
     r"(?P<technical>"
     r"\b(?:ISBN(?:-1[03])?\s*[: ]\s*[0-9Xx-]{10,}|"
     r"Version\s+\d+(?:\.\d+)+|"
@@ -210,7 +212,7 @@ def _spoken_decimal_v3(value: str) -> str:
     plain = value.lstrip("-−")
     whole, fraction = plain.split(",", 1)
     spoken_whole = _spoken_integer_v3(whole)
-    if not 1 <= len(fraction) <= 4 or (spoken_whole == whole and (len(whole) > 8 or len(whole) > 1 and whole.startswith("0"))):
+    if not 1 <= len(fraction) <= 4 or (len(whole) > 1 and whole.startswith("0")) or len(whole) > 8:
         return value
     return ("minus " if negative else "") + spoken_whole + " Komma " + " ".join(
         num2words(int(digit), lang="de") for digit in fraction
