@@ -679,16 +679,17 @@ export default function Studio() {
         </main>
       ) : (
         <div className="work-layout">
-          <aside className="sidebar" aria-label="Navigation">
+          <nav className="sidebar" aria-label="Hauptnavigation">
             <div className="sidebar-heading">ARBEITSBEREICH</div>
-            <button className={`nav-item ${view === 'library' ? 'selected' : ''}`} onClick={() => {setView('library'); setError(''); setNotice('')}}><FolderOpen size={19}/> Bibliothek</button>
+            <button className={`nav-item ${view === 'library' ? 'selected' : ''}`} aria-current={view === 'library' ? 'page' : undefined} onClick={() => {setView('library'); setError(''); setNotice('')}}><FolderOpen size={19}/> Bibliothek</button>
             <div className="sidebar-heading second-heading">AKTUELLES BUCH</div>
-            <button disabled={!active} className={`nav-item ${view === 'chapters' ? 'selected' : ''}`} onClick={() => setView('chapters')}><BookOpen size={19}/> Text und Kapitel</button>
-            <button disabled={!active} className={`nav-item ${view === 'voices' ? 'selected' : ''}`} onClick={showVoices}><Volume2 size={19}/> Sprecher</button>
-            <button disabled={!active} className={`nav-item ${view === 'glossary' ? 'selected' : ''}`} onClick={loadGlossary}><BookOpen size={19}/> Ausspracheglossar</button>
-            <button disabled={!active} className={`nav-item ${view === 'export' ? 'selected' : ''}`} onClick={openProduction}><FileAudio size={19}/> Hörbuch und Export</button>
+            {active && <div className="sidebar-project" title={active.title}><span className="sidebar-project-icon"><BookOpen size={17}/></span><span className="sidebar-project-title">{active.title}</span></div>}
+            <button disabled={!active} className={`nav-item ${view === 'chapters' ? 'selected' : ''}`} aria-current={view === 'chapters' ? 'page' : undefined} onClick={() => setView('chapters')}><BookOpen size={19}/> Text und Kapitel</button>
+            <button disabled={!active} className={`nav-item ${view === 'voices' ? 'selected' : ''}`} aria-current={view === 'voices' ? 'page' : undefined} onClick={showVoices}><Volume2 size={19}/> Sprecher</button>
+            <button disabled={!active} className={`nav-item ${view === 'glossary' ? 'selected' : ''}`} aria-current={view === 'glossary' ? 'page' : undefined} onClick={loadGlossary}><BookOpen size={19}/> Ausspracheglossar</button>
+            <button disabled={!active} className={`nav-item ${view === 'export' ? 'selected' : ''}`} aria-current={view === 'export' ? 'page' : undefined} onClick={openProduction}><FileAudio size={19}/> Hörbuch und Export</button>
             <div className="sidebar-bottom"><ShieldCheck size={16}/> Privat auf deinem Server</div>
-          </aside>
+          </nav>
           <main id="content" className="content">
             {error && <div className="message error" role="alert"><AlertCircle size={18}/><span>{error}</span><button className="close-message" onClick={() => setError('')} aria-label="Fehlermeldung schließen">×</button></div>}
             {notice && <div className="message success" role="status"><Check size={18}/><span>{notice}</span><button className="close-message" onClick={() => setNotice('')} aria-label="Hinweis schließen">×</button></div>}
@@ -720,7 +721,7 @@ export default function Studio() {
                   <div><strong>{(active.content_audit.summary.source_footnotes ?? 0) + (active.content_audit.summary.source_footnote_refs ?? 0)}</strong><small>Fußnoten und Verweise</small></div>
                 </div>
                 <p className="audit-note">Die Abdeckung zählt Nicht-Leerzeichen im extrahierten Text. Sie belegt die Zuordnung der übernommenen Textspannen, nicht die semantische Vollständigkeit jeder Abbildung oder Tabelle.</p>
-                {active.content_audit.skipped.length > 0 && <details className="audit-skipped" open>
+                {active.content_audit.skipped.length > 0 && <details className="audit-skipped">
                   <summary>{active.content_audit.skipped.length} ausgelassene oder ungeklärte Quellressourcen</summary>
                   <ul>{active.content_audit.skipped.map((item, i) => <li key={`${item.href ?? item.index}-${i}`}>
                     <strong>{item.href ?? `Spine-Eintrag ${item.index + 1}`}</strong>
@@ -729,14 +730,14 @@ export default function Studio() {
                     {item.href && item.can_restore && <button className="audit-action" disabled={busy || saving || active.status !== 'Entwurf'} onClick={() => {void updateSourceOverride(item.href!, true)}}>Trotzdem in den Vorlesetext aufnehmen</button>}
                   </li>)}</ul>
                 </details>}
-                {active.content_audit.resources.filter(item => item.included_by_user).length > 0 && <details className="audit-skipped" open>
+                {active.content_audit.resources.filter(item => item.included_by_user).length > 0 && <details className="audit-skipped">
                   <summary>{active.content_audit.resources.filter(item => item.included_by_user).length} manuell wieder aufgenommene Quellen</summary>
                   <ul>{active.content_audit.resources.filter(item => item.included_by_user).map(item => <li key={item.href}>
                     <strong>{item.href}</strong><span>Wurde trotz der automatischen Auslassungsregel aufgenommen. {item.override_reason}</span>
                     <button className="audit-action" disabled={busy || saving || active.status !== 'Entwurf'} onClick={() => {void updateSourceOverride(item.href, false)}}>Automatische Auslassungsregel wieder anwenden</button>
                   </li>)}</ul>
                 </details>}
-                {(active.content_audit.review_elements ?? []).length > 0 && <details className="audit-elements" open>
+                {(active.content_audit.review_elements ?? []).length > 0 && <details className="audit-elements">
                   <summary>{(active.content_audit.review_elements ?? []).length} komplexe Inhaltselemente zur menschlichen Prüfung</summary>
                   <p className="helper">Optional kannst du für Tabellen, Formeln, Abbildungen und Bilder eine eigene Sprecherfassung formulieren. Sie wird erst nach deiner ausdrücklichen Übernahme verwendet und ersetzt dann die bisherige Textbehandlung dieses Elements. Es wird kein Inhalt automatisch erfunden.</p>
                   {(active.content_audit.review_elements ?? []).map((element, i) => {
@@ -808,8 +809,8 @@ export default function Studio() {
             </>}
             {view === 'voices' && active && <>
               <div className="page-heading"><div><p className="eyebrow">SPRECHERWAHL</p><h1>Deutsche Erzählerstimme</h1><p>Ausschließlich fertig trainierte Stimmen, keine hochgeladenen Referenzen oder Stimmklone.</p></div></div>
-              {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice"><LockKeyhole size={21}/><div><strong>{capabilities?.voice_installed ? 'Thorsten installiert – Hörfreigabe noch offen' : 'Thorsten noch nicht betriebsbereit'}</strong><p>{capabilities?.reason ?? 'Installationsstatus wird geprüft.'}</p></div></div>}
-              <div className="voice-grid">{voices.map(voice => <div className="panel voice-card" key={voice.id}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : ['initializing', 'checking-cache', 'downloading', 'installing'].includes(capabilities?.voice_install_state ?? '') ? 'Installation läuft' : ['insufficient-space', 'cuda-unavailable', 'download-failed', 'installation-failed', 'voice-cuda-unavailable', 'bootstrap-failed'].includes(capabilities?.voice_install_state ?? '') ? 'Installation fehlgeschlagen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
+              {voices.every(voice => voice.status !== 'ready') && <div className="panel voice-notice" role="status"><LockKeyhole size={21}/><div><strong>{capabilities?.voice_installed ? 'Thorsten installiert – Hörfreigabe noch offen' : 'Thorsten noch nicht betriebsbereit'}</strong><p>{capabilities?.reason ?? 'Installationsstatus wird geprüft.'}</p></div></div>}
+              <div className="voice-grid">{voices.map(voice => <section className="panel voice-card" key={voice.id} aria-label={voice.name}><div className="voice-avatar"><Volume2 size={26}/></div><div><span className="status-chip">{voice.status === 'ready' ? 'Freigegeben' : capabilities?.voice_installed ? 'Installiert · Freigabe offen' : ['initializing', 'checking-cache', 'downloading', 'installing'].includes(capabilities?.voice_install_state ?? '') ? 'Installation läuft' : ['insufficient-space', 'cuda-unavailable', 'download-failed', 'installation-failed', 'voice-cuda-unavailable', 'bootstrap-failed'].includes(capabilities?.voice_install_state ?? '') ? 'Installation fehlgeschlagen' : 'Nicht installiert'}</span><h3>{voice.name}</h3><p>{voice.description}</p><small>Quelle und Lizenz: <a href={voice.source} target="_blank" rel="noopener noreferrer">{voice.license}</a></small>
                 <div className="voice-sample-settings">
                   <label htmlFor="voice-sample-length">Länge der Hörprobe</label>
                   <select id="voice-sample-length" value={previewDurationSeconds} disabled={busy || previewTask?.status === 'running'} onChange={e => setPreviewDurationSeconds(Number(e.target.value) as 5|15|30|60)}>
@@ -825,7 +826,7 @@ export default function Studio() {
                   try { await api('/api/voices/approve', token, {method:'POST'}); await showVoices(); setNotice('Stimme nach manueller Hörabnahme freigegeben.') }
                   catch (err) { setError((err as Error).message) }
                 }}><Check size={17}/> Nach Anhören freigeben</button></div>
-              </div></div>)}</div>
+              </div></section>)}</div>
               {previewTask && previewTask.status !== 'idle' && <section className="panel generation-progress" aria-label="Hörproben-Fortschritt">
                 <div className="panel-head"><h2>{previewTask.status === 'ready' ? 'Hörprobe erzeugt' : previewTask.status === 'failed' ? 'Hörprobe fehlgeschlagen' : 'Hörprobe wird erzeugt'}</h2>
                   <span className="status-chip">{previewTask.status === 'running' ? 'In Bearbeitung' : previewTask.status === 'ready' ? 'Bereit zur Hörkontrolle' : 'Fehler'}</span>
@@ -841,7 +842,7 @@ export default function Studio() {
                 </details>
               </section>}
               {previewAudioError && <div className="message error" role="alert"><AlertCircle size={18}/><span>{previewAudioError}{audioUrl && <> <a href={audioUrl} download="thorsten-hoerprobe.wav">WAV zur Prüfung herunterladen</a></>}</span></div>}
-              {audioUrl && previewTask?.status === 'ready' && !previewAudioError && <div className="panel audio-preview">
+              {audioUrl && previewTask?.status === 'ready' && !previewAudioError && <section className="panel audio-preview" aria-label="Hörprobe">
                 <h3>Hörprobe</h3>
                 <audio src={audioUrl} controls preload="metadata" onLoadedMetadata={event => {
                   const duration = event.currentTarget.duration
@@ -863,7 +864,7 @@ export default function Studio() {
                   setPreviewAudioError(`Hörprobe nicht abspielbar (Medienfehler ${code ?? 'unbekannt'}): ${detail}`)
                 }} onEnded={() => { if (previewAudioValid) setPreviewPlayed(true) }}/>
                 <p className="helper">Prüfe Akzent, Stimmstabilität, Betonung und Verständlichkeit. Die Freigabe ist eine manuelle Qualitätsentscheidung.</p>
-              </div>}
+              </section>}
             </>}
             {view === 'export' && active && <>
               <div className="page-heading"><div><p className="eyebrow">PRODUKTION UND EXPORT</p><h1>Hörbuch erstellen</h1><p>{active.title}</p></div></div>

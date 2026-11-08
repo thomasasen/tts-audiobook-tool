@@ -83,6 +83,18 @@ def main() -> None:
                     page.get_by_role("heading", name="Meine Hörbücher").wait_for()
                     page.get_by_label("EPUB-Datei auswählen").set_input_files(str(source))
                     page.get_by_role("heading", name="Kapitelübersicht").wait_for(timeout=30000)
+                    # Design regression: the complex EPUB review is progressive
+                    # disclosure rather than five expanded forms above chapter work.
+                    assert page.get_by_role("navigation", name="Hauptnavigation").count() == 1
+                    assert page.get_by_role("button", name="Text und Kapitel").get_attribute("aria-current") == "page"
+                    # The synthetic EPUB may not contain any complex
+                    # tables or figures; when present, review stays collapsed.
+                    if page.locator(".audit-elements").count():
+                        assert page.locator(".audit-elements").get_attribute("open") is None
+                    assert page.locator(".audit-grid > div").count() == 8
+                    assert page.evaluate(
+                        "() => getComputedStyle(document.querySelector('.page-heading h1')).fontSize"
+                    ) != "12px"
                     assert "Vorwort" in page.get_by_label("Erster vorgelesener Abschnitt").input_value() or \
                            page.get_by_label("Erster vorgelesener Abschnitt").input_value().isdigit()
                     assert page.get_by_text("Dieses Testbuch erklärt", exact=False).count() >= 1
@@ -123,6 +135,9 @@ def main() -> None:
                     page.get_by_role("button", name="Sprecher").click()
                     page.get_by_text("Nicht installiert", exact=True).wait_for()
                     page.get_by_text("Thorsten noch nicht betriebsbereit", exact=True).wait_for()
+                    # The single speaker should use the content width,
+                    # not a 300px tile floating in an otherwise empty page.
+                    assert page.locator(".voice-card").bounding_box()["width"] > 650
                     assert page.get_by_role("button", name="Echte Hörprobe erzeugen").is_disabled()
 
                     # A non-JSON error from the new asynchronous start endpoint
@@ -427,6 +442,10 @@ def main() -> None:
                     page.get_by_role("button", name="Dunkles Design").click()
                     assert "dark" in page.locator(".shell").get_attribute("class")
                     page.set_viewport_size({"width": 390, "height": 844})
+                    assert page.get_by_role("navigation", name="Hauptnavigation").is_visible()
+                    assert page.locator(".sidebar").evaluate(
+                        "(element) => getComputedStyle(element).overflowX"
+                    ) == "auto"
                     page.wait_for_timeout(250)
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), \
                            "Unexpected horizontal overflow at mobile width"

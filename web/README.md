@@ -5,6 +5,19 @@ die bestehenden Pull Requests #8–#13 in Entwicklung. Die technische
 Browser-/EPUB- und M4B-Abnahme läuft in GitHub Actions. **Reale GPU-Inferenz,
 deutsche Hörabnahme und Pod-Neustart sind noch nicht freigegeben.**
 
+## Oberflächendesign
+
+Das React-Studio nutzt ein durchgängiges, an [Apple Design](https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md) orientiertes Web-Designsystem. `web/src/apple-design.css` liegt als klar getrennte Präsentationsschicht **nach** den bestehenden Feature-Stilen (`web/src/style.css`). Es verändert keine API-, Projekt- oder Audiodatenverträge.
+
+- Plattformschrift mit abgestufter Typografie statt durchgehend kleiner Beschriftungen.
+- Ruhige, leicht transparente Navigation und Aktionsleiste mit klar getrennten Inhaltsflächen.
+- Einheitliche 44-Pixel-Bedienziele, sofortige Druckrückmeldung und sichtbarer Tastaturfokus.
+- Kompakte EPUB-Inhaltsinventur; tiefgehende Quellprüfung ist bei Bedarf aufklappbar.
+- Breite Sprecherkarte, responsives Kapitel- und Produktionslayout sowie horizontal scrollbare mobile Navigation.
+- Unterstützt Browser-Signale für reduzierte Bewegung, Transparenz und erhöhten Kontrast. Keine neuen Laufzeitabhängigkeiten und keine externen Schrift-/Bilddienste.
+
+Die visuelle Änderung ist an tatsächlichen Browsergrößen und mit Tastatur-/Assistive-Technology-Bedienung abzunehmen. Die Chromium-CI deckt Kernnavigation, mobile Breite, EPUB-Details und Sprecherstatus ab, ersetzt aber keine menschliche Designabnahme.
+
 ## Architektur und Funktionen
 
 - Geschützte Einzelbenutzer-Bibliothek mit privatem SQLite-Speicher
