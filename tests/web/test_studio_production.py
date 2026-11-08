@@ -528,11 +528,11 @@ def test_studio_recognizes_actual_pinned_thorsten_marker_after_install(env):
         + "-py-" + values["THORSTEN_PYTHON_VERSION"].strip('"')
         + "-uv-" + values["UV_VERSION"].strip('"')
     )
-    assert len((version + "\\n").encode("utf-8")) == 289
+    assert len((version + "\n").encode("utf-8")) == 289
 
     model = root / "models" / "CosyVoice"
     model.mkdir(parents=True)
-    (model / ".studio-ready").write_text(version + "\\n", encoding="utf-8")
+    (model / ".studio-ready").write_text(version + "\n", encoding="utf-8")
     (model / "infer_thorsten.py").write_text("print('synthetic inference')", encoding="utf-8")
     (root / "models" / "thorsten-model-sha256.txt").write_text(
         "synthetic-model-manifest-for-test", encoding="utf-8"
