@@ -119,8 +119,38 @@ def main() -> None:
 
                     page.get_by_role("button", name="Ausspracheglossar").click()
                     page.get_by_label("Begriff = gesprochene Form").fill("MEDDPICC = M E D D P I C C")
-                    page.get_by_role("button", name="Glossar speichern").click()
-                    page.get_by_text("Ausspracheglossar wurde aktualisiert", exact=False).wait_for(timeout=10000)
+                    page.get_by_role("button", name="Glossaränderung übernehmen").click()
+                    page.get_by_text("Glossar gespeichert.", exact=True).wait_for(timeout=10000)
+                    # A running project must no longer disable the glossary
+                    # editor. Its update must visibly defer until the safe
+                    # segment boundary, then report the reuse count.
+                    import json as json_module
+                    update_state = {"poll": 0}
+                    def mocked_glossary_put(route):
+                        assert route.request.method == "PUT"
+                        assert route.request.post_data_json["entries"]["MEDDPICC"] == "Medd Pik"
+                        route.fulfill(status=200, content_type="application/json",
+                            body=json_module.dumps({
+                                "entries": {"MEDDPICC": "Medd Pik"},
+                                "update": {"status": "pending"}
+                            }))
+                    def mocked_glossary_status(route):
+                        update_state["poll"] += 1
+                        result = {"status": "pending"}
+                        if update_state["poll"] >= 1:
+                            result = {"status": "applied", "affected": 1,
+                                      "preserved": 17, "total": 18,
+                                      "message": "1 Segment betroffen; 17 Audio-Checkpoints weiterverwendet."}
+                        route.fulfill(status=200, content_type="application/json",
+                                      body=json_module.dumps(result))
+                    page.route("**/api/projects/*/glossary", mocked_glossary_put)
+                    page.route("**/api/projects/*/glossary/update", mocked_glossary_status)
+                    page.get_by_label("Begriff = gesprochene Form").fill("MEDDPICC = Medd Pik")
+                    page.get_by_role("button", name="Glossaränderung übernehmen").click()
+                    page.get_by_text("Änderungen angenommen.", exact=False).wait_for()
+                    page.get_by_text("1 von 18 Segmenten betroffen", exact=False).wait_for(timeout=10000)
+                    page.unroute("**/api/projects/*/glossary/update")
+                    page.unroute("**/api/projects/*/glossary")
 
                     # Regression: FastAPI and upstream proxies sometimes send
                     # a plain-text 500 instead of JSON. The UI must show the
