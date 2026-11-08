@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import errno
-import hashlib
 import io
 import json
 import os
@@ -30,13 +29,13 @@ FRAMES = 7680
 INTERRUPTED_UNIT = 4
 
 
-def tone_hz(prompt: str) -> int:
-    return 250 + 25 * (int.from_bytes(hashlib.sha256(prompt.encode()).digest()[:4]) % 130)
+def tone_hz(index: int) -> int:
+    return 250 + 25 * index
 
 
-def write_tone(prompt: str, path: Path) -> None:
+def write_tone(path: Path, index: int = 0) -> None:
     positions = np.arange(FRAMES) / RATE
-    pcm = (10000 * np.sin(2 * np.pi * tone_hz(prompt) * positions)).astype("<i2")
+    pcm = (10000 * np.sin(2 * np.pi * tone_hz(index) * positions)).astype("<i2")
     with wave.open(str(path), "wb") as audio:
         audio.setparams((1, 2, RATE, FRAMES, "NONE", "not compressed"))
         audio.writeframes(pcm.tobytes())
@@ -49,9 +48,11 @@ def serve(control_dir: Path, interrupt: bool) -> None:
 
     replace = os.replace
 
-    def replace_export(source, destination):
+    def replace_with_test_faults(source, destination):
         if Path(destination).name == "audiobook.m4b" and (control_dir / "fail-export").exists():
             raise OSError(errno.ENOSPC, "synthetic sensitive marker", str(destination))
+        if Path(destination).name == "activity.json" and (control_dir / "fail-activity").exists():
+            raise OSError(errno.ENOSPC, "synthetic activity path marker", str(destination))
         return replace(source, destination)
 
     def fake_inference(prompt, path, config, on_progress=None):
@@ -63,7 +64,7 @@ def serve(control_dir: Path, interrupt: bool) -> None:
             (control_dir / "interrupted").touch()
             time.sleep(60)
             raise RuntimeError("Test did not stop the process during inference")
-        write_tone(prompt, path)
+        write_tone(path, index)
 
     # Only model availability/identity and inference are doubled. The real
     # Studio lifespan, queue, WAV staging, validation and export all run.
@@ -71,7 +72,7 @@ def serve(control_dir: Path, interrupt: bool) -> None:
     production._model_identity = lambda: "e03a-synthetic-worker"
     production._config = lambda: ("synthetic-python", "synthetic-script")
     production._generate_with_worker = fake_inference
-    os.replace = replace_export
+    os.replace = replace_with_test_faults
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         (control_dir / "port").write_text(str(listener.getsockname()[1]), encoding="ascii")
@@ -169,10 +170,10 @@ def check_m4b(payload, plan, title):
     # The center of each segment is safely clear of AAC frame boundaries.
     # Check decoded tone frequency in order, not just metadata and duration.
     frequencies = np.fft.rfftfreq(FRAMES // 2, 1 / RATE)
-    for index, segment in enumerate(segments):
+    for index in range(len(segments)):
         middle = index * FRAMES + FRAMES // 4
         spectrum = np.abs(np.fft.rfft(samples[middle:middle + FRAMES // 2]))
-        assert frequencies[spectrum.argmax()] == tone_hz(segment["speech_text"])
+        assert frequencies[spectrum.argmax()] == tone_hz(index)
 
 
 def test_epub_to_m4b_after_abrupt_server_restart(tmp_path):
@@ -249,13 +250,18 @@ def test_epub_to_m4b_after_abrupt_server_restart(tmp_path):
         assert len(list(audio_dir.glob("*.wav"))) == job["total"]
         failure = tmp_path / "fail-export"
         failure.touch()
+        (tmp_path / "fail-activity").touch()
         export_error = client.post(job_route + "/export")
         assert export_error.status_code == 409
         assert "synthetic sensitive marker" not in export_error.text
         assert str(tmp_path) not in export_error.text
-        engine_log = tmp_path / "private" / "logs" / "studio-engine.log"
-        assert "synthetic sensitive marker" not in engine_log.read_text(encoding="utf-8")
         assert checked(client.get(job_route))["status"] == "generated"
+        engine_log = tmp_path / "private" / "logs" / "studio-engine.log"
+        log_text = engine_log.read_text(encoding="utf-8")
+        assert "Could not record audiobook activity" in log_text
+        assert "type=AudioWriteError" in log_text
+        assert "synthetic sensitive marker" not in log_text
+        assert "synthetic activity path marker" not in log_text
         assert not (job_dir / "audiobook.m4b.partial").exists()
         assert client.get(job_route + "/download").status_code == 404
         failure.unlink()

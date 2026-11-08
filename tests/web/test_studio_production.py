@@ -120,7 +120,7 @@ def test_worker_failure_cleans_partial_wav_and_allows_retry(env, monkeypatch, ca
         assert not list(audio.iterdir())
         assert env.get(route + "/download", headers=HEADERS).status_code == 404
         monkeypatch.setattr(production, "_generate_with_worker",
-                            lambda text, path, config, on_progress=None: write_tone(text, path))
+                            lambda text, path, config, on_progress=None: write_tone(path))
         assert env.post(route + "/control", headers=HEADERS, json={"action": "resume"}).is_success
         recovered = wait_for("generated")
         assert recovered["done"] == recovered["total"]

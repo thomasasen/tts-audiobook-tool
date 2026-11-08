@@ -14,7 +14,7 @@ Der lokale technische Kernlauf vom synthetischen EPUB bis zum vollständig decod
 | Python | Isoliertes Venv mit CPython 3.12.14, Pytest 8.4.2 und Torch 2.8.0+cpu (`torch.version.cuda is None`). Beide Lockdateien separat mit `--require-hashes --no-deps` installiert, Windows- und Torch-Zusatzpakete separat. `pip check` war erfolgreich. |
 | Node und Browser | Node 26.13.0, npm 12.2.1, Playwright 1.56.0 mit Chromium Headless Shell 141.0.7390.37. |
 | Audio | PyAV 18.1.0 mit FFmpeg 8.1.2, libavcodec 62.28.102 und libavformat 62.12.102. Die Playwright-FFmpeg-CLI ist ein reduzierter VP8-Build ohne AAC. Studio nutzt die FFmpeg-Bibliotheken von PyAV für echtes AAC-Encoding, MP4-Muxing und Decoding. |
-| Isolation | Selbst verfasstes EPUB aus `runpod/acceptance_epub.py`, synthetische Zugangsdaten, temporäre Datenwurzeln und Loopback-HTTP. Test-Doubles für Modellverfügbarkeit, Modellidentität und Inferenz. Der WAV-Testgenerator schreibt frequenzmarkiertes PCM aus dem eingefrorenen Prompt. ASR blieb lokal im E2E deaktiviert. `doctor.py` fragte Hardwaredaten ab. Die Produktionstests nutzten ausschließlich CPU. |
+| Isolation | Selbst verfasstes EPUB aus `runpod/acceptance_epub.py`, synthetische Zugangsdaten, temporäre Datenwurzeln und Loopback-HTTP. Test-Doubles für Modellverfügbarkeit, Modellidentität und Inferenz. Im Review erhielt jede Einheit des Testbuchs über ihren Index einen eigenen PCM-Testton. Die Aufrufspur prüft davon getrennt die eingefrorenen Prompts. ASR blieb lokal im E2E deaktiviert. `doctor.py` fragte Hardwaredaten ab. Die Produktionstests nutzten ausschließlich CPU. |
 | Windows-Testadapter | Nur im temporären `PYTHONPATH` lag ein `fcntl`-Adapter auf Basis einer exklusiven, nicht blockierenden Windows-Dateisperre. Linux verwendet im Produkt und in CI die native `flock`-Sperre. |
 
 ## Testmatrix
@@ -39,9 +39,9 @@ Der lokale technische Kernlauf vom synthetischen EPUB bis zum vollständig decod
 | E04 | Erweiterte Sicherheitsabdeckung | Vollständiger Host-Datenträger, Host-OOM, systematisches XHTML-Fuzzing und Überprüfung von NTFS-ACLs. | NOT RUN |
 | F01 | Gebautes React-Frontend und echte HTTP-Routen | `npm run build` und `tests/web/browser_smoke.py` mit Chromium und Uvicorn. Login, echter Upload, Kapitelauswahl, Speicherung, Glossar und mobile Darstellung. Im Smoke werden unter anderem bestimmte Fehler-, Download- und Wiederholungsantworten auf Browser-Ebene simuliert. | PASS |
 | F02 | Produktionsstatus, Stimme, Export und Download | Echter lokaler HTTP-E2E prüft Queue, Aktivität, Recovery, Export und authentifizierten Download. FastAPI-TestClient deckt weitere Zustands- und Voice-Gates ab. Synthese und Modellverfügbarkeit sind Test-Doubles. | PASS |
-| G01 | Syntax, Hashes und Konfigurationsdiagnose | `bash -n` einzeln für alle 14 Skripte, zwei `--help`-Pfade, sieben geprüfte SHA-256-Einträge und `doctor.py --json`. Die Diagnose meldet den fehlenden produktiven Mount und die fehlende Studio-/Modellinstallation im temporären Datenpfad. | PASS für Syntax, Hashes und Diagnoseformat |
+| G01 | Syntax, Hashes und Konfigurationsdiagnose | `bash -n` einzeln für alle 14 Skripte, zwei `--help`-Pfade, sieben geprüfte SHA-256-Einträge und `doctor.py --json`. Die Diagnose meldet den fehlenden produktiven Mount und fehlende Qwen-/MOSS-Umgebungen im temporären Datenpfad. | PASS für Syntax, Hashes und Diagnoseformat |
 | G02 | Gepinnte Revisionen, Manifest und Upgrade/Rollback | `tests/runpod` prüft Modellpins, Manifestintegrität, Fehlerfälle, simulierte CUDA-Preflights und Release-Transaktionen. Windows: 64 erfolgreich, 6 Assertion-Fehler durch POSIX-Pfadannahmen, 9 Fehler durch fehlende Symlink-Rechte bzw. nicht ausführbare POSIX-Skripte. Das Linux-Ergebnis ist am PR-Head über den Workflow **RunPod setup static tests** nachprüfbar. | PASS für 64 Windows-Fälle, BLOCKED lokal für 15 POSIX-Fälle |
-| G03 | Basis- und PR-CI | Basis-SHA mit `gh run list --commit` und `gh run view` verifiziert. Für den Änderungscommit gelten die Checks des PR-Heads für Studio und RunPod-Static. Der Lock-Generator wird nur bei Änderungen an seinen Eingaben ausgelöst. | PASS für die Basis, PR-Checks separat |
+| G03 | Basis- und PR-CI | Basis-SHA mit `gh run list --commit` und `gh run view` verifiziert. Die Abnahme vor dem Review auf `9812c8b536b8e8ad2060745c68211837c4400ac1` umfasste 337 Pytest-Fälle und fünf erfolgreiche Studio-Jobs sowie 79 erfolgreiche RunPod-Fälle. Für den Folgestand gelten die Checks von PR #32. | PASS für Basis und ursprünglichen Abnahmecommit |
 
 Der Audio-Probelauf ergab 28 WAV-Dateien à 7.680 Samples mit 24.000 Hz, mono, PCM16. Der AAC-Download ergab 215.040 decodierte Samples und 8,960 Sekunden. Die drei Marker liefen von 0,000 bis 0,960 s, 0,960 bis 6,720 s und 6,720 bis 8,960 s. Der Test erlaubt für die Gesamtdauer höchstens einen AAC-Frame (1.024 Samples) und für Marker höchstens 1 ms Abweichung. Die Frequenzprüfung im Zentrum jedes Segments belegt die Verkettungsreihenfolge.
 
@@ -56,7 +56,7 @@ Der Audio-Probelauf ergab 28 WAV-Dateien à 7.680 Samples mit 24.000 Hz, mono, P
 | Shell-Syntaxgate prüfte nur das erste Skript | `bash -n script1 script2 ...` behandelt die weiteren Namen als Positionsargumente. | Der RunPod-Workflow prüft jedes Skript einzeln. | PASS im lokalen Git Bash für alle 14 Dateien. |
 | EPUB-Testfixture fehlte EPUB-3-Modifikationszeitpunkt | Das OPF-Metadatenfragment enthielt `dcterms:modified` nicht. | Der feste Zeitstempel wurde im synthetischen Generator ergänzt. | PASS für ZIP-Struktur, Import, API und Browser. |
 
-## Ausgeführte Befehle und Ergebnisse
+## Ausgeführte Befehle und Ergebnisse der ursprünglichen Abnahme
 
 Die Befehle verwenden im Folgenden `python` aus dem isolierten Venv. Unter Windows wurden `--basetemp` und die Logs in ein auftragsspezifisches temporäres Verzeichnis umgeleitet. Vor dem Lesen von Workspace-Dateien lief der vorgeschriebene SonarQube-Geheimnis-Scan.
 
@@ -135,6 +135,19 @@ def flock(fd, flags):
             raise
         raise BlockingIOError(exc.errno, "Studio test lock is held") from exc
 ```
+
+## Abschlussreview von PR #32
+
+Der fokussierte Vorher-Lauf auf Basis von `9812c8b` ergab vier reproduzierte Fehlschläge und einen bestandenen Legacy-Export. Nach den Korrekturen bestanden alle 40 gezielt gewählten Produktions-, Export-, Recovery- und NarrationPlan-Fälle. Der Neustart-E2E bestand erneut mit der zusätzlichen Assertion, dass der AAC-Writer den simulierten Speicherfehler erreicht. `python -m testx.no_ffmpeg_smoke --skip-startup` bestand alle 20 Audio-I/O-Prüfungen und die Herkunftsprüfung der geladenen FFmpeg-Bibliotheken. Diese Läufe sind separat von den historischen Windows-Zahlen oben zu lesen.
+
+| Befund | Reproduktion und Korrektur |
+|---|---|
+| Fehler beim Aktivitätsprotokoll blockiert den Export | `ENOSPC` beim atomaren Speichern von `activity.json` ließ den Auftrag in `exporting`. Ein Schreibfehler des Diagnoseprotokolls unterbricht den Auftrag jetzt nicht mehr. Die Warnung enthält Auftrags-ID und Fehlernummer. Der E2E-Test injiziert den Fehler zusammen mit einem separaten AAC-Schreibfehler und prüft anschließenden Export und Download. |
+| Legacy-Aufträge können bei fehlenden Segmenten oder leeren WAVs unvollständig fertigmelden | Einen historischen Zwei-Segment-Auftrag mit einem Eintrag im Manifest oder mit einem WAV ohne Samples exportieren. Resume und Export prüfen die Segmentzahl gegen den gespeicherten Auftrag. Der Export lehnt leere WAVs ab. Der unveränderte historische Export mit zwei gültigen WAVs bleibt als Positivfall bestehen. |
+| Ein interner Export-`RuntimeError` gab Rohtext an den Browser weiter | Ein synthetischer privater Marker im Fehler bei der Kapitelverarbeitung erschien im HTTP-409-Detail. Der Fehlerpfad gibt jetzt eine feste Meldung zurück, schreibt nur den Fehlertyp ins Studio-Log und setzt den Auftrag für einen erneuten Export zurück. |
+| Die Testfrequenz war nicht eindeutig | Die bisherige Modulo-Zuordnung erlaubte gleiche Frequenzen für verschiedene Prompts. Der E2E-Test codiert jetzt den Index jeder Einheit als eigene Frequenz. Er vergleicht die Synthese-Prompts weiterhin separat mit dem Plan. |
+
+Belege zur ursprünglichen Abnahme stehen im [Studio-Lauf 42434362561](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42434362561) und im [RunPod-Lauf 42434362586](https://github.com/thomasasen/tts-audiobook-tool/actions/runs/42434362586). Der PR beschreibt den geprüften Review-Head und verlinkt seine CI-Läufe. [Pull Request #32](https://github.com/thomasasen/tts-audiobook-tool/pull/32)
 
 ## E03-B · Offene Release-Nachweise
 

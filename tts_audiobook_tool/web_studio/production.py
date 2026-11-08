@@ -6,11 +6,11 @@ disabled unless an operator has installed and auditioned a curated voice.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import sys
 from array import array
-import errno
 import json
 import os
 import re
@@ -32,6 +32,7 @@ JOB_FAILURE = "Vertonung fehlgeschlagen. Privates Server-Log prüfen."
 JOB_DISK_FAILURE = "Vertonung fehlgeschlagen: Datenträger voll."
 JOB_MEMORY_FAILURE = "Vertonung fehlgeschlagen: Zu wenig Arbeitsspeicher."
 EXPORT_FAILURE = "Export fehlgeschlagen"
+EXPORT_FAILURE_DETAIL = "M4B-Export fehlgeschlagen. Privates Server-Log prüfen."
 PUBLIC_JOB_ERRORS = {JOB_FAILURE, JOB_DISK_FAILURE, JOB_MEMORY_FAILURE, EXPORT_FAILURE, ""}
 
 VOICE_ID = "thorsten-cosyvoice3"
@@ -666,7 +667,14 @@ def _job_event(job_id: str, message: str) -> None:
         except (OSError, ValueError, TypeError):
             events = []
         events.append({"at": _now(), "message": message})
-        _atomic_json(filename, events[-60:])
+        try:
+            _atomic_json(filename, events[-60:])
+        except OSError as exc:
+            # Activity is diagnostic. Its failure must not invalidate an already
+            # committed job transition or interrupt audio processing.
+            logging.getLogger("german-audiobook-studio.engine").warning(
+                "Could not record audiobook activity, job=%s, errno=%s", job_id, exc.errno
+            )
 
 
 def _job_eta(job_id: str, done: int, total: int) -> tuple[int | None, int]:
@@ -990,8 +998,10 @@ def _run(job_id: str):
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
         is_narration_plan = narration_plan.validate_narration_plan(plan)
         segments = plan["segments"]
+        if not segments or len(segments) != job["total"]:
+            raise ValueError("Produktionsplan und Produktionsauftrag stimmen nicht überein.")
         if is_narration_plan:
-            if plan["project_id"] != job["project_id"] or len(segments) != job["total"]:
+            if plan["project_id"] != job["project_id"]:
                 raise ValueError("NarrationPlan und Produktionsauftrag stimmen nicht überein.")
             narration_plan.assert_book_unchanged(
                 _studio()._project_dir(job["project_id"]), plan
@@ -1210,8 +1220,11 @@ def export_job(project_id: str, job_id: str) -> Path:
         import soundfile as sf
         plan = json.loads((_jobs_dir(job_id) / "plan.json").read_text(encoding="utf-8"))
         is_narration_plan = narration_plan.validate_narration_plan(plan)
+        segments = plan["segments"]
+        if not segments or len(segments) != job["total"]:
+            raise ValueError("Produktionsplan und Exportauftrag stimmen nicht überein.")
         if is_narration_plan:
-            if plan["project_id"] != project_id or len(plan["segments"]) != job["total"]:
+            if plan["project_id"] != project_id:
                 raise ValueError("NarrationPlan und Exportauftrag stimmen nicht überein.")
             narration_plan.assert_book_unchanged(_studio()._project_dir(project_id), plan)
             if project_glossary(project_id) != plan["glossary"]:
@@ -1233,7 +1246,7 @@ def export_job(project_id: str, job_id: str) -> Path:
             db.execute("UPDATE studio_jobs SET status='exporting',updated_at=? WHERE id=?", (_now(),job_id))
         _job_event(job_id, "M4B-Export gestartet. Audiosegmente werden zusammengeführt.")
         try:
-            for i, segment in enumerate(plan["segments"]):
+            for i, segment in enumerate(segments):
                 if is_narration_plan:
                     meta = _jobs_dir(job_id) / "audio" / f"{i:07d}.json"
                     try:
@@ -1249,6 +1262,8 @@ def export_job(project_id: str, job_id: str) -> Path:
                             )):
                         raise ValueError("NarrationPlan: Audiosegment passt nicht zum Produktionsplan.")
                 audio, sr = sf.read(str(audio_path(project_id,job_id,i)), dtype="float32", always_2d=True)
+                if not audio.size:
+                    raise ValueError("Ein Audiosegment enthält keine Samples.")
                 if writer is None:
                     sample_rate = sr
                     writer = AacWriter(str(path), sample_rate, audio.shape[1], "96k", {"title": _studio()._project(project_id)["title"]})
@@ -1263,8 +1278,8 @@ def export_job(project_id: str, job_id: str) -> Path:
                     chapter_key = current_key
                 writer.write(np.asarray(audio, dtype=np.float32))
                 start += len(audio) / sr
-                if (i + 1) % 25 == 0 or i + 1 == len(plan["segments"]):
-                    _job_event(job_id, f"M4B-Export: {i + 1} von {len(plan['segments'])} Segmenten verarbeitet.")
+                if (i + 1) % 25 == 0 or i + 1 == len(segments):
+                    _job_event(job_id, f"M4B-Export: {i + 1} von {len(segments)} Segmenten verarbeitet.")
             if chapter_key is not None:
                 chapters.append(Chapter(chapter_start, start, chapter_title))
             if writer is None:
@@ -1277,12 +1292,12 @@ def export_job(project_id: str, job_id: str) -> Path:
             with _studio()._db() as db:
                 db.execute("UPDATE studio_jobs SET status='generated',error=?,updated_at=? WHERE id=?",
                            (EXPORT_FAILURE, _now(), job_id))
-            _job_event(job_id, "M4B-Export fehlgeschlagen. Privates Server-Log prüfen.")
-            if isinstance(exc, (AudioWriteError, OSError, MemoryError, sf.SoundFileError)):
+            _job_event(job_id, EXPORT_FAILURE_DETAIL)
+            if isinstance(exc, (AudioWriteError, OSError, MemoryError, RuntimeError, sf.SoundFileError)):
                 logging.getLogger("german-audiobook-studio.engine").error(
                     "Audiobook export failed, job=%s, type=%s", job_id, type(exc).__name__
                 )
-                raise RuntimeError("M4B-Export fehlgeschlagen. Privates Server-Log prüfen.") from None
+                raise RuntimeError(EXPORT_FAILURE_DETAIL) from None
             raise
         with _studio()._db() as db:
             db.execute("UPDATE studio_jobs SET status='completed',error='',updated_at=? WHERE id=?", (_now(),job_id))

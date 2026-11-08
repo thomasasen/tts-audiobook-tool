@@ -769,7 +769,9 @@ def create_export(project_id: str, job_id: str):
         return {"ready": path.is_file(), "filename": "audiobook.m4b"}
     except OSError:
         raise HTTPException(409, "M4B-Exportdateien sind nicht verfügbar.") from None
-    except (ValueError, RuntimeError) as exc:
+    except RuntimeError:
+        raise HTTPException(409, production.EXPORT_FAILURE_DETAIL) from None
+    except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
 
