@@ -1188,6 +1188,17 @@ def job_activity(project_id: str, job_id: str) -> dict:
         # Even 100% of segments can still require chapter finalization.
         eta = None
     now = datetime.now(timezone.utc)
+    if eta is not None:
+        try:
+            last_update = datetime.fromisoformat(job["updated_at"])
+            if last_update.tzinfo is None:
+                last_update = last_update.replace(tzinfo=timezone.utc)
+            since_commit = max(0, int((now - last_update).total_seconds()))
+            # Do not keep asserting a countdown after the last real checkpoint
+            # failed to advance. A long current segment is not "almost done".
+            eta = max(1, eta - since_commit) if since_commit < eta else None
+        except (ValueError, TypeError, KeyError):
+            eta = None
     try:
         started_at = datetime.fromisoformat(job["created_at"])
         elapsed = max(0, int((now - started_at).total_seconds()))
