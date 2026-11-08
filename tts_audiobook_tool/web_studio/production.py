@@ -218,7 +218,11 @@ def _model_identity() -> str | None:
         worker = persistent_worker.read_bytes()
         if not version or not checksums or not inference or not worker:
             return None
-        if (len(version) > 256 or len(checksums) > 8192
+        # The pinned installer marker includes four upstream revision SHAs
+        # plus the dependency-lock SHA and runtime versions. Its current
+        # canonical UTF-8 length is 289 bytes (including the trailing newline).
+        # Keep a conservative bounded read but do not reject a valid install.
+        if (len(version) > 512 or len(checksums) > 8192
                 or len(inference) > 100_000 or len(worker) > 100_000):
             return None
         return hashlib.sha256(
