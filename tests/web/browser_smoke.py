@@ -118,9 +118,28 @@ def main() -> None:
                     page.get_by_text("Kapitelauswahl im bestehenden", exact=False).wait_for(timeout=30000)
 
                     page.get_by_role("button", name="Ausspracheglossar").click()
-                    page.get_by_label("Begriff = gesprochene Form").fill("MEDDPICC = M E D D P I C C")
+                    expected_glossary = "MEDDPICC = M E D D P I C C\nMongoDB = Mongo De Be"
+                    page.get_by_label("Begriff = gesprochene Form").fill(expected_glossary)
                     page.get_by_role("button", name="Glossaränderung übernehmen").click()
                     page.get_by_text("Glossar gespeichert.", exact=True).wait_for(timeout=10000)
+                    # Regression: changing tabs must reload the persisted
+                    # glossary, not show an empty/stale local textarea.
+                    page.get_by_role("button", name="Text und Kapitel").click()
+                    page.get_by_role("button", name="Ausspracheglossar").click()
+                    page.wait_for_function(
+                        "(expected) => document.querySelector('#glossary')?.value === expected",
+                        arg=expected_glossary, timeout=10000,
+                    )
+                    # Re-saving chapter choices rebuilt Project() and erased
+                    # word_substitutions. Saved pronunciation must survive.
+                    page.get_by_role("button", name="Text und Kapitel").click()
+                    page.get_by_role("button", name="Auswahl speichern").click()
+                    page.get_by_text("Kapitelauswahl im bestehenden", exact=False).wait_for(timeout=30000)
+                    page.get_by_role("button", name="Ausspracheglossar").click()
+                    page.wait_for_function(
+                        "(expected) => document.querySelector('#glossary')?.value === expected",
+                        arg=expected_glossary, timeout=10000,
+                    )
                     # A running project must no longer disable the glossary
                     # editor. Its update must visibly defer until the safe
                     # segment boundary, then report the reuse count.
