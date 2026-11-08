@@ -28,7 +28,7 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from . import production, asr_quality
 
@@ -852,6 +852,60 @@ def list_chapter_files(project_id: str, job_id: str):
         raise HTTPException(404, "Keine Kapiteldateien für diesen Auftrag verfügbar.") from exc
 
 
+class _ZipStreamSink:
+    """Non-seekable ZIP writer; bounded to the current output chunks."""
+    def __init__(self):
+        self.offset = 0
+        self.pending = []
+
+    def write(self, data):
+        block = bytes(data)
+        self.pending.append(block)
+        self.offset += len(block)
+        return len(block)
+
+    def tell(self):
+        return self.offset
+
+    def flush(self):
+        pass
+
+    def drain(self):
+        chunks, self.pending = self.pending, []
+        return chunks
+
+
+def _stream_chapter_archive(entries):
+    """Build a ZIP64-compatible archive without buffering it or writing a temp ZIP."""
+    sink = _ZipStreamSink()
+    with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+        for source, name in entries:
+            with source.open("rb") as input_file, archive.open(name, "w", force_zip64=True) as output:
+                for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+                    output.write(chunk)
+                    yield from sink.drain()
+            yield from sink.drain()
+    yield from sink.drain()
+
+
+@app.get("/api/projects/{project_id}/jobs/{job_id}/chapters/archive",
+         dependencies=[Depends(require_auth)])
+def download_all_chapters(project_id: str, job_id: str):
+    """Authenticated ZIP of all complete M4A chapters with EPUB-derived names."""
+    try:
+        entries = production.chapter_archive_entries(project_id, job_id)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, "Der vollständige Kapitelexport ist noch nicht verfügbar.") from exc
+    return StreamingResponse(
+        _stream_chapter_archive(entries), media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="Hoerbuch-Kapitel.zip"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @app.get("/api/projects/{project_id}/jobs/{job_id}/chapters/{chapter_index}/audio",
          dependencies=[Depends(require_auth)])
 def play_chapter(project_id: str, job_id: str, chapter_index: int):
@@ -875,7 +929,9 @@ def download_chapter(project_id: str, job_id: str, chapter_index: int):
         path = production.completed_chapter_path(project_id, job_id, chapter_index)
         return FileResponse(
             path, media_type="audio/mp4",
-            filename=f"Kapitel-{chapter_index + 1:03d}.m4a",
+            filename=production.chapter_download_name(
+                chapter_index, production._chapter_index(job_id)[chapter_index]["title"]
+            ),
             headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
         )
     except (ValueError, OSError) as exc:
@@ -901,8 +957,8 @@ def retry_segment(project_id: str, job_id: str, index: int):
 @app.post("/api/projects/{project_id}/jobs/{job_id}/export", dependencies=[Depends(require_auth)])
 def create_export(project_id: str, job_id: str):
     try:
-        path = production.export_job(project_id, job_id)
-        return {"ready": path.is_file(), "filename": "audiobook.m4b"}
+        result = production.start_export_job(project_id, job_id)
+        return JSONResponse(status_code=200 if result["ready"] else 202, content=result)
     except (ValueError, RuntimeError, OSError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
