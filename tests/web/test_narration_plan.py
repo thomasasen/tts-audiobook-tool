@@ -198,6 +198,15 @@ def test_b01_source_mapping_is_checked_not_just_percent_report(tmp_path, change)
         _plan(folder)
 
 
+
+def test_b01_audit_with_missing_mapping_is_not_disguised_as_legacy(tmp_path):
+    folder, cat = _fixture(tmp_path, mapping=False)
+    cat["content_audit"]["version"] = 2
+    (folder / "chapters.json").write_text(json.dumps(cat), encoding="utf-8")
+    with pytest.raises(ValueError, match="B01-Quelltextzuordnung fehlt"):
+        _plan(folder)
+
+
 def test_pre_b01_project_falls_back_explicitly_to_book_source(tmp_path):
     folder, _ = _fixture(tmp_path, mapping=False)
     plan = _plan(folder)
@@ -356,6 +365,56 @@ def test_new_studio_job_synthesizes_the_frozen_prompt_and_reuses_safe_checkpoint
     assert used_prompts == [plan["segments"][0]["speech_text"]], "valid WAV must be reused"
     assert production._job(job_id)["status"] == "generated"
 
+
+
+def test_valid_but_changed_wav_bytes_cannot_be_reused(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    _prepared_studio_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_model_identity", lambda: "model-1")
+    job = production.create_job(project_id)
+    prompts = []
+
+    def synthesize(text, path):
+        prompts.append(text)
+        _tone(path)
+        return production._valid_audio(path)
+
+    monkeypatch.setattr(production, "_synthesize", synthesize)
+    monkeypatch.setattr(production, "_audio_quality", lambda *a: {"status": "not_checked"})
+    production._STOP.clear()
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job["id"],))
+    production._run(job["id"])
+    assert len(prompts) == 1
+
+    # Produce an equally valid WAV with changed bytes and valid duration.
+    path = production._jobs_dir(job["id"]) / "audio" / "0000000.wav"
+    data = bytearray(path.read_bytes())
+    data[-1] ^= 0x01
+    path.write_bytes(data)
+    assert production._valid_audio(path) > 0
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running',done=0 WHERE id=?", (job["id"],))
+    production._run(job["id"])
+    assert len(prompts) == 2, "WAVs with mismatched SHA-256 must be regenerated"
+
+
+def test_unknown_or_corrupt_plan_rejected_before_worker_inference(env, monkeypatch):
+    project_id = uuid.uuid4().hex
+    _prepared_studio_project(project_id)
+    monkeypatch.setattr(production, "voice_ready", lambda: True)
+    monkeypatch.setattr(production, "_model_identity", lambda: "model-1")
+    job = production.create_job(project_id)
+    path = production._jobs_dir(job["id"]) / "plan.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["version"] = 99
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    production._STOP.clear()
+    with studio._db() as db:
+        db.execute("UPDATE studio_jobs SET status='running' WHERE id=?", (job["id"],))
+    with pytest.raises(ValueError, match="Version"):
+        production._run(job["id"])
 
 def test_changed_glossary_fails_resume_instead_of_mixing_prompts(env, monkeypatch):
     project_id = uuid.uuid4().hex
