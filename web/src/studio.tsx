@@ -77,6 +77,7 @@ type CompletedChapter = {
   title: string
   segment_count: number
   duration_seconds: number
+  preview_seconds: number
   bytes: number
 }
 type Job = {
@@ -523,13 +524,13 @@ export default function Studio() {
         headers: {Authorization: `Bearer ${token}`}, cache: 'no-store',
       })
       if (!response.ok) throw await apiResponseError(response, path)
-      if (!(response.headers.get('content-type') ?? '').startsWith('audio/mp4')) {
-        throw new Error('Der Server hat keine spielbare M4A-Datei zurückgegeben.')
+      if (!(response.headers.get('content-type') ?? '').startsWith('audio/wav')) {
+        throw new Error('Der Server hat keine browserkompatible WAV-Hörprobe zurückgegeben.')
       }
-      const limit = 96 * 1024 * 1024
+      const limit = 20 * 1024 * 1024
       const header = response.headers.get('content-length')
       if (header && Number(header) > limit) {
-        throw new Error('Dieses Kapitel ist für die Browser-Vorschau zu groß. Bitte die M4A-Datei herunterladen.')
+        throw new Error('Die WAV-Hörprobe ist ungewöhnlich groß. Bitte die M4A-Datei herunterladen.')
       }
       if (!response.body) throw new Error('Der Browser unterstützt keinen sicheren Audioempfang.')
       const reader = response.body.getReader()
@@ -540,7 +541,7 @@ export default function Studio() {
           const {done, value} = await reader.read()
           if (done) break
           count += value.byteLength
-          if (count > limit) throw new Error('Kapitel größer als 96 MB. Bitte herunterladen.')
+          if (count > limit) throw new Error('Die Hörprobe überschreitet 20 MB. Bitte das Kapitel herunterladen.')
           chunks.push(value)
         }
       } catch (error) {
@@ -552,7 +553,7 @@ export default function Studio() {
       if (count < 1024 || (header && Number(header) !== count)) {
         throw new Error('Unvollständige Kapiteldatei empfangen.')
       }
-      setOwnedAudioUrl(URL.createObjectURL(new Blob(chunks, {type: 'audio/mp4'})))
+      setOwnedAudioUrl(URL.createObjectURL(new Blob(chunks, {type: 'audio/wav'})))
       setChapterPreviewIndex(chapter.index)
     } catch (error) {
       setError((error as Error).message)
@@ -1115,7 +1116,7 @@ export default function Studio() {
                   <h2>Fertige Kapitel</h2>
                   <span className="status-chip">{completedChapters.length} verfügbar</span>
                 </div>
-                <p className="helper">Jedes vollständig vertonte Kapitel wird als eigene M4A-Datei bereitgestellt. Du kannst es bereits anhören und herunterladen, während die restliche Produktion weiterläuft.</p>
+                <p className="helper">Jedes fertiggestellte Kapitel steht als vollständige M4A-Datei zum Download bereit. Zum Vorhören gibt es einen browserkompatiblen WAV-Ausschnitt mit ungefähr einer Minute, ohne Wörter mitten im Segment abzuschneiden.</p>
                 {chapterListError && <p className="message error" role="alert">Kapiteldateien konnten nicht geladen werden: {chapterListError}</p>}
                 {completedChapters.length === 0
                   ? <p className="chapter-empty">Noch kein Kapitel vollständig vertont und als Audiodatei bereitgestellt.</p>
@@ -1132,13 +1133,13 @@ export default function Studio() {
                       <div className="chapter-file-actions">
                         <button className="outline-btn" disabled={busy || downloadPending} onClick={() => {void previewChapter(chapter)}}>
                           {chapterPreviewPending === chapter.index ? <LoaderCircle className="spinning" size={17}/> : <PlayCircle size={17}/>}
-                          {chapterPreviewPending === chapter.index ? 'Lade Kapitel …' : 'Vorhören'}
+                          {chapterPreviewPending === chapter.index ? 'Lade Hörprobe …' : 'Vorhören'}
                         </button>
                         <button className="outline-btn" disabled={busy || downloadPending} onClick={() => {void startChapterDownload(chapter)}}>
                           <FileAudio size={17}/> {chapterDownloadIndex === chapter.index ? 'Wird gespeichert …' : 'M4A herunterladen'}
                         </button>
                       </div>
-                      {audioUrl && chapterPreviewIndex === chapter.index && <audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte dieses M4A-Kapitel nicht abspielen. Bitte herunterladen und die Datei prüfen.')}/>}
+                      {audioUrl && chapterPreviewIndex === chapter.index && <div className="chapter-file-audition"><caption>Hörprobe: {formatDuration(chapter.preview_seconds)} aus diesem Kapitel</caption><audio className="chapter-file-player" src={audioUrl} controls preload="metadata" aria-label={`Kapitel ${chapter.index + 1} vorhören`} onError={() => setError('Der Browser konnte die WAV-Hörprobe nicht abspielen. Bitte die Datei prüfen.')}/></div>}
                       {downloadPending && chapterDownloadIndex === chapter.index && <div className="chapter-file-download" role="status">
                         <span>{((downloadProgress?.received ?? 0) / (1024 * 1024)).toFixed(1)} MB übertragen</span>
                         <progress aria-label={`Download Kapitel ${chapter.index + 1}`} max={Math.max(1,downloadProgress?.total ?? 1)} value={downloadProgress?.total ? downloadProgress.received : undefined}/>
