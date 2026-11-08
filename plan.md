@@ -148,12 +148,12 @@ S/M/L sind relative Implementierungsgrößen, **keine Zeitversprechen**. A03, A0
 
 **Fundstellen:** tts_audiobook_tool/text_ops/prompt_normalizer.py, tts_audiobook_tool/web_studio/production.py (_normalize_de), tests/text/test_prompt_normalizer.py.
 
-- [ ] Eine zentrale, testbare Vorlesetext-Transformation ergänzen; bestehende globale Normalisierung wiederverwenden, statt Regeln zu duplizieren.
-- [ ] Mit Golden Tests abdecken: 1,25 / 1.234 / 49,90 €, 3,5 %, 2026, 08:30, Datumsformate, §§, URLs, E-Mail, Aufzählungsnummern, CRM/SaaS/MEDDPICC/ARR/NRR/ROI/SLA/EBITDA sowie deutsch-englische Wechsel.
-- [ ] Mehrwort-Fachbegriffe, Groß-/Kleinschreibung, Interpunktion, Satzgrenzen und kontextspezifische Ausnahmen des Glossars prüfen.
-- [ ] Bei Mehrdeutigkeit Originalform erhalten oder prüfbaren Warnhinweis liefern; keine automatische Fantasieaussprache.
-- [ ] Jede geänderte Sprechform ist in Vorschau und Debug-Evidenz nachvollziehbar; Original-EPUB bleibt unverändert.
-- [ ] Modellabhängige Sonderzeichen-/Steuer-Token-Regeln bleiben im jeweiligen Modelladapter.
+- [x] Eine zentrale, testbare Vorlesetext-Transformation ergänzen; bestehende globale Normalisierung wiederverwenden, statt Regeln zu duplizieren.
+- [x] Mit Golden Tests abdecken: 1,25 / 1.234 / 49,90 €, 3,5 %, 2026, 08:30, Datumsformate, §§, URLs, E-Mail, Aufzählungsnummern, CRM/SaaS/MEDDPICC/ARR/NRR/ROI/SLA/EBITDA sowie deutsch-englische Wechsel.
+- [x] Mehrwort-Fachbegriffe, Groß-/Kleinschreibung, Interpunktion, Satzgrenzen und kontextspezifische Ausnahmen des Glossars prüfen.
+- [x] Bei Mehrdeutigkeit Originalform erhalten oder prüfbaren Warnhinweis liefern; keine automatische Fantasieaussprache.
+- [x] Jede geänderte Sprechform ist in Vorschau und Debug-Evidenz nachvollziehbar; Original-EPUB bleibt unverändert.
+- [x] Modellabhängige Sonderzeichen-/Steuer-Token-Regeln bleiben im jeweiligen Modelladapter.
 
 **Akzeptanz:** Golden Cases vorhersagbar und stabil; keine Doppel-Normalisierung; Hörprobe und Produktion verwenden dieselbe Transformation.
 
@@ -459,3 +459,48 @@ der Fokus-CI-Workflow wurde auf Audit, Skip-Detektor und CSS ausgedehnt.
 **Abnahmebeleg (08.11.2026):** Der Anwender hat das private Referenz-EPUB mit dem produktiven `EpubExtractor` und `epub_content_audit` lokal importiert; die deutsche Kapitel-/Navigationsordnung wurde geprüft, die 13 anfänglichen Initialenwarnungen wurden durch die Reparatur auf null reduziert, und die verbleibenden zwei signifikanten Hinweise betreffen bewusst ausgeschlossene Inhalts-/Attributionsressourcen. Ein zweiter lokaler Test über die echte Studio-API hat Project-V5-Version 5, `book.v3` sowie vollständige Übereinstimmung von 5.443 gespeicherten und erneut geladenen Phrase-Groups nachgewiesen. Der unter Windows nicht verfügbare Linux-/GPU-Worker-Lifecycle wurde im lokalen Test gezielt ausgeklammert; die Linux-CI deckt die reguläre Startumgebung ab. Die vier Fachgrafiken und die auffälligen Quell-Kapitelauftakte wurden anschließend redaktionell in einer **privaten EPUB-Kopie** bearbeitet. Die private Kopie ist unabhängig vom öffentlichen Repository und wurde strukturell (ZIP-CRC, XML, unveränderte Ressourcennamen und Anker) validiert; eine weitere kanonische Importprüfung dieser **neuen Kopie** und eine Hörabnahme stehen für die spätere Hörbuchproduktion aus.
 
 **Status:** B01 als Implementierungs- und Offline-Abnahmepaket **abgeschlossen**, vorbehaltlich unveränderter erfolgreicher CI auf dem finalen PR-Head. Eigenständige Audio-/Release-Abnahme in E03 bleibt ausdrücklich offen.
+
+
+### B02 — Deterministische deutsche Sprechvorlagen v3 (PR #30, 08.11.2026)
+
+**Implementierung:** `feature/b02-german-speech-normalization` auf
+`master` `8343dcf881f07b9db06d01ee44de023ee8a7ca71`.
+PR: https://github.com/thomasasen/tts-audiobook-tool/pull/30 .
+Kein Merge ohne explizite Freigabe.
+
+**Code:** `de-narration-v3` schützt URLs, E-Mail-Adressen, IP-/ISBN-/
+Versionsnummern und Kennungen; behandelt deutsche Zahlen, Prozent,
+Währung (€ / EUR), Uhrzeit, Datum, Paragraphen, Jahresbereiche,
+eindeutige Ordinale und konservativ Aufzählungen. Projekt-Glossare
+sind validiert, longest-first, case-insensitiv und nicht rekursiv.
+Die neutrale Hörprobe und neue Jobs verwenden denselben
+`production._narration_prompt`-Dispatcher. Keine B04-Funktion
+vorweggenommen.
+
+**Kompatibilität:** Bestehende Legacy- und `de-narration-v2`-Aufträge
+werden mit bisherigen Normalisierungsfunktionen und Fingerprints
+fortgesetzt; neue Jobs speichern `de-narration-v3`. Alte WAV-Caches,
+`source.epub` und kanonische Project-V5/`book.v3`-Quelldaten
+bleiben unverändert. Unbekannte Versionen werden abgewiesen.
+Privater Segment-Sidecar dokumentiert Original vs. Sprechvorlage,
+v3 zusätzlich die Version.
+
+**Qualität/Evidenz:** Eigenständig formulierte Golden-/Negativtests
+in `tests/text/test_german_speech_normalizer.py` plus
+`tests/web/test_studio_api.py` (echter neutraler Preview-Dispatcher).
+Nachweis einer reparierten Erst-CI-Abweichung (Term499-Glossar) und
+nachgeschärfter Negativfälle für Produktnamen, Komposita und Casing.
+CI am jeweiligen finalen PR-Head prüfen:
+https://github.com/thomasasen/tts-audiobook-tool/pull/30/checks .
+
+**Kritisches Review (German Linguist, Speech-AI, Python Architect,
+QA/Reliability):** Golden-Testfälle für Grammatik und Zahlen,
+keine unbelegten Akronym-Lautschreibweisen; Legacy/v2-Codepfade
+bewahrt; Glossar-Überlappung von quadratischer Suche auf
+binäre Suche umgestellt; Schutz von E-Mail, URL, Kennungen und
+Cache/Resume. Behobene Befunde: Konflikt zwischen Glossar und
+alphanumerischer Produktkennung (hoch), Bindestrich-Komposita und
+Casing (mittel), potenziell quadratische Überlappung (mittel).
+Ohne GPU keine akustische Prüfung. Buchbezogene Hörprobe und
+Hörfreigabe bleiben B04/D02/E03.
+

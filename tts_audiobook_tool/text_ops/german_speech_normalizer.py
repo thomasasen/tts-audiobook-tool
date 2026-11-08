@@ -139,8 +139,9 @@ _PROTECTED_V3 = re.compile(
     r"(?P<url>(?:https?://|www\.)[^\s<>\"']+)|"
     r"(?P<email>\b[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}\b)|"
     r"(?P<date>\b\d{1,2}\.\d{1,2}\.\d{4}\b)|"
+    r"(?P<ordinal>\b(?:am|zum)\s+\d{1,2}\.\s*(?:Tag|Mal)\b)|"
     r"(?P<list>(?<!\w)\d{1,3}\.(?=\s+))|"
-    r"(?P<precision>\b\d+,\d{3,}\s*€)|"
+    r"(?P<precision>\b\d+,\d{3,}\s*(?:€|EUR|Euro))|"
     r"(?P<technical>"
     r"\b(?:ISBN(?:-1[03])?\s*[: ]\s*[0-9Xx-]{10,}|"
     r"Version\s+\d+(?:\.\d+)+|"
@@ -154,7 +155,7 @@ _PROTECTED_V3 = re.compile(
 )
 _V3_UNIT = re.compile(
     r"(?<![\w.,:/-])(?P<sign>[-−]?)(?P<amount>(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,4})?)"
-    r"\s*(?P<unit>€|%)(?!\w)",
+    r"\s*(?P<unit>€|EUR|Euro|%)(?!\w)", re.IGNORECASE,
 )
 _V3_TIME = re.compile(r"(?<![\w:])(?P<h>\d{1,2}):(?P<m>\d{2})\s*Uhr\b", re.IGNORECASE)
 _V3_PARAGRAPH_RANGE = re.compile(r"(?<!\w)§{1,2}\s*(\d{1,4})\s*[–—-]\s*(\d{1,4})(?!\w)")
@@ -180,7 +181,7 @@ def validate_german_glossary(glossary: dict[str, str]) -> None:
             or "<" in value or ">" in value
         ):
             raise ValueError("Das Glossar enthält einen ungültigen Begriff oder eine ungültige Sprechform.")
-        folded = key.casefold()
+        folded = " ".join(key.split()).casefold()
         if folded in seen:
             raise ValueError("Glossareinträge unterscheiden sich nur durch Groß-/Kleinschreibung.")
         seen.add(folded)
@@ -191,7 +192,7 @@ def _compiled_glossary_v3(keys: tuple[str, ...]) -> re.Pattern[str] | None:
     if not keys:
         return None
     # Match longer phrases first, once. Do not touch replacement text again.
-    alternatives = [re.escape(key).replace(r"\ ", r"\s+") for key in
+    alternatives = [re.escape(" ".join(key.split())).replace(r"\ ", r"\s+") for key in
                     sorted(keys, key=lambda s: (-len(s), s))]
     return re.compile(r"(?<!\w)(?:" + "|".join(alternatives) + r")(?!\w)", re.IGNORECASE)
 
@@ -259,6 +260,20 @@ def _spoken_date_v3(match: re.Match[str], original: str) -> str:
     dative = bool(re.search(r"\b(?:am|vom)\s+$", prefix, re.IGNORECASE))
     ordinal = num2words(day, lang="de", to="ordinal")
     return ordinal + ("n" if dative else "r") + " " + _MONTHS_V3[month] + " " + _spoken_integer_v3(str(year))
+
+
+def _spoken_ordinal_v3(match: re.Match[str]) -> str:
+    found = re.fullmatch(
+        r"(?P<prep>am|zum)\s+(?P<number>\d{1,2})\.\s*(?P<noun>Tag|Mal)",
+        match.group(), re.IGNORECASE,
+    )
+    if found is None or not 1 <= int(found.group("number")) <= 31:
+        return match.group()
+    return (
+        found.group("prep") + " "
+        + num2words(int(found.group("number")), lang="de", to="ordinal")
+        + "n " + found.group("noun")
+    )
 
 
 def _transform_plain_v3(text: str) -> str:
@@ -352,6 +367,8 @@ def normalize_german_speech_v3(text: str, glossary: dict[str, str]) -> str:
                 pieces.append(value)
         elif match.lastgroup == "date":
             pieces.append(_spoken_date_v3(match, text))
+        elif match.lastgroup == "ordinal":
+            pieces.append(_spoken_ordinal_v3(match))
         else:
             pieces.append(match.group())
         cursor = end

@@ -191,6 +191,8 @@ def test_preview_progress_activity_is_authenticated_and_duplicate_safe(client, m
 def test_preview_duration_validation_and_multisentence_assembly(client, monkeypatch):
     from tts_audiobook_tool.web_studio import production
     monkeypatch.setattr(production, "_model_identity", lambda: "synthetic-thorsten")
+    monkeypatch.setattr(production, "SAMPLE_SENTENCES",
+                        ("Der Anteil beträgt 3,5 %.", *production.SAMPLE_SENTENCES[1:]))
     calls = []
     def synthetic_speech(text, path, on_progress=None):
         calls.append(text)
@@ -204,6 +206,9 @@ def test_preview_duration_validation_and_multisentence_assembly(client, monkeypa
     assert production.SAMPLE_LENGTHS == {5: 1, 15: 3, 30: 6, 60: 12}
     sample = production.make_sample(duration_seconds=15)
     assert len(calls) == 3
+    assert calls[0] == "Der Anteil beträgt drei Komma fünf Prozent."
+    assert calls == [production._narration_prompt(s, {}, production.DE_NORMALIZER_VERSION)
+                     for s in production.SAMPLE_SENTENCES[:3]]
     assert sample.is_file()
     with wave.open(str(sample), "rb") as reader:
         assert reader.getnframes() == 16000 * 3

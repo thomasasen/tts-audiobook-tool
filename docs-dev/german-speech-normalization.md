@@ -38,7 +38,7 @@ telemetry. Log operational counters and rule versions only.
 - Read canonical German thousands groups and integers with conservative
   length bounds. Leading-zero identifiers, ambiguous dotted numbers and
   numbers with unknown precision are not guessed.
-- Render whole euros, euros plus cents, plain cents and percentage values.
+- Render whole euros, euros plus cents, plain cents and percentage values (€, EUR and Euro).
   Preserve non-cent monetary precision rather than reinterpret the amount.
 - Read valid numeric calendar dates with German month names and ordinal day
   forms; invalid dates remain unchanged. The explicit prepositions "am" and
@@ -46,7 +46,8 @@ telemetry. Log operational counters and rule versions only.
 - Read valid `HH:MM Uhr` times; bare time-like identifiers remain unchanged.
 - Read `§ 12` and `§§ 12–14` as paragraph references.
 - Preserve enumeration labels such as `1. Kapitel` instead of confusing them
-  with decimal numbers or choosing the wrong ordinal inflection.
+  with decimal numbers or choosing the wrong ordinal inflection. Explicit
+  unambiguous ordinals such as `am 3. Tag` and `zum 2. Mal` are inflected.
 - Read four-digit years and explicit ranges as German numbers.
 - Expand a small, already supported set of common abbreviations.
 - URLs, email addresses, IP addresses, dotted versions, ISBN tokens,
@@ -69,7 +70,8 @@ case-insensitive collisions. Matching is case-insensitive, Unicode-aware,
 word-boundary anchored, longest-first and single-pass. Multiword phrases and
 hyphenated technical phrases are supported. Protected technical spans cannot
 be overridden accidentally; replacement text is emitted as supplied (with
-initial capitalization adapted to a capitalized source) and is not fed back
+initial capitalization adapted to title-cased terms, not forced on upper-case
+acronyms) and is not fed back
 into numeric or glossary substitution within the same invocation.
 
 The neutral sample voice audition still uses the curated sample sentences
