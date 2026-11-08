@@ -982,8 +982,11 @@ def create_job(project_id: str) -> dict:
         raise ValueError("Keine freigegebene deutsche Stimme: zuerst eine echte Hörprobe prüfen.")
     # Persist the canonical Project-V5 text once as a versioned production
     # snapshot. B01 source offsets are joined, never re-extracted from EPUB.
-    glossary = project_glossary(project_id)
+    # Resolve the private voice setting before the glossary and final
+    # transactional re-check; project deletion after this snapshot remains
+    # a ValueError from the existing delete-vs-create conflict guard.
     voice_settings = project_voice_settings(project_id)
+    glossary = project_glossary(project_id)
     catalogue_path = _studio()._project_dir(project_id) / "chapters.json"
     source_indices = None
     if catalogue_path.is_file():
