@@ -45,8 +45,12 @@ def get_device_name(index):
     return 'Fake NVIDIA GPU'
 def synchronize():
     return None
+def get_device_capability(index):
+    return (int(os.environ.get('FAKE_GPU_MAJOR', '8')),
+            int(os.environ.get('FAKE_GPU_MINOR', '9')))
 cuda = SimpleNamespace(init=init, is_available=is_available,
-    synchronize=synchronize, get_device_name=get_device_name)
+    synchronize=synchronize, get_device_name=get_device_name,
+    get_device_capability=get_device_capability)
 def ones(count, device):
     assert device == 'cuda:0'
     if os.environ.get('FAKE_GPU_ERROR') == '1':
@@ -65,6 +69,7 @@ def ones(count, device):
             self.assertTrue(report["cuda_operational"])
             self.assertEqual(report["device"], "Fake NVIDIA GPU")
             self.assertEqual(report["torch_cuda"], "12.8")
+            self.assertEqual(report["compute_capability"], [8, 9])
 
     def test_cuda_visible_but_actual_allocation_fails_46(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -141,6 +146,82 @@ def ones(count, device):
             self.assertEqual(payload["runtimes"][0]["name"], "system")
             self.assertTrue(payload["runtimes"][0]["cuda_operational"])
             self.assertTrue(payload["ready"])
+
+    def test_blackwell_5090_rejected_even_when_system_cuda_succeeds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            self.create_fake_torch(work)
+            with patch.dict(os.environ, {
+                "PYTHONPATH": str(work),
+                "FAKE_GPU_ERROR": "0",
+                "FAKE_GPU_MAJOR": "12",
+                "FAKE_GPU_MINOR": "0",
+                "AUDIOBOOK_DATA_ROOT": str(work),
+            }):
+                result = subprocess.run(
+                    [sys.executable, str(PATH), "--env", "system", "--json",
+                     "--require-thorsten-compatible"],
+                    capture_output=True, text=True, timeout=20,
+                )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["runtimes"][0]["cuda_operational"])
+            self.assertFalse(payload["ready"])
+            self.assertFalse(payload["thorsten_compatible"])
+            self.assertEqual(payload["thorsten_gpu_compute_capability"], "sm_120")
+            self.assertIn("torch 2.3.1+cu121", payload["thorsten_compatibility_error"])
+
+    def test_ada_4090_supported_by_pinned_thorsten_architecture(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            self.create_fake_torch(work)
+            with patch.dict(os.environ, {
+                "PYTHONPATH": str(work),
+                "FAKE_GPU_ERROR": "0",
+                "FAKE_GPU_MAJOR": "8",
+                "FAKE_GPU_MINOR": "9",
+                "AUDIOBOOK_DATA_ROOT": str(work),
+            }):
+                result = subprocess.run(
+                    [sys.executable, str(PATH), "--env", "system", "--json",
+                     "--require-thorsten-compatible"],
+                    capture_output=True, text=True, timeout=20,
+                )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["ready"])
+            self.assertTrue(payload["thorsten_compatible"])
+
+    def test_newer_cuda_on_system_does_not_override_old_thorsten_gpu_support(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            self.create_fake_torch(work)
+            with patch.dict(os.environ, {
+                "PYTHONPATH": str(work),
+                "FAKE_GPU_ERROR": "0",
+                "FAKE_GPU_MAJOR": "10",
+                "FAKE_GPU_MINOR": "0",
+                "AUDIOBOOK_DATA_ROOT": str(work),
+            }):
+                result = subprocess.run(
+                    [sys.executable, str(PATH), "--env", "system", "--json",
+                     "--require-thorsten-compatible"],
+                    capture_output=True, text=True, timeout=20,
+                )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("sm_100", result.stdout)
+
+    def test_unknown_capability_rejected_in_thorsten_mode(self):
+        valid = {"ready": True, "runtimes": [{"name": "system", "cuda_operational": True}]}
+        report = gpu.check_thorsten_gpu_compatibility(valid)
+        self.assertFalse(report["ready"])
+        self.assertFalse(report["thorsten_compatible"])
+        self.assertIn("compute capability", report["thorsten_compatibility_error"])
+
+    def test_architecture_gate_requires_current_audited_lock_version(self):
+        lock = (ROOT / "runpod/locks/thorsten/pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"torch==2.3.1"', lock)
+        self.assertIn("sm_", PATH.read_text(encoding="utf-8"))
 
     def test_cli_returns_nonzero_for_broken_gpu(self):
         with tempfile.TemporaryDirectory() as folder:
